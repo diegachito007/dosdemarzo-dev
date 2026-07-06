@@ -1,0 +1,945 @@
+import { useState, useEffect, startTransition, useCallback } from "react";
+import {
+  collection,
+  query,
+  orderBy,
+  addDoc,
+  updateDoc,
+  doc,
+  serverTimestamp,
+  getDocs,
+  where,
+  Timestamp,
+} from "firebase/firestore";
+import { db } from "../lib/firebase";
+import { useAuth } from "../context/AuthContext";
+import type {
+  Estudiante,
+  Grado,
+  AnioLectivo,
+  Ambito,
+  Destreza,
+  PeriodoEvaluacion,
+} from "../types";
+import Layout from "../components/Layout";
+import {
+  FaUserCheck,
+  FaExclamationTriangle,
+  FaTasks,
+  FaCalendarAlt,
+  FaClock,
+  FaSave,
+  FaSpinner,
+  FaLock,
+} from "react-icons/fa";
+
+interface AsistenciaData {
+  estudianteId: string;
+  gradoId: string;
+  anioLectivoId: string;
+  periodoId: string;
+  fecha: string;
+  estado: "P" | "T" | "A" | "J";
+  observacion?: string;
+  registradoPor?: string;
+  createdAt?: Timestamp | Date; 
+  updatedAt?: Timestamp | Date; 
+}
+
+interface CalificacionData {
+  estudianteId: string;
+  destrezaId: string;
+  ambitoId: string;
+  gradoId: string;
+  anioLectivoId: string;
+  periodoId: string;
+  nota: number;
+  observacion?: string;
+  docenteId?: string;
+  createdAt?: Timestamp | Date;
+  updatedAt?: Timestamp | Date; 
+}
+
+// ✅ Función para convertir nota numérica a letra
+const notaALetra = (nota: number): string => {
+  if (nota >= 10) return "A+";
+  if (nota === 9) return "A";
+  if (nota === 8) return "B+";
+  if (nota === 7) return "B";
+  if (nota === 6) return "C+";
+  if (nota === 5) return "C";
+  if (nota === 4) return "D+";
+  if (nota === 3) return "D";
+  if (nota === 2) return "E+";
+  if (nota === 1) return "E";
+  return "-";
+};
+
+export default function Calificaciones() {
+  const { user } = useAuth();
+
+  const [aniosLectivos, setAniosLectivos] = useState<AnioLectivo[]>([]);
+  const [grados, setGrados] = useState<Grado[]>([]);
+  const [estudiantes, setEstudiantes] = useState<Estudiante[]>([]);
+  const [ambitos, setAmbitos] = useState<Ambito[]>([]);
+  const [destrezas, setDestrezas] = useState<Destreza[]>([]);
+  const [periodos, setPeriodos] = useState<PeriodoEvaluacion[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
+
+  const [activeTab, setActiveTab] = useState<"asistencia" | "calificaciones">(
+    "asistencia",
+  );
+  const [selectedGradoId, setSelectedGradoId] = useState("");
+  const [selectedAmbitoId, setSelectedAmbitoId] = useState("");
+  const [selectedDestrezaId, setSelectedDestrezaId] = useState("");
+
+  const [fechaAsistencia, setFechaAsistencia] = useState(
+    new Date().toISOString().split("T")[0],
+  );
+  const [asistencias, setAsistencias] = useState<
+    Record<string, { estado: "P" | "T" | "A" | "J"; observacion: string }>
+  >({});
+  const [calificaciones, setCalificaciones] = useState<
+    Record<string, { nota: number; observacion: string }>
+  >({});
+
+  const periodoActual = periodos.find((p) => {
+    const hoy = new Date();
+    const inicio = new Date(p.fechaInicio);
+    const fin = new Date(p.fechaFin);
+    return hoy >= inicio && hoy <= fin;
+  });
+
+  const todosConAsistencia =
+    estudiantes.length > 0 &&
+    estudiantes.every((est) => asistencias[est.id]?.estado);
+
+  const cargarDatos = useCallback(async () => {
+    try {
+      const aniosQuery = query(
+        collection(db, "aniosLectivos"),
+        where("activo", "==", true),
+      );
+      const aniosSnap = await getDocs(aniosQuery);
+      const aniosData = aniosSnap.docs.map(
+        (doc) => ({ id: doc.id, ...doc.data() }) as AnioLectivo,
+      );
+
+      let periodosData: PeriodoEvaluacion[] = [];
+      if (aniosData.length > 0) {
+        const periodosQuery = query(
+          collection(db, "periodosEvaluacion"),
+          where("anioLectivoId", "==", aniosData[0].id),
+          orderBy("orden", "asc"),
+        );
+        const periodosSnap = await getDocs(periodosQuery);
+        periodosData = periodosSnap.docs.map(
+          (doc) => ({ id: doc.id, ...doc.data() }) as PeriodoEvaluacion,
+        );
+      }
+
+      const gradosQuery = query(
+        collection(db, "grados"),
+        where("activo", "==", true),
+        orderBy("orden", "asc"),
+      );
+      const gradosSnap = await getDocs(gradosQuery);
+      const gradosData = gradosSnap.docs.map(
+        (doc) => ({ id: doc.id, ...doc.data() }) as Grado,
+      );
+
+      startTransition(() => {
+        setAniosLectivos(aniosData);
+        setPeriodos(periodosData);
+        setGrados(gradosData);
+        if (gradosData.length > 0 && !selectedGradoId) {
+          setSelectedGradoId(gradosData[0].id);
+        }
+        setLoading(false);
+      });
+    } catch (error) {
+      console.error("Error cargando datos:", error);
+      startTransition(() => setLoading(false));
+    }
+  }, [selectedGradoId]);
+
+  const cargarEstudiantes = useCallback(async (gradoId: string) => {
+    try {
+      const q = query(
+        collection(db, "estudiantes"),
+        where("gradoId", "==", gradoId),
+        where("activo", "==", true),
+        orderBy("apellidos", "asc"),
+      );
+      const snap = await getDocs(q);
+      const data = snap.docs.map(
+        (doc) => ({ id: doc.id, ...doc.data() }) as Estudiante,
+      );
+
+      startTransition(() => {
+        setEstudiantes(data);
+        setAsistencias({});
+        setActiveTab("asistencia");
+      });
+    } catch (error) {
+      console.error("Error cargando estudiantes:", error);
+    }
+  }, []);
+
+  const cargarAmbitos = useCallback(async (gradoId: string) => {
+    try {
+      const q = query(
+        collection(db, "ambitos"),
+        where("gradoId", "==", gradoId),
+        where("activo", "==", true),
+        orderBy("orden", "asc"),
+      );
+      const snap = await getDocs(q);
+      const data = snap.docs.map(
+        (doc) => ({ id: doc.id, ...doc.data() }) as Ambito,
+      );
+
+      startTransition(() => setAmbitos(data));
+    } catch (error) {
+      console.error("Error cargando ámbitos:", error);
+    }
+  }, []);
+
+  const cargarDestrezas = useCallback(async (ambitoId: string) => {
+    try {
+      const q = query(
+        collection(db, "destrezas"),
+        where("ambitoId", "==", ambitoId),
+        where("activo", "==", true),
+        orderBy("orden", "asc"),
+      );
+      const snap = await getDocs(q);
+      const data = snap.docs.map(
+        (doc) => ({ id: doc.id, ...doc.data() }) as Destreza,
+      );
+
+      startTransition(() => setDestrezas(data));
+    } catch (error) {
+      console.error("Error cargando destrezas:", error);
+    }
+  }, []);
+
+  const cargarAsistencias = useCallback(
+    async (gradoId: string, fecha: string) => {
+      try {
+        const estudiantesDelGrado = estudiantes.filter(
+          (e) => e.gradoId === gradoId,
+        );
+        const estudianteIds = estudiantesDelGrado.map((e) => e.id);
+
+        if (estudianteIds.length === 0) return;
+
+        const q = query(
+          collection(db, "asistencias"),
+          where("gradoId", "==", gradoId),
+          where("fecha", "==", fecha),
+        );
+        const snap = await getDocs(q);
+
+        const data = snap.docs.map(
+          (doc) =>
+            ({
+              id: doc.id,
+              ...doc.data(),
+            }) as unknown as AsistenciaData,
+        );
+
+        const asistenciasMap: Record<
+          string,
+          { estado: "P" | "T" | "A" | "J"; observacion: string }
+        > = {};
+        data.forEach((asistencia) => {
+          asistenciasMap[asistencia.estudianteId] = {
+            estado: asistencia.estado,
+            observacion: asistencia.observacion || "",
+          };
+        });
+
+        startTransition(() => setAsistencias(asistenciasMap));
+      } catch (error) {
+        console.error("Error cargando asistencias:", error);
+      }
+    },
+    [estudiantes],
+  );
+
+  const cargarCalificaciones = useCallback(
+    async (destrezaId: string, gradoId: string) => {
+      try {
+        const periodoId = periodoActual?.id || "";
+        if (!periodoId) return;
+
+        const q = query(
+          collection(db, "calificaciones"),
+          where("destrezaId", "==", destrezaId),
+          where("gradoId", "==", gradoId),
+          where("periodoId", "==", periodoId),
+        );
+        const snap = await getDocs(q);
+
+        const data = snap.docs.map(
+          (doc) =>
+            ({
+              id: doc.id,
+              ...doc.data(),
+            }) as unknown as CalificacionData,
+        );
+
+        const calificacionesMap: Record<
+          string,
+          { nota: number; observacion: string }
+        > = {};
+        data.forEach((calificacion) => {
+          calificacionesMap[calificacion.estudianteId] = {
+            nota: calificacion.nota,
+            observacion: calificacion.observacion || "",
+          };
+        });
+
+        startTransition(() => setCalificaciones(calificacionesMap));
+      } catch (error) {
+        console.error("Error cargando calificaciones:", error);
+      }
+    },
+    [periodoActual],
+  );
+
+  const guardarAsistencia = async () => {
+    setIsSaving(true);
+    try {
+      const anioLectivoId = aniosLectivos[0]?.id || "";
+      const periodoId = periodoActual?.id || "";
+
+      const batch = estudiantes.map(async (est) => {
+        const asistencia = asistencias[est.id];
+        if (!asistencia || !asistencia.estado) return;
+
+        const q = query(
+          collection(db, "asistencias"),
+          where("estudianteId", "==", est.id),
+          where("fecha", "==", fechaAsistencia),
+        );
+        const snap = await getDocs(q);
+
+        const datos = {
+          estudianteId: est.id,
+          gradoId: selectedGradoId,
+          anioLectivoId,
+          periodoId,
+          fecha: fechaAsistencia,
+          estado: asistencia.estado,
+          observacion: asistencia.observacion || "",
+          registradoPor: user?.uid || "",
+          updatedAt: serverTimestamp(),
+        };
+
+        if (snap.empty) {
+          await addDoc(collection(db, "asistencias"), {
+            ...datos,
+            createdAt: serverTimestamp(),
+          });
+        } else {
+          await updateDoc(doc(db, "asistencias", snap.docs[0].id), datos);
+        }
+      });
+
+      await Promise.all(batch);
+      alert("✅ Asistencia guardada correctamente");
+      setActiveTab("calificaciones");
+    } catch (error) {
+      console.error("Error guardando asistencia:", error);
+      alert("Error al guardar asistencia");
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const guardarCalificaciones = async () => {
+    setIsSaving(true);
+    try {
+      const anioLectivoId = aniosLectivos[0]?.id || "";
+      const periodoId = periodoActual?.id || "";
+
+      const batch = estudiantes.map(async (est) => {
+        const calificacion = calificaciones[est.id];
+        if (!calificacion || calificacion.nota === undefined) return;
+
+        const q = query(
+          collection(db, "calificaciones"),
+          where("estudianteId", "==", est.id),
+          where("destrezaId", "==", selectedDestrezaId),
+          where("periodoId", "==", periodoId),
+        );
+        const snap = await getDocs(q);
+
+        const datos = {
+          estudianteId: est.id,
+          destrezaId: selectedDestrezaId,
+          ambitoId: selectedAmbitoId,
+          gradoId: selectedGradoId,
+          anioLectivoId,
+          periodoId,
+          nota: Math.round(calificacion.nota), // ✅ Redondear a entero
+          observacion: calificacion.observacion || "",
+          docenteId: user?.uid || "",
+          updatedAt: serverTimestamp(),
+        };
+
+        if (snap.empty) {
+          await addDoc(collection(db, "calificaciones"), {
+            ...datos,
+            createdAt: serverTimestamp(),
+          });
+        } else {
+          await updateDoc(doc(db, "calificaciones", snap.docs[0].id), datos);
+        }
+      });
+
+      await Promise.all(batch);
+      alert("✅ Calificaciones guardadas correctamente");
+    } catch (error) {
+      console.error("Error guardando calificaciones:", error);
+      alert("Error al guardar calificaciones");
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const actualizarAsistencia = (
+    estudianteId: string,
+    estado: "P" | "T" | "A" | "J",
+  ) => {
+    setAsistencias((prev) => ({
+      ...prev,
+      [estudianteId]: {
+        estado,
+        observacion: prev[estudianteId]?.observacion || "",
+      },
+    }));
+  };
+
+  const actualizarObservacionAsistencia = (
+    estudianteId: string,
+    observacion: string,
+  ) => {
+    setAsistencias((prev) => ({
+      ...prev,
+      [estudianteId]: {
+        ...prev[estudianteId],
+        observacion,
+      },
+    }));
+  };
+
+  const actualizarCalificacion = (estudianteId: string, nota: number) => {
+    setCalificaciones((prev) => ({
+      ...prev,
+      [estudianteId]: {
+        ...prev[estudianteId],
+        nota: Math.round(nota), // ✅ Redondear a entero
+      },
+    }));
+  };
+
+  const actualizarObservacionCalificacion = (
+    estudianteId: string,
+    observacion: string,
+  ) => {
+    setCalificaciones((prev) => ({
+      ...prev,
+      [estudianteId]: {
+        ...prev[estudianteId],
+        observacion,
+      },
+    }));
+  };
+
+  useEffect(() => {
+    cargarDatos();
+  }, [cargarDatos]);
+
+  useEffect(() => {
+    if (selectedGradoId) {
+      cargarEstudiantes(selectedGradoId);
+      cargarAmbitos(selectedGradoId);
+    }
+  }, [selectedGradoId, cargarEstudiantes, cargarAmbitos]);
+
+  useEffect(() => {
+    if (selectedAmbitoId) {
+      cargarDestrezas(selectedAmbitoId);
+    }
+  }, [selectedAmbitoId, cargarDestrezas]);
+
+  useEffect(() => {
+    if (selectedDestrezaId && selectedGradoId) {
+      cargarCalificaciones(selectedDestrezaId, selectedGradoId);
+    }
+  }, [selectedDestrezaId, selectedGradoId, cargarCalificaciones]);
+
+  useEffect(() => {
+    if (selectedGradoId && fechaAsistencia) {
+      cargarAsistencias(selectedGradoId, fechaAsistencia);
+    }
+  }, [selectedGradoId, fechaAsistencia, cargarAsistencias]);
+
+  if (loading) {
+    return (
+      <Layout
+        title="Calificaciones"
+        subtitle="Registro de notas y asistencia"
+        showBack
+      >
+        <div className="flex items-center justify-center py-20">
+          <div className="text-center">
+            <div className="animate-spin rounded-full h-10 w-10 border-2 border-blue-600 border-t-transparent mx-auto mb-3"></div>
+            <p className="text-slate-600 text-sm font-medium">Cargando...</p>
+          </div>
+        </div>
+      </Layout>
+    );
+  }
+
+  const anioActivo = aniosLectivos[0];
+
+  return (
+    <Layout
+      title="Calificaciones"
+      subtitle="Registro de notas y asistencia"
+      showBack
+    >
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+        {anioActivo && (
+          <div className="bg-blue-50 border border-blue-200 rounded-lg px-4 py-3">
+            <div className="flex items-center gap-2 text-blue-800">
+              <FaCalendarAlt className="text-sm" />
+              <span className="text-sm font-medium">Año lectivo:</span>
+              <span className="text-base font-bold text-blue-900">
+                {anioActivo.nombre}
+              </span>
+            </div>
+          </div>
+        )}
+
+        {periodoActual && (
+          <div className="bg-green-50 border border-green-200 rounded-lg px-4 py-3">
+            <div className="flex items-center gap-2 text-green-800">
+              <FaClock className="text-sm" />
+              <span className="text-sm font-medium">Período actual:</span>
+              <span className="text-base font-bold text-green-900">
+                {periodoActual.nombre}
+              </span>
+            </div>
+          </div>
+        )}
+
+        {!periodoActual && (
+          <div className="bg-yellow-50 border border-yellow-200 rounded-lg px-4 py-3">
+            <div className="flex items-center gap-2 text-yellow-800">
+              <FaExclamationTriangle className="text-sm" />
+              <span className="text-sm font-medium">
+                No hay período activo en esta fecha
+              </span>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="bg-white rounded-xl shadow-sm border border-slate-200 mb-6 overflow-hidden">
+        <div className="flex border-b border-slate-200">
+          <button
+            onClick={() => setActiveTab("asistencia")}
+            className={`flex-1 px-6 py-4 text-sm font-semibold transition-all ${
+              activeTab === "asistencia"
+                ? "bg-blue-50 text-blue-700 border-b-2 border-blue-600"
+                : "text-slate-600 hover:bg-slate-50"
+            }`}
+          >
+            <FaUserCheck className="inline mr-2" />
+            Asistencia
+          </button>
+          <button
+            onClick={() => todosConAsistencia && setActiveTab("calificaciones")}
+            disabled={!todosConAsistencia}
+            className={`flex-1 px-6 py-4 text-sm font-semibold transition-all flex items-center justify-center gap-2 ${
+              activeTab === "calificaciones"
+                ? "bg-blue-50 text-blue-700 border-b-2 border-blue-600"
+                : todosConAsistencia
+                  ? "text-slate-600 hover:bg-slate-50"
+                  : "text-slate-400 cursor-not-allowed bg-slate-50"
+            }`}
+            title={
+              !todosConAsistencia
+                ? "Primero registra la asistencia de todos los estudiantes"
+                : ""
+            }
+          >
+            <FaTasks className="inline mr-2" />
+            Calificaciones
+            {!todosConAsistencia && <FaLock className="text-xs" />}
+          </button>
+        </div>
+
+        <div className="p-6">
+          <div className="mb-6">
+            <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-2">
+              Grado y Paralelo *
+            </label>
+            <select
+              value={selectedGradoId}
+              onChange={(e) => setSelectedGradoId(e.target.value)}
+              className="w-full max-w-md border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            >
+              <option value="">Seleccionar grado...</option>
+              {grados.map((grado) => (
+                <option key={grado.id} value={grado.id}>
+                  {grado.nombre} - {grado.paralelo}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {activeTab === "asistencia" && (
+            <div>
+              <div className="mb-6">
+                <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-2">
+                  Fecha de Asistencia *
+                </label>
+                <input
+                  type="date"
+                  value={fechaAsistencia}
+                  onChange={(e) => setFechaAsistencia(e.target.value)}
+                  className="w-full max-w-md border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+
+              {estudiantes.length === 0 ? (
+                <div className="text-center py-12 text-slate-500">
+                  <FaUserCheck className="text-4xl mx-auto mb-3 text-slate-300" />
+                  <p className="font-medium mb-1">
+                    No hay estudiantes en este grado
+                  </p>
+                  <p className="text-sm">Agrega estudiantes primero</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {estudiantes.map((est) => {
+                    const asistencia = asistencias[est.id];
+                    const estado = asistencia?.estado || "";
+
+                    return (
+                      <div
+                        key={est.id}
+                        className="border border-slate-200 rounded-lg p-4 hover:border-blue-300 transition-colors"
+                      >
+                        <div className="flex items-center justify-between gap-4">
+                          <div className="flex-1">
+                            <div className="font-semibold text-slate-900 text-sm">
+                              {est.apellidos} {est.nombres}
+                            </div>
+                            {est.cedula && (
+                              <div className="text-slate-500 text-xs mt-0.5">
+                                CI: {est.cedula}
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="flex gap-2">
+                            {(["P", "T", "A", "J"] as const).map(
+                              (estadoBtn) => (
+                                <button
+                                  key={estadoBtn}
+                                  onClick={() =>
+                                    actualizarAsistencia(est.id, estadoBtn)
+                                  }
+                                  className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all ${
+                                    estado === estadoBtn
+                                      ? estadoBtn === "P"
+                                        ? "bg-green-600 text-white shadow-md"
+                                        : estadoBtn === "T"
+                                          ? "bg-yellow-600 text-white shadow-md"
+                                          : estadoBtn === "A"
+                                            ? "bg-red-600 text-white shadow-md"
+                                            : "bg-blue-600 text-white shadow-md"
+                                      : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                                  }`}
+                                  title={
+                                    estadoBtn === "P"
+                                      ? "Presente"
+                                      : estadoBtn === "T"
+                                        ? "Tardanza"
+                                        : estadoBtn === "A"
+                                          ? "Ausente"
+                                          : "Justificado"
+                                  }
+                                >
+                                  {estadoBtn}
+                                </button>
+                              ),
+                            )}
+                          </div>
+                        </div>
+
+                        {estado && (
+                          <div className="mt-3">
+                            <input
+                              type="text"
+                              value={asistencia?.observacion || ""}
+                              onChange={(e) =>
+                                actualizarObservacionAsistencia(
+                                  est.id,
+                                  e.target.value,
+                                )
+                              }
+                              placeholder="Observación (opcional)..."
+                              className="w-full border border-slate-300 rounded px-3 py-1.5 text-sm focus:ring-2 focus:ring-blue-500"
+                            />
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {estudiantes.length > 0 && (
+                <div className="mt-6 flex justify-between items-center">
+                  <div className="text-sm text-slate-600">
+                    {
+                      Object.keys(asistencias).filter(
+                        (key) => asistencias[key].estado,
+                      ).length
+                    }{" "}
+                    de {estudiantes.length} estudiantes con asistencia
+                    registrada
+                  </div>
+                  <button
+                    onClick={guardarAsistencia}
+                    disabled={isSaving || !todosConAsistencia}
+                    className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-lg text-sm font-semibold transition-all disabled:opacity-70 disabled:cursor-not-allowed"
+                  >
+                    {isSaving ? (
+                      <>
+                        <FaSpinner className="animate-spin" />
+                        Guardando...
+                      </>
+                    ) : (
+                      <>
+                        <FaSave />
+                        Guardar Asistencia
+                      </>
+                    )}
+                  </button>
+                </div>
+              )}
+
+              {!todosConAsistencia && estudiantes.length > 0 && (
+                <div className="mt-4 bg-yellow-50 border border-yellow-200 rounded-lg px-4 py-3">
+                  <div className="flex items-center gap-2 text-yellow-800">
+                    <FaExclamationTriangle className="text-sm" />
+                    <span className="text-sm font-medium">
+                      Debes registrar la asistencia de todos los estudiantes
+                      antes de continuar
+                    </span>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {activeTab === "calificaciones" && (
+            <div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-2">
+                    Ámbito *
+                  </label>
+                  <select
+                    value={selectedAmbitoId}
+                    onChange={(e) => {
+                      setSelectedAmbitoId(e.target.value);
+                      setSelectedDestrezaId("");
+                      setCalificaciones({});
+                    }}
+                    className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="">Seleccionar ámbito...</option>
+                    {ambitos.map((ambito) => (
+                      <option key={ambito.id} value={ambito.id}>
+                        {ambito.nombre}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-2">
+                    Destreza *
+                  </label>
+                  <select
+                    value={selectedDestrezaId}
+                    onChange={(e) => setSelectedDestrezaId(e.target.value)}
+                    disabled={!selectedAmbitoId}
+                    className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 disabled:bg-slate-100"
+                  >
+                    <option value="">Seleccionar destreza...</option>
+                    {destrezas.map((destreza) => (
+                      <option key={destreza.id} value={destreza.id}>
+                        {destreza.nombre}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {selectedDestrezaId && (
+                <div className="bg-purple-50 border border-purple-200 rounded-lg p-4 mb-6">
+                  <div className="flex items-start gap-2">
+                    <FaTasks className="text-purple-600 mt-1" />
+                    <div>
+                      <h4 className="font-semibold text-purple-900 text-sm mb-1">
+                        Destreza seleccionada:
+                      </h4>
+                      <p className="text-purple-800 text-sm">
+                        {destrezas.find((d) => d.id === selectedDestrezaId)
+                          ?.descripcion ||
+                          destrezas.find((d) => d.id === selectedDestrezaId)
+                            ?.nombre}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {estudiantes.length === 0 ? (
+                <div className="text-center py-12 text-slate-500">
+                  <FaUserCheck className="text-4xl mx-auto mb-3 text-slate-300" />
+                  <p className="font-medium mb-1">
+                    No hay estudiantes en este grado
+                  </p>
+                  <p className="text-sm">Agrega estudiantes primero</p>
+                </div>
+              ) : !selectedDestrezaId ? (
+                <div className="text-center py-12 text-slate-500">
+                  <FaTasks className="text-4xl mx-auto mb-3 text-slate-300" />
+                  <p className="font-medium mb-1">
+                    Selecciona un ámbito y destreza
+                  </p>
+                  <p className="text-sm">para comenzar a calificar</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {estudiantes.map((est) => {
+                    const calificacion = calificaciones[est.id];
+                    const nota = calificacion?.nota;
+                    const letra = nota !== undefined ? notaALetra(nota) : "";
+
+                    return (
+                      <div
+                        key={est.id}
+                        className="border border-slate-200 rounded-lg p-4 hover:border-blue-300 transition-colors"
+                      >
+                        <div className="flex items-center justify-between gap-4">
+                          <div className="flex-1">
+                            <div className="font-semibold text-slate-900 text-sm">
+                              {est.apellidos} {est.nombres}
+                            </div>
+                            {est.cedula && (
+                              <div className="text-slate-500 text-xs mt-0.5">
+                                CI: {est.cedula}
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="flex items-center gap-3">
+                            {/* ✅ Mostrar equivalencia en letras */}
+                            {letra && (
+                              <div className="bg-blue-100 border border-blue-300 text-blue-800 px-3 py-2 rounded-lg text-sm font-bold">
+                                {letra}
+                              </div>
+                            )}
+                            
+                            <input
+                              type="number"
+                              min="1"
+                              max="10"
+                              step="1"
+                              value={nota !== undefined ? nota : ""}
+                              onChange={(e) => {
+                                const valor = parseInt(e.target.value);
+                                if (
+                                  !isNaN(valor) &&
+                                  valor >= 1 &&
+                                  valor <= 10
+                                ) {
+                                  actualizarCalificacion(est.id, valor);
+                                }
+                              }}
+                              placeholder="1-10"
+                              className={`w-20 border-2 rounded-lg px-3 py-2 text-center text-lg font-bold focus:ring-2 focus:ring-blue-500 ${
+                                nota !== undefined
+                                  ? nota >= 7
+                                    ? "border-green-500 text-green-700"
+                                    : nota >= 5
+                                      ? "border-yellow-500 text-yellow-700"
+                                      : "border-red-500 text-red-700"
+                                  : "border-slate-300"
+                              }`}
+                            />
+                          </div>
+                        </div>
+
+                        <div className="mt-3">
+                          <input
+                            type="text"
+                            value={calificacion?.observacion || ""}
+                            onChange={(e) =>
+                              actualizarObservacionCalificacion(
+                                est.id,
+                                e.target.value,
+                              )
+                            }
+                            placeholder="Observación (opcional)..."
+                            className="w-full border border-slate-300 rounded px-3 py-1.5 text-sm focus:ring-2 focus:ring-blue-500"
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {estudiantes.length > 0 && selectedDestrezaId && (
+                <div className="mt-6 flex justify-end">
+                  <button
+                    onClick={guardarCalificaciones}
+                    disabled={isSaving}
+                    className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-lg text-sm font-semibold transition-all disabled:opacity-70 disabled:cursor-not-allowed"
+                  >
+                    {isSaving ? (
+                      <>
+                        <FaSpinner className="animate-spin" />
+                        Guardando...
+                      </>
+                    ) : (
+                      <>
+                        <FaSave />
+                        Guardar Calificaciones
+                      </>
+                    )}
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    </Layout>
+  );
+}
