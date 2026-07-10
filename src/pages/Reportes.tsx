@@ -1,4 +1,5 @@
 import { useState, useEffect, startTransition, useCallback } from "react";
+import React from "react"; // ✅ Agregar esto
 import {
   collection,
   query,
@@ -20,13 +21,11 @@ import Layout from "../components/Layout";
 import {
   FaPrint,
   FaUserGraduate,
-  FaChartBar,
-  FaCalendarAlt,
+  FaUsers,
   FaExclamationTriangle,
   FaSearch,
 } from "react-icons/fa";
 
-// ✅ Interfaces locales para los datos de Firestore
 interface CalificacionDoc {
   id: string;
   estudianteId: string;
@@ -56,8 +55,22 @@ interface AsistenciaDoc {
   updatedAt?: Timestamp;
 }
 
+// ✅ Escala cualitativa según el PDF
+const ESCALA_CUALITATIVA: Record<string, { descripcion: string; valor: number }> = {
+  "A+": { descripcion: "Superado(S)", valor: 10 },
+  "A-": { descripcion: "Logrado(L)", valor: 9 },
+  "B+": { descripcion: "Medianamente Logrado(ML)", valor: 8 },
+  "B-": { descripcion: "Básicamente Logrado(BL)", valor: 7 },
+  "C+": { descripcion: "En Proceso(EP)", valor: 6 },
+  "C-": { descripcion: "En Proceso(EP)", valor: 5 },
+  "D+": { descripcion: "En Proceso(EP)", valor: 4 },
+  "D-": { descripcion: "En Proceso(EP)", valor: 3 },
+  "E+": { descripcion: "En Proceso(EP)", valor: 2 },
+  "E-": { descripcion: "En Proceso(EP)", valor: 1 },
+};
+
 export default function Reportes() {
-  const [, setAniosLectivos] = useState<AnioLectivo[]>([]);
+  const [, setAniosLectivosData] = useState<AnioLectivo[]>([]);
   const [grados, setGrados] = useState<Grado[]>([]);
   const [periodos, setPeriodos] = useState<PeriodoEvaluacion[]>([]);
   const [estudiantes, setEstudiantes] = useState<Estudiante[]>([]);
@@ -71,8 +84,8 @@ export default function Reportes() {
   const [selectedPeriodoId, setSelectedPeriodoId] = useState("");
   const [selectedEstudianteId, setSelectedEstudianteId] = useState("");
   const [activeReport, setActiveReport] = useState<
-    "boletin" | "grado" | "asistencia"
-  >("boletin");
+    "individualGeneral" | "masivo"
+  >("individualGeneral");
 
   const cargarDatos = useCallback(async () => {
     try {
@@ -109,7 +122,7 @@ export default function Reportes() {
       );
 
       startTransition(() => {
-        setAniosLectivos(aniosData);
+        setAniosLectivosData(aniosData);
         setPeriodos(periodosData);
         setGrados(gradosData);
         if (gradosData.length > 0 && !selectedGradoId) {
@@ -178,12 +191,11 @@ export default function Reportes() {
   }, []);
 
   const cargarCalificaciones = useCallback(
-    async (gradoId: string, periodoId: string) => {
+    async (gradoId: string) => {
       try {
         const q = query(
           collection(db, "calificaciones"),
-          where("gradoId", "==", gradoId),
-          where("periodoId", "==", periodoId)
+          where("gradoId", "==", gradoId)
         );
         const snap = await getDocs(q);
         const data = snap.docs.map(
@@ -225,28 +237,47 @@ export default function Reportes() {
       cargarEstudiantes(selectedGradoId);
       cargarAmbitosYDestrezas(selectedGradoId);
       cargarAsistencias(selectedGradoId);
+      cargarCalificaciones(selectedGradoId);
     }
   }, [
     selectedGradoId,
     cargarEstudiantes,
     cargarAmbitosYDestrezas,
     cargarAsistencias,
+    cargarCalificaciones,
   ]);
 
-  useEffect(() => {
-    if (selectedGradoId && selectedPeriodoId) {
-      cargarCalificaciones(selectedGradoId, selectedPeriodoId);
-    }
-  }, [selectedGradoId, selectedPeriodoId, cargarCalificaciones]);
+  // ✅ Convertir nota numérica a letra
+  const notaALetra = (nota: number): string => {
+    if (nota >= 10) return "A+";
+    if (nota >= 9) return "A-";
+    if (nota >= 8) return "B+";
+    if (nota >= 7) return "B-";
+    if (nota >= 6) return "C+";
+    if (nota >= 5) return "C-";
+    if (nota >= 4) return "D+";
+    if (nota >= 3) return "D-";
+    if (nota >= 2) return "E+";
+    if (nota >= 1) return "E-";
+    return "-";
+  };
 
+  // ✅ Obtener descripción de la letra
+  const obtenerDescripcion = (letra: string): string => {
+    return ESCALA_CUALITATIVA[letra]?.descripcion || "-";
+  };
+
+  // ✅ Calcular promedio del ámbito para un período específico
   const calcularPromedioAmbito = (
     estudianteId: string,
-    ambitoId: string
+    ambitoId: string,
+    periodoId: string
   ): number => {
     const destrezasDelAmbito = destrezas.filter((d) => d.ambitoId === ambitoId);
     const califsEstudiante = calificaciones.filter(
       (c) =>
         c.estudianteId === estudianteId &&
+        c.periodoId === periodoId &&
         destrezasDelAmbito.some((d) => d.id === c.destrezaId)
     );
 
@@ -256,15 +287,19 @@ export default function Reportes() {
     return parseFloat((suma / califsEstudiante.length).toFixed(1));
   };
 
-  const calcularPromedioGeneral = (estudianteId: string): number => {
-    const califsEstudiante = calificaciones.filter(
-      (c) => c.estudianteId === estudianteId
-    );
+  // ✅ Calcular promedio general (promedio de los 10 ámbitos) para un período
+  const calcularPromedioGeneral = (
+    estudianteId: string,
+    periodoId: string
+  ): number => {
+    const promediosAmbitos = ambitos.map((ambito) =>
+      calcularPromedioAmbito(estudianteId, ambito.id, periodoId)
+    ).filter((p) => p > 0);
 
-    if (califsEstudiante.length === 0) return 0;
+    if (promediosAmbitos.length === 0) return 0;
 
-    const suma = califsEstudiante.reduce((acc, c) => acc + c.nota, 0);
-    return parseFloat((suma / califsEstudiante.length).toFixed(1));
+    const suma = promediosAmbitos.reduce((acc, p) => acc + p, 0);
+    return parseFloat((suma / promediosAmbitos.length).toFixed(1));
   };
 
   const calcularAsistenciaEstudiante = (estudianteId: string) => {
@@ -272,19 +307,13 @@ export default function Reportes() {
       (a) => a.estudianteId === estudianteId
     );
 
-    const presentes = asistenciasEstudiante.filter((a) => a.estado === "P")
-      .length;
-    const tardanzas = asistenciasEstudiante.filter((a) => a.estado === "T")
-      .length;
-    const ausentes = asistenciasEstudiante.filter((a) => a.estado === "A")
-      .length;
-    const justificados = asistenciasEstudiante.filter(
-      (a) => a.estado === "J"
-    ).length;
+    const presentes = asistenciasEstudiante.filter((a) => a.estado === "P").length;
+    const tardanzas = asistenciasEstudiante.filter((a) => a.estado === "T").length;
+    const ausentes = asistenciasEstudiante.filter((a) => a.estado === "A").length;
+    const justificados = asistenciasEstudiante.filter((a) => a.estado === "J").length;
 
     const total = presentes + tardanzas + ausentes + justificados;
-    const porcentaje =
-      total > 0 ? ((presentes + tardanzas) / total) * 100 : 0;
+    const porcentaje = total > 0 ? ((presentes + tardanzas) / total) * 100 : 0;
 
     return {
       presentes,
@@ -296,18 +325,17 @@ export default function Reportes() {
     };
   };
 
-  const notaALetra = (nota: number): string => {
-    if (nota >= 10) return "A+";
-    if (nota === 9) return "A";
-    if (nota === 8) return "B+";
-    if (nota === 7) return "B";
-    if (nota === 6) return "C+";
-    if (nota === 5) return "C";
-    if (nota === 4) return "D+";
-    if (nota === 3) return "D";
-    if (nota === 2) return "E+";
-    if (nota === 1) return "E";
-    return "-";
+  // ✅ Determinar qué trimestres mostrar según el seleccionado
+  const obtenerTrimestresAMostrar = () => {
+    const periodoSeleccionado = periodos.find((p) => p.id === selectedPeriodoId);
+    if (!periodoSeleccionado) return [];
+
+    const ordenSeleccionado = periodoSeleccionado.orden;
+    
+    // Mostrar todos los trimestres hasta el seleccionado
+    return periodos
+      .filter((p) => p.orden <= ordenSeleccionado)
+      .sort((a, b) => a.orden - b.orden);
   };
 
   const imprimirReporte = () => {
@@ -327,12 +355,182 @@ export default function Reportes() {
     );
   }
 
-  const periodoActual = periodos.find((p) => p.id === selectedPeriodoId);
   const gradoActual = grados.find((g) => g.id === selectedGradoId);
   const estudianteActual = estudiantes.find((e) => e.id === selectedEstudianteId);
+  const trimestresAMostrar = obtenerTrimestresAMostrar();
+
+  // ✅ Componente para renderizar un boletín
+  const renderBoletin = (estudiante: Estudiante) => {
+    const asistencia = calcularAsistenciaEstudiante(estudiante.id);
+
+    return (
+      <div className="bg-white border-2 border-slate-800 p-6 mb-8 page-break">
+        {/* Header */}
+        <div className="text-center mb-4 border-b-2 border-slate-800 pb-3">
+          <h1 className="text-lg font-bold text-slate-900 mb-1">
+            REPORTE DE DESARROLLO INTEGRAL
+          </h1>
+          <p className="text-xs text-slate-700">
+            INSTITUCIÓN: CECIBEB "Leonardo Pérez Muñoz" CÓDIGO AMIE: 10B00020
+          </p>
+          <p className="text-xs text-slate-700">
+            CURSO/GRADO: {gradoActual?.nombre} - {gradoActual?.paralelo} | FECHA: {new Date().toLocaleDateString('es-ES')}
+          </p>
+        </div>
+
+        {/* Datos del estudiante */}
+        <div className="mb-4 bg-slate-50 p-3 rounded border border-slate-300">
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <p className="text-xs text-slate-600 font-semibold">Nombres y Apellidos:</p>
+              <p className="font-bold text-slate-900 text-sm">
+                {estudiante.apellidos} {estudiante.nombres}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs text-slate-600 font-semibold">TUTORA:</p>
+              <p className="font-bold text-slate-900 text-sm">Lic. Alexandra Perugachi</p>
+            </div>
+          </div>
+        </div>
+
+        {/* Tabla de calificaciones con 3 trimestres */}
+        <div className="mb-4">
+          <h3 className="font-bold text-sm text-slate-900 mb-2 text-center">
+            ÁMBITOS DE DESARROLLO Y APRENDIZAJE
+          </h3>
+          
+          <table className="w-full border-collapse border border-slate-800">
+            <thead>
+              <tr className="bg-slate-100">
+                <th className="border border-slate-800 px-2 py-1 text-left text-xs font-bold" rowSpan={2}>
+                  ÁMBITOS DE DESARROLLO Y APRENDIZAJE
+                </th>
+                {trimestresAMostrar.map((periodo) => (
+                  <th key={periodo.id} className="border border-slate-800 px-2 py-1 text-center text-xs font-bold" colSpan={2}>
+                    {periodo.nombre.toUpperCase()}
+                  </th>
+                ))}
+              </tr>
+              <tr className="bg-slate-100">
+                {trimestresAMostrar.map((periodo) => (
+                  <React.Fragment key={periodo.id}>
+                    <th className="border border-slate-800 px-2 py-1 text-center text-xs font-bold w-16">
+                      NOTA
+                    </th>
+                    <th className="border border-slate-800 px-2 py-1 text-center text-xs font-bold w-32">
+                      EQUIVALENCIA
+                    </th>
+                  </React.Fragment>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {ambitos.map((ambito) => (
+                <tr key={ambito.id}>
+                  <td className="border border-slate-800 px-2 py-1 text-xs font-semibold">
+                    {ambito.nombre.toUpperCase()}
+                  </td>
+                  {trimestresAMostrar.map((periodo) => {
+                    const promedio = calcularPromedioAmbito(estudiante.id, ambito.id, periodo.id);
+                    const letra = promedio > 0 ? notaALetra(promedio) : "";
+                    const descripcion = promedio > 0 ? obtenerDescripcion(letra) : "";
+
+                    return (
+                      <React.Fragment key={periodo.id}>
+                        <td className="border border-slate-800 px-2 py-1 text-center text-xs font-bold">
+                          {letra}
+                        </td>
+                        <td className="border border-slate-800 px-2 py-1 text-center text-xs">
+                          {descripcion}
+                        </td>
+                      </React.Fragment>
+                    );
+                  })}
+                </tr>
+              ))}
+              {/* Fila de promedios */}
+              <tr className="bg-blue-50 font-bold">
+                <td className="border border-slate-800 px-2 py-1 text-xs">
+                  PROMEDIO
+                </td>
+                {trimestresAMostrar.map((periodo) => {
+                  const prom = calcularPromedioGeneral(estudiante.id, periodo.id);
+                  const letra = prom > 0 ? notaALetra(prom) : "";
+                  const descripcion = prom > 0 ? obtenerDescripcion(letra) : "";
+
+                  return (
+                    <React.Fragment key={periodo.id}>
+                      <td className="border border-slate-800 px-2 py-1 text-center text-xs">
+                        {letra}
+                      </td>
+                      <td className="border border-slate-800 px-2 py-1 text-center text-xs">
+                        {descripcion}
+                      </td>
+                    </React.Fragment>
+                  );
+                })}
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        {/* Comportamiento y Asistencia */}
+        <div className="mb-4 grid grid-cols-2 gap-3">
+          <div className="border border-slate-800 p-2">
+            <p className="text-xs font-bold mb-1">COMPORTAMIENTO</p>
+            <p className="text-xs">A - Cumple con los compromisos establecidos para la sana convivencia social.</p>
+          </div>
+          <div className="border border-slate-800 p-2">
+            <p className="text-xs font-bold mb-1">ASISTENCIA</p>
+            <div className="text-xs space-y-0.5">
+              <p>Faltas Justificadas: {asistencia.justificados}</p>
+              <p>Faltas Injustificadas: {asistencia.ausentes}</p>
+              <p>Días Asistidos: {asistencia.presentes + asistencia.tardanzas}</p>
+            </div>
+          </div>
+        </div>
+
+        {/* Escala de estimación */}
+        <div className="mb-4 border border-slate-800 p-2">
+          <p className="text-xs font-bold mb-2">ESCALA DE ESTIMACIÓN CUALITATIVA DE DESTREZAS:</p>
+          <div className="grid grid-cols-2 gap-2 text-xs">
+            <div><span className="font-bold">A+</span> - Superado(S): El estudiante supera el dominio</div>
+            <div><span className="font-bold">A-</span> - Logrado(L): El estudiante alcanza el dominio</div>
+            <div><span className="font-bold">B+</span> - Medianamente Logrado(ML): El estudiante básicamente logra el dominio, con refuerzo constante</div>
+            <div><span className="font-bold">B-</span> - Básicamente Logrado(BL): El estudiante básicamente logra el dominio, con refuerzo constante y acompañamiento permanente del docente y de la familia</div>
+            <div className="col-span-2"><span className="font-bold">C+ a E-</span> - En Proceso(EP): En Proceso para alcanzar el dominio; requiere de mayor tiempo de dedicación y refuerzo constante</div>
+          </div>
+        </div>
+
+        {/* Recomendaciones */}
+        <div className="mb-4 border border-slate-800 p-2">
+          <p className="text-xs font-bold mb-1">RECOMENDACIONES:</p>
+          <p className="text-xs">Reforzar lo aprendido como vocales, sonidos m,p y n, así como sumas y restas</p>
+        </div>
+
+        {/* Firmas */}
+        <div className="mt-8 grid grid-cols-2 gap-8">
+          <div className="text-center">
+            <div className="border-t border-slate-800 pt-1 mt-12">
+              <p className="text-xs font-bold">LIC. XIMENA VALENCIA</p>
+              <p className="text-xs">DIRECTORA DEL CECIBEB</p>
+            </div>
+          </div>
+          <div className="text-center">
+            <div className="border-t border-slate-800 pt-1 mt-12">
+              <p className="text-xs font-bold">LIC. ALEXANDRA PERUGACHI</p>
+              <p className="text-xs">DOCENTE TUTOR</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   return (
     <Layout title="Reportes" subtitle="Genera reportes y boletines" showBack>
+      {/* Filtros */}
       <div className="bg-white rounded-xl shadow-sm border border-slate-200 mb-6 p-6">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div>
@@ -369,7 +567,7 @@ export default function Reportes() {
             </select>
           </div>
 
-          {activeReport === "boletin" && (
+          {activeReport === "individualGeneral" && (
             <div>
               <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-2">
                 Estudiante *
@@ -391,40 +589,30 @@ export default function Reportes() {
         </div>
       </div>
 
+      {/* Tabs de Reportes */}
       <div className="bg-white rounded-xl shadow-sm border border-slate-200 mb-6 overflow-hidden">
         <div className="flex border-b border-slate-200">
           <button
-            onClick={() => setActiveReport("boletin")}
+            onClick={() => setActiveReport("individualGeneral")}
             className={`flex-1 px-6 py-4 text-sm font-semibold transition-all ${
-              activeReport === "boletin"
+              activeReport === "individualGeneral"
                 ? "bg-blue-50 text-blue-700 border-b-2 border-blue-600"
                 : "text-slate-600 hover:bg-slate-50"
             }`}
           >
             <FaUserGraduate className="inline mr-2" />
-            Boletín Individual
+            Individual General
           </button>
           <button
-            onClick={() => setActiveReport("grado")}
+            onClick={() => setActiveReport("masivo")}
             className={`flex-1 px-6 py-4 text-sm font-semibold transition-all ${
-              activeReport === "grado"
+              activeReport === "masivo"
                 ? "bg-blue-50 text-blue-700 border-b-2 border-blue-600"
                 : "text-slate-600 hover:bg-slate-50"
             }`}
           >
-            <FaChartBar className="inline mr-2" />
-            Reporte de Grado
-          </button>
-          <button
-            onClick={() => setActiveReport("asistencia")}
-            className={`flex-1 px-6 py-4 text-sm font-semibold transition-all ${
-              activeReport === "asistencia"
-                ? "bg-blue-50 text-blue-700 border-b-2 border-blue-600"
-                : "text-slate-600 hover:bg-slate-50"
-            }`}
-          >
-            <FaCalendarAlt className="inline mr-2" />
-            Reporte de Asistencia
+            <FaUsers className="inline mr-2" />
+            Masivo
           </button>
         </div>
 
@@ -439,342 +627,40 @@ export default function Reportes() {
             </button>
           </div>
 
-          {activeReport === "boletin" && (
+          {/* REPORTE 1: Individual General */}
+          {activeReport === "individualGeneral" && (
             <div>
               {!selectedEstudianteId ? (
                 <div className="text-center py-12 text-slate-500">
                   <FaSearch className="text-4xl mx-auto mb-3 text-slate-300" />
                   <p className="font-medium mb-1">Selecciona un estudiante</p>
-                  <p className="text-sm">para ver su boletín de calificaciones</p>
+                  <p className="text-sm">para ver su boletín general</p>
                 </div>
               ) : estudianteActual ? (
-                <div className="bg-white border border-slate-300 rounded-lg p-8 print:shadow-none">
-                  <div className="text-center mb-6 border-b-2 border-blue-600 pb-4">
-                    <h1 className="text-2xl font-bold text-slate-900 mb-2">
-                      BOLETÍN DE CALIFICACIONES
-                    </h1>
-                    <p className="text-slate-600">
-                      Año Lectivo: {periodoActual?.anioLectivoId}
-                    </p>
-                    <p className="text-slate-600">
-                      {periodoActual?.nombre} - {gradoActual?.nombre}{" "}
-                      {gradoActual?.paralelo}
-                    </p>
-                  </div>
-
-                  <div className="mb-6 bg-slate-50 p-4 rounded-lg">
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <p className="text-sm text-slate-600">Estudiante:</p>
-                        <p className="font-semibold text-slate-900">
-                          {estudianteActual.apellidos} {estudianteActual.nombres}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-sm text-slate-600">Cédula:</p>
-                        <p className="font-semibold text-slate-900">
-                          {estudianteActual.cedula || "N/A"}
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-
-                  {ambitos.map((ambito) => {
-                    const promedio = calcularPromedioAmbito(
-                      estudianteActual.id,
-                      ambito.id
-                    );
-                    const destrezasAmbito = destrezas.filter(
-                      (d) => d.ambitoId === ambito.id
-                    );
-
-                    return (
-                      <div key={ambito.id} className="mb-6">
-                        <h3 className="font-bold text-lg text-blue-900 mb-3 border-b border-blue-300 pb-2">
-                          {ambito.nombre}
-                        </h3>
-                        <table className="w-full border-collapse">
-                          <thead>
-                            <tr className="bg-slate-100">
-                              <th className="border border-slate-300 px-3 py-2 text-left text-sm font-semibold">
-                                Destreza
-                              </th>
-                              <th className="border border-slate-300 px-3 py-2 text-center text-sm font-semibold w-20">
-                                Nota
-                              </th>
-                              <th className="border border-slate-300 px-3 py-2 text-center text-sm font-semibold w-20">
-                                Equivalencia
-                              </th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {destrezasAmbito.map((destreza) => {
-                              const calif = calificaciones.find(
-                                (c) =>
-                                  c.estudianteId === estudianteActual.id &&
-                                  c.destrezaId === destreza.id
-                              );
-                              const nota = calif?.nota || 0;
-
-                              return (
-                                <tr key={destreza.id}>
-                                  <td className="border border-slate-300 px-3 py-2 text-sm">
-                                    {destreza.nombre}
-                                  </td>
-                                  <td className="border border-slate-300 px-3 py-2 text-center font-semibold">
-                                    {nota > 0 ? nota : "-"}
-                                  </td>
-                                  <td className="border border-slate-300 px-3 py-2 text-center font-bold">
-                                    {nota > 0 ? notaALetra(nota) : "-"}
-                                  </td>
-                                </tr>
-                              );
-                            })}
-                            <tr className="bg-blue-50 font-bold">
-                              <td className="border border-slate-300 px-3 py-2 text-sm">
-                                PROMEDIO DEL ÁMBITO
-                              </td>
-                              <td className="border border-slate-300 px-3 py-2 text-center">
-                                {promedio > 0 ? promedio : "-"}
-                              </td>
-                              <td className="border border-slate-300 px-3 py-2 text-center">
-                                {promedio > 0 ? notaALetra(promedio) : "-"}
-                              </td>
-                            </tr>
-                          </tbody>
-                        </table>
-                      </div>
-                    );
-                  })}
-
-                  <div className="mt-6 bg-green-50 border-2 border-green-600 rounded-lg p-4">
-                    <div className="flex justify-between items-center">
-                      <span className="text-lg font-bold text-green-900">
-                        PROMEDIO GENERAL:
-                      </span>
-                      <span className="text-2xl font-bold text-green-900">
-                        {calcularPromedioGeneral(estudianteActual.id)}
-                      </span>
-                    </div>
-                  </div>
-
-                  <div className="mt-6">
-                    <h3 className="font-bold text-lg text-blue-900 mb-3">
-                      ASISTENCIA
-                    </h3>
-                    {(() => {
-                      const asistencia =
-                        calcularAsistenciaEstudiante(estudianteActual.id);
-                      return (
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                          <div className="bg-green-50 border border-green-300 rounded-lg p-3 text-center">
-                            <p className="text-2xl font-bold text-green-700">
-                              {asistencia.presentes}
-                            </p>
-                            <p className="text-xs text-green-600">Presentes</p>
-                          </div>
-                          <div className="bg-yellow-50 border border-yellow-300 rounded-lg p-3 text-center">
-                            <p className="text-2xl font-bold text-yellow-700">
-                              {asistencia.tardanzas}
-                            </p>
-                            <p className="text-xs text-yellow-600">Tardanzas</p>
-                          </div>
-                          <div className="bg-red-50 border border-red-300 rounded-lg p-3 text-center">
-                            <p className="text-2xl font-bold text-red-700">
-                              {asistencia.ausentes}
-                            </p>
-                            <p className="text-xs text-red-600">Ausentes</p>
-                          </div>
-                          <div className="bg-blue-50 border border-blue-300 rounded-lg p-3 text-center">
-                            <p className="text-2xl font-bold text-blue-700">
-                              {asistencia.porcentaje}%
-                            </p>
-                            <p className="text-xs text-blue-600">Asistencia</p>
-                          </div>
-                        </div>
-                      );
-                    })()}
-                  </div>
-
-                  <div className="mt-12 grid grid-cols-2 gap-8">
-                    <div className="text-center">
-                      <div className="border-t border-slate-400 pt-2 mt-12">
-                        <p className="text-sm font-semibold">Docente</p>
-                      </div>
-                    </div>
-                    <div className="text-center">
-                      <div className="border-t border-slate-400 pt-2 mt-12">
-                        <p className="text-sm font-semibold">Representante</p>
-                      </div>
-                    </div>
-                  </div>
-                </div>
+                renderBoletin(estudianteActual)
               ) : null}
             </div>
           )}
 
-          {activeReport === "grado" && (
-            <div>
-              {ambitos.length === 0 ? (
-                <div className="text-center py-12 text-slate-500">
-                  <FaExclamationTriangle className="text-4xl mx-auto mb-3 text-slate-300" />
-                  <p className="font-medium mb-1">No hay ámbitos configurados</p>
-                  <p className="text-sm">
-                    Configura ámbitos y destrezas para este grado
-                  </p>
-                </div>
-              ) : (
-                <div className="space-y-8">
-                  {ambitos.map((ambito) => {
-                    const destrezasAmbito = destrezas.filter(
-                      (d) => d.ambitoId === ambito.id
-                    );
-
-                    return (
-                      <div key={ambito.id}>
-                        <h3 className="font-bold text-xl text-blue-900 mb-4 border-b-2 border-blue-600 pb-2">
-                          {ambito.nombre}
-                        </h3>
-                        <div className="overflow-x-auto">
-                          <table className="w-full border-collapse border border-slate-300">
-                            <thead>
-                              <tr className="bg-blue-100">
-                                <th className="border border-slate-300 px-3 py-2 text-left text-sm font-semibold">
-                                  Estudiante
-                                </th>
-                                {destrezasAmbito.map((destreza) => (
-                                  <th
-                                    key={destreza.id}
-                                    className="border border-slate-300 px-3 py-2 text-center text-xs font-semibold"
-                                  >
-                                    {destreza.nombre.substring(0, 30)}...
-                                  </th>
-                                ))}
-                                <th className="border border-slate-300 px-3 py-2 text-center text-sm font-semibold bg-blue-50">
-                                  Promedio
-                                </th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {estudiantes.map((estudiante) => {
-                                const promedio = calcularPromedioAmbito(
-                                  estudiante.id,
-                                  ambito.id
-                                );
-
-                                return (
-                                  <tr key={estudiante.id}>
-                                    <td className="border border-slate-300 px-3 py-2 text-sm">
-                                      {estudiante.apellidos} {estudiante.nombres}
-                                    </td>
-                                    {destrezasAmbito.map((destreza) => {
-                                      const calif = calificaciones.find(
-                                        (c) =>
-                                          c.estudianteId === estudiante.id &&
-                                          c.destrezaId === destreza.id
-                                      );
-                                      const nota = calif?.nota || 0;
-
-                                      return (
-                                        <td
-                                          key={destreza.id}
-                                          className="border border-slate-300 px-3 py-2 text-center text-sm"
-                                        >
-                                          {nota > 0 ? nota : "-"}
-                                        </td>
-                                      );
-                                    })}
-                                    <td className="border border-slate-300 px-3 py-2 text-center font-bold bg-blue-50">
-                                      {promedio > 0 ? promedio : "-"}
-                                    </td>
-                                  </tr>
-                                );
-                              })}
-                            </tbody>
-                          </table>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          )}
-
-          {activeReport === "asistencia" && (
+          {/* REPORTE 2: Masivo */}
+          {activeReport === "masivo" && (
             <div>
               {estudiantes.length === 0 ? (
                 <div className="text-center py-12 text-slate-500">
                   <FaExclamationTriangle className="text-4xl mx-auto mb-3 text-slate-300" />
                   <p className="font-medium mb-1">No hay estudiantes</p>
-                  <p className="text-sm">
-                    No hay estudiantes registrados en este grado
-                  </p>
+                  <p className="text-sm">No hay estudiantes registrados en este grado</p>
                 </div>
               ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full border-collapse border border-slate-300">
-                    <thead>
-                      <tr className="bg-blue-100">
-                        <th className="border border-slate-300 px-3 py-3 text-left text-sm font-semibold">
-                          Estudiante
-                        </th>
-                        <th className="border border-slate-300 px-3 py-3 text-center text-sm font-semibold w-20">
-                          Presentes
-                        </th>
-                        <th className="border border-slate-300 px-3 py-3 text-center text-sm font-semibold w-20">
-                          Tardanzas
-                        </th>
-                        <th className="border border-slate-300 px-3 py-3 text-center text-sm font-semibold w-20">
-                          Ausentes
-                        </th>
-                        <th className="border border-slate-300 px-3 py-3 text-center text-sm font-semibold w-20">
-                          Justificados
-                        </th>
-                        <th className="border border-slate-300 px-3 py-3 text-center text-sm font-semibold w-24">
-                          % Asistencia
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {estudiantes.map((estudiante) => {
-                        const asistencia = calcularAsistenciaEstudiante(
-                          estudiante.id
-                        );
-
-                        return (
-                          <tr key={estudiante.id}>
-                            <td className="border border-slate-300 px-3 py-2 text-sm">
-                              {estudiante.apellidos} {estudiante.nombres}
-                            </td>
-                            <td className="border border-slate-300 px-3 py-2 text-center text-green-700 font-semibold">
-                              {asistencia.presentes}
-                            </td>
-                            <td className="border border-slate-300 px-3 py-2 text-center text-yellow-700 font-semibold">
-                              {asistencia.tardanzas}
-                            </td>
-                            <td className="border border-slate-300 px-3 py-2 text-center text-red-700 font-semibold">
-                              {asistencia.ausentes}
-                            </td>
-                            <td className="border border-slate-300 px-3 py-2 text-center text-blue-700 font-semibold">
-                              {asistencia.justificados}
-                            </td>
-                            <td
-                              className={`border border-slate-300 px-3 py-2 text-center font-bold ${
-                                asistencia.porcentaje >= 90
-                                  ? "text-green-700"
-                                  : asistencia.porcentaje >= 75
-                                  ? "text-yellow-700"
-                                  : "text-red-700"
-                              }`}
-                            >
-                              {asistencia.porcentaje}%
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
+                <div>
+                  <p className="text-sm text-slate-600 mb-4">
+                    Se generarán {estudiantes.length} boletines
+                  </p>
+                  {estudiantes.map((estudiante) => (
+                    <div key={estudiante.id}>
+                      {renderBoletin(estudiante)}
+                    </div>
+                  ))}
                 </div>
               )}
             </div>
@@ -786,6 +672,9 @@ export default function Reportes() {
         @media print {
           .no-print {
             display: none !important;
+          }
+          .page-break {
+            page-break-after: always;
           }
           body {
             print-color-adjust: exact;

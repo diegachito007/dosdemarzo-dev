@@ -36,7 +36,7 @@ export default function AmbitosDestrezas() {
   const [ambitos, setAmbitos] = useState<Ambito[]>([]);
   const [destrezas, setDestrezas] = useState<Destreza[]>([]);
   const [loading, setLoading] = useState(true);
-  const [isSaving, setIsSaving] = useState(false); // ✅ Nuevo estado
+  const [isSaving, setIsSaving] = useState(false);
 
   const [selectedGradoId, setSelectedGradoId] = useState("");
 
@@ -161,7 +161,6 @@ export default function AmbitosDestrezas() {
     }
   }, []);
 
-  // ✅ Guardar Ámbito con feedback visual
   const guardarAmbito = useCallback(async () => {
     const errors: string[] = [];
 
@@ -190,7 +189,7 @@ export default function AmbitosDestrezas() {
       return;
     }
 
-    setIsSaving(true); // ✅ Iniciar procesamiento
+    setIsSaving(true);
 
     try {
       if (editingAmbitoId) {
@@ -216,7 +215,7 @@ export default function AmbitosDestrezas() {
       console.error("Error guardando ámbito:", error);
       alert("Error al guardar");
     } finally {
-      setIsSaving(false); // ✅ Terminar procesamiento
+      setIsSaving(false);
     }
   }, [
     ambitoFormData,
@@ -228,7 +227,7 @@ export default function AmbitosDestrezas() {
     cargarAmbitos,
   ]);
 
-  // ✅ Analizar y Guardar Destrezas con feedback visual
+  // ✅ NUEVA LÓGICA: Separar por punto seguido de salto de línea
   const analizarYGuardarDestrezas = useCallback(async () => {
     const errors: string[] = [];
 
@@ -245,14 +244,25 @@ export default function AmbitosDestrezas() {
       return;
     }
 
-    const lineas = destrezaMassiveData.split(/\n\s*\n/);
+    // ✅ Separar por punto seguido de salto de línea (con o sin espacios)
+    // El lookbehind (?<=\.) mantiene el punto en la destreza anterior
+    const lineas = destrezaMassiveData.split(/(?<=\.)\s*\n+/);
     const destrezasList = lineas
       .map((d) => d.trim())
       .filter((d) => d.length > 0);
 
     if (destrezasList.length === 0) {
       setValidationErrors([
-        "No se encontraron destrezas válidas. Separe cada destreza con una línea en blanco.",
+        "No se encontraron destrezas válidas. Cada destreza debe terminar con un punto (.)",
+      ]);
+      return;
+    }
+
+    // Validar que cada destreza termine con punto
+    const sinPunto = destrezasList.filter((d) => !d.endsWith("."));
+    if (sinPunto.length > 0) {
+      setValidationErrors([
+        `${sinPunto.length} destreza(s) no terminan con punto. Cada destreza debe terminar con "."`,
       ]);
       return;
     }
@@ -298,7 +308,7 @@ export default function AmbitosDestrezas() {
       return;
     }
 
-    setIsSaving(true); // ✅ Iniciar procesamiento
+    setIsSaving(true);
 
     try {
       const ambito = ambitos.find((a) => a.id === selectedAmbitoId);
@@ -331,7 +341,7 @@ export default function AmbitosDestrezas() {
       console.error("Error guardando destrezas:", error);
       alert("Error al guardar las destrezas");
     } finally {
-      setIsSaving(false); // ✅ Terminar procesamiento
+      setIsSaving(false);
     }
   }, [
     destrezaMassiveData,
@@ -407,14 +417,13 @@ export default function AmbitosDestrezas() {
     setValidationErrors([]);
   }, []);
 
-  // ✅ Guardar Destreza Individual con feedback visual
   const guardarDestrezaIndividual = useCallback(async () => {
     if (!destrezaMassiveData.trim() || destrezaMassiveData.trim().length < 20) {
       setValidationErrors(["La destreza debe tener al menos 20 caracteres"]);
       return;
     }
 
-    setIsSaving(true); // ✅ Iniciar procesamiento
+    setIsSaving(true);
 
     try {
       const ambito = ambitos.find((a) => a.id === selectedAmbitoId);
@@ -448,7 +457,7 @@ export default function AmbitosDestrezas() {
       console.error("Error:", error);
       alert("Error al guardar");
     } finally {
-      setIsSaving(false); // ✅ Terminar procesamiento
+      setIsSaving(false);
     }
   }, [
     destrezaMassiveData,
@@ -763,7 +772,7 @@ export default function AmbitosDestrezas() {
                     <label className="block text-xs font-semibold text-slate-700 mb-1">
                       {editingDestrezaId
                         ? "Editar destreza"
-                        : "Destrezas (una por bloque, separar con línea en blanco) *"}
+                        : "Destrezas (cada una termina con punto) *"}
                     </label>
                     <textarea
                       value={destrezaMassiveData}
@@ -774,9 +783,7 @@ export default function AmbitosDestrezas() {
                           ? "Edita la destreza aquí..."
                           : `Ejemplo:
 Escucha activamente a sus compañeros y adultos, demostrando atención y respeto en las conversaciones del aula.
-
 Expresa sus ideas, necesidades y sentimientos con claridad, utilizando un vocabulario adecuado a su edad.
-
 Participa en conversaciones grupales, respetando los turnos de palabra y las opiniones de los demás.`
                       }
                       rows={12}
@@ -785,8 +792,7 @@ Participa en conversaciones grupales, respetando los turnos de palabra y las opi
                     {!editingDestrezaId && (
                       <p className="text-xs text-slate-500 mt-1">
                         <FaInfoCircle className="inline mr-1" />
-                        Separe cada destreza con una línea en blanco. Mínimo 20
-                        caracteres.
+                        Escribe cada destreza seguida de un punto (.) y un salto de línea. No necesitas dejar espacios en blanco entre ellas.
                       </p>
                     )}
                   </div>
