@@ -704,19 +704,19 @@ export default function Calificaciones() {
                   </div>
 
                   {/* Controles específicos por tab */}
-                  <div className="flex flex-col sm:flex-row gap-2 w-full lg:w-auto lg:flex-1 lg:justify-end">
+                  <div className="flex flex-col sm:flex-row gap-2 w-full lg:w-auto lg:justify-end items-stretch sm:items-center">
                     {activeTab === "asistencia" ? (
                       <>
                         <input
                           type="date"
                           value={fechaAsistencia}
                           onChange={(e) => setFechaAsistencia(e.target.value)}
-                          className="flex-1 sm:w-auto border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500"
+                          className="w-full sm:w-auto border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500"
                         />
                         <button
                           onClick={guardarAsistencia}
                           disabled={isSaving || !todosConAsistencia}
-                          className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-all flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed"
+                          className="w-full sm:w-auto bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-all flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed shrink-0"
                         >
                           {isSaving ? (
                             <FaSpinner className="animate-spin" />
@@ -728,6 +728,7 @@ export default function Calificaciones() {
                       </>
                     ) : (
                       <>
+                        {/* ✅ SELECTS CON ANCHO FIJO PARA EVITAR QUE SE ESTIREN */}
                         <select
                           value={selectedAmbitoId}
                           onChange={(e) => {
@@ -735,7 +736,7 @@ export default function Calificaciones() {
                             setSelectedDestrezaId("");
                             setCalificaciones({});
                           }}
-                          className="flex-1 sm:w-auto border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500"
+                          className="w-full sm:w-48 border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 truncate"
                         >
                           <option value="">Ámbito...</option>
                           {ambitos.map((ambito) => (
@@ -748,7 +749,7 @@ export default function Calificaciones() {
                           value={selectedDestrezaId}
                           onChange={(e) => setSelectedDestrezaId(e.target.value)}
                           disabled={!selectedAmbitoId}
-                          className="flex-1 sm:w-auto border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 disabled:bg-slate-100"
+                          className="w-full sm:w-48 border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 disabled:bg-slate-100 truncate"
                         >
                           <option value="">Destreza...</option>
                           {destrezas.map((destreza) => (
@@ -757,17 +758,24 @@ export default function Calificaciones() {
                             </option>
                           ))}
                         </select>
+                        
+                        {/* ✅ BOTÓN CON shrink-0 PARA QUE NO SE ENCOJA */}
                         <button
                           onClick={guardarCalificaciones}
                           disabled={isSaving || !selectedDestrezaId}
-                          className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-all flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed"
+                          title={!selectedDestrezaId ? "⚠️ Primero debes seleccionar un ámbito y una destreza" : "Guardar calificaciones"}
+                          className={`w-full sm:w-auto px-4 py-2 rounded-lg text-sm font-semibold transition-all flex items-center justify-center gap-2 shrink-0 ${
+                            !selectedDestrezaId 
+                              ? "bg-slate-300 text-slate-500 cursor-not-allowed" 
+                              : "bg-blue-600 hover:bg-blue-700 text-white shadow-sm hover:shadow-md"
+                          }`}
                         >
                           {isSaving ? (
                             <FaSpinner className="animate-spin" />
                           ) : (
                             <FaSave />
                           )}
-                          Guardar
+                          Guardar Notas
                         </button>
                       </>
                     )}
