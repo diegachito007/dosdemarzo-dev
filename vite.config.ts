@@ -1,15 +1,21 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
-import tailwindcss from '@tailwindcss/vite'; // ← Agrega esta línea
+import tailwindcss from '@tailwindcss/vite';
 
 export default defineConfig({
   plugins: [
     react(),
-    tailwindcss(), // ← Agrega esta línea
+    tailwindcss(),
     VitePWA({
       registerType: 'autoUpdate',
       includeAssets: ['favicon.ico', 'robots.txt', 'apple-touch-icon.png'],
+      
+      // ✅ SOLUCIÓN: Aumenta el límite de tamaño de archivo a 5 MB (5,000,000 bytes)
+      workbox: {
+        maximumFileSizeToCacheInBytes: 5000000,
+      },
+      
       manifest: {
         name: 'Sistema de Calificaciones',
         short_name: 'Calificaciones',
