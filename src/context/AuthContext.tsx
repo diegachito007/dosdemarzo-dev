@@ -1,18 +1,22 @@
-import { createContext, useContext, useEffect, useState } from 'react';
+import { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import type { ReactNode } from 'react';
-import { 
-  onAuthStateChanged, 
-  signInWithPopup, 
+import {
+  onAuthStateChanged,
+  signInWithPopup,
   signOut
 } from 'firebase/auth';
 import type { User } from 'firebase/auth';
-import { auth, googleProvider } from '../lib/firebase';
+import { doc, getDoc, setDoc, serverTimestamp, onSnapshot } from 'firebase/firestore';
+import { auth, googleProvider, db } from '../lib/firebase';
+import type { AppUser } from '../types';
 
 interface AuthContextType {
   user: User | null;
+  userData: AppUser | null;
   loading: boolean;
   loginWithGoogle: () => Promise<void>;
   logout: () => Promise<void>;
+  canDeleteUser: (targetUser: AppUser) => boolean;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
@@ -23,14 +27,64 @@ interface AuthProviderProps {
 
 export function AuthProvider({ children }: AuthProviderProps) {
   const [user, setUser] = useState<User | null>(null);
+  const [userData, setUserData] = useState<AppUser | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
-      setUser(user);
-      setLoading(false);
+    const unsubscribeAuth = onAuthStateChanged(auth, async (firebaseUser) => {
+      setUser(firebaseUser);
+      
+      if (firebaseUser) {
+        const userRef = doc(db, 'usuarios', firebaseUser.uid);
+        const userSnap = await getDoc(userRef);
+        
+        if (!userSnap.exists()) {
+          const newUser: AppUser = {
+            uid: firebaseUser.uid,
+            email: firebaseUser.email!,
+            displayName: firebaseUser.displayName || 'Nuevo Usuario',
+            photoURL: firebaseUser.photoURL ?? null,
+            role: 'docente',
+            status: 'pending',
+            gradosAsignados: [],
+            tutorDe: [],
+            nombreDocumento: '',
+            createdAt: new Date().toISOString(),
+          };
+          await setDoc(userRef, {
+            ...newUser,
+            createdAt: serverTimestamp(),
+          });
+          setUserData(newUser);
+        }
+
+        const unsubscribeSnapshot = onSnapshot(userRef, (snapshot) => {
+          if (snapshot.exists()) {
+            const data = snapshot.data();
+            setUserData({
+              uid: firebaseUser.uid,
+              email: firebaseUser.email!,
+              displayName: data.displayName || firebaseUser.displayName || 'Usuario',
+              photoURL: firebaseUser.photoURL ?? null,
+              role: data.role || 'docente',
+              status: data.status || 'pending',
+              gradosAsignados: data.gradosAsignados || [],
+              tutorDe: data.tutorDe || [],
+              nombreDocumento: data.nombreDocumento || '',
+              createdAt: data.createdAt || new Date().toISOString(),
+            });
+          }
+          setLoading(false);
+        });
+
+        return () => unsubscribeSnapshot();
+      } else {
+        setUserData(null);
+        setLoading(false);
+      }
     });
-    return unsubscribe;
+
+    return () => unsubscribeAuth();
   }, []);
 
   const loginWithGoogle = async () => {
@@ -39,11 +93,9 @@ export function AuthProvider({ children }: AuthProviderProps) {
     } catch (error: unknown) {
       if (error instanceof Error && 'code' in error) {
         const firebaseError = error as { code: string };
-        // Ignorar si el usuario cerró el popup manualmente
         if (firebaseError.code === 'auth/popup-closed-by-user') {
           return;
         }
-        // Ignorar si el usuario canceló el popup
         if (firebaseError.code === 'auth/popup-blocked') {
           console.warn('Popup bloqueado por el navegador');
           return;
@@ -57,8 +109,30 @@ export function AuthProvider({ children }: AuthProviderProps) {
     await signOut(auth);
   };
 
+  // ✅ SIMPLIFICADO: Solo super_admin puede eliminar usuarios
+  const canDeleteUser = useCallback((targetUser: AppUser): boolean => {
+    if (!userData) return false;
+    
+    // Solo super_admin puede eliminar usuarios
+    if (userData.role === 'super_admin') {
+      return userData.uid !== targetUser.uid;
+    }
+    
+    // Docentes no pueden eliminar a nadie
+    return false;
+  }, [userData]);
+
   return (
-    <AuthContext.Provider value={{ user, loading, loginWithGoogle, logout }}>
+    <AuthContext.Provider
+      value={{
+        user,
+        userData,
+        loading,
+        loginWithGoogle,
+        logout,
+        canDeleteUser,
+      }}
+    >
       {children}
     </AuthContext.Provider>
   );

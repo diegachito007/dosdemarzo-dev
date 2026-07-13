@@ -16,7 +16,7 @@ import { useAuth } from '../context/AuthContext';
 import type { Estudiante, Grado, AnioLectivo } from '../types';
 import Layout from '../components/Layout';
 import ConfirmModal from '../components/ConfirmModal';
-import { FaPlus, FaEdit, FaTrash, FaCheck, FaTimes, FaUsers, FaInfoCircle, FaSearch, FaExclamationTriangle, FaCalendarAlt } from 'react-icons/fa';
+import { FaPlus, FaEdit, FaTrash, FaCheck, FaTimes, FaUsers, FaInfoCircle, FaSearch, FaExclamationTriangle, FaCalendarAlt, FaUserTie } from 'react-icons/fa';
 
 interface EstudianteData {
   cedula: string;
@@ -25,7 +25,8 @@ interface EstudianteData {
 }
 
 export default function Estudiantes() {
-  const { user } = useAuth();
+  const { user, userData } = useAuth(); // ✅ Agregar userData
+  
   const [estudiantes, setEstudiantes] = useState<Estudiante[]>([]);
   const [grados, setGrados] = useState<Grado[]>([]);
   const [aniosLectivos, setAniosLectivos] = useState<AnioLectivo[]>([]);
@@ -46,6 +47,35 @@ export default function Estudiantes() {
     gradoId: '',
     activo: true
   });
+
+  // ✅ Verificar si es docente sin grados asignados
+  const docenteSinGrados = userData?.role === 'docente' && (!userData?.gradosAsignados || userData.gradosAsignados.length === 0);
+
+  // ✅ Verificar si puede gestionar (crear/editar/eliminar) estudiantes de un grado específico
+  const puedeGestionarEstudiantes = useCallback((gradoId: string): boolean => {
+    // Super Admin puede en todos
+    if (userData?.role === 'super_admin') return true;
+    
+    // Docente: solo si es TUTOR de ese grado
+    if (userData?.role === 'docente') {
+      return userData?.tutorDe?.includes(gradoId) || false;
+    }
+    
+    return false;
+  }, [userData]);
+
+  // ✅ Verificar si puede ver un grado (todos los grados asignados)
+  const puedeVerGrado = useCallback((gradoId: string): boolean => {
+    // Super Admin ve todos
+    if (userData?.role === 'super_admin') return true;
+    
+    // Docente: solo si tiene el grado asignado (no necesita ser tutor)
+    if (userData?.role === 'docente') {
+      return userData?.gradosAsignados?.includes(gradoId) || false;
+    }
+    
+    return false;
+  }, [userData]);
 
   // ✅ Obtener año lectivo activo automáticamente
   const anioActivo = aniosLectivos.find(a => a.activo);
@@ -83,13 +113,34 @@ export default function Estudiantes() {
     }
   }, []);
 
+  // ✅ FILTRAR GRADOS según rol
   const cargarGrados = useCallback(async () => {
     try {
-      const q = query(
-        collection(db, 'grados'),
-        where('activo', '==', true),
-        orderBy('orden', 'asc')
-      );
+      let q;
+      
+      if (userData?.role === 'docente' && userData?.gradosAsignados && userData.gradosAsignados.length > 0) {
+        // Docente: solo sus grados asignados (no solo tutor)
+        q = query(
+          collection(db, 'grados'),
+          where('__name__', 'in', userData.gradosAsignados),
+          where('activo', '==', true),
+          orderBy('orden', 'asc')
+        );
+      } else if (userData?.role === 'docente') {
+        // Docente sin grados: no cargar nada
+        startTransition(() => {
+          setGrados([]);
+        });
+        return;
+      } else {
+        // Super Admin: todos los grados
+        q = query(
+          collection(db, 'grados'),
+          where('activo', '==', true),
+          orderBy('orden', 'asc')
+        );
+      }
+      
       const snap = await getDocs(q);
       const data = snap.docs.map(doc => ({
         id: doc.id,
@@ -102,14 +153,35 @@ export default function Estudiantes() {
     } catch (error) {
       console.error('Error cargando grados:', error);
     }
-  }, []);
+  }, [userData]);
 
+  // ✅ FILTRAR ESTUDIANTES según grados asignados (no solo tutor)
   const cargarEstudiantes = useCallback(async () => {
     try {
-      const q = query(
-        collection(db, 'estudiantes'),
-        orderBy('apellidos', 'asc')
-      );
+      let q;
+      
+      if (userData?.role === 'docente' && userData?.gradosAsignados && userData.gradosAsignados.length > 0) {
+        // Docente: solo estudiantes de sus grados asignados (no solo tutor)
+        q = query(
+          collection(db, 'estudiantes'),
+          where('gradoId', 'in', userData.gradosAsignados),
+          orderBy('apellidos', 'asc')
+        );
+      } else if (userData?.role === 'docente') {
+        // Docente sin grados: no cargar estudiantes
+        startTransition(() => {
+          setEstudiantes([]);
+          setLoading(false);
+        });
+        return;
+      } else {
+        // Super Admin: todos los estudiantes
+        q = query(
+          collection(db, 'estudiantes'),
+          orderBy('apellidos', 'asc')
+        );
+      }
+      
       const snap = await getDocs(q);
       const data = snap.docs.map(doc => ({
         id: doc.id,
@@ -126,7 +198,7 @@ export default function Estudiantes() {
         setLoading(false);
       });
     }
-  }, []);
+  }, [userData]);
 
   const validarEstudiante = useCallback((cedula: string, apellidos: string, nombres: string, gradoId: string, excludeId?: string): string[] => {
     const errors: string[] = [];
@@ -340,6 +412,12 @@ export default function Estudiantes() {
   };
 
   const handleEdit = useCallback((estudiante: Estudiante) => {
+    // ✅ Validar permisos antes de editar
+    if (!puedeGestionarEstudiantes(estudiante.gradoId)) {
+      alert('❌ No tienes permisos para editar estudiantes de este grado');
+      return;
+    }
+    
     setFormData({
       apellidos: estudiante.apellidos,
       nombres: estudiante.nombres,
@@ -351,9 +429,18 @@ export default function Estudiantes() {
     setShowForm(true);
     setIsMassive(false);
     setValidationErrors([]);
-  }, []);
+  }, [puedeGestionarEstudiantes]);
 
   const handleDelete = useCallback(async (id: string) => {
+    const estudiante = estudiantes.find(e => e.id === id);
+    if (!estudiante) return;
+    
+    // ✅ Validar permisos antes de eliminar
+    if (!puedeGestionarEstudiantes(estudiante.gradoId)) {
+      alert('❌ No tienes permisos para eliminar estudiantes de este grado');
+      return;
+    }
+    
     if (!confirm('¿Estás seguro de eliminar este estudiante? Esta acción no se puede deshacer.')) return;
 
     try {
@@ -363,9 +450,18 @@ export default function Estudiantes() {
       console.error('Error eliminando:', error);
       alert('Error al eliminar');
     }
-  }, [cargarEstudiantes]);
+  }, [cargarEstudiantes, estudiantes, puedeGestionarEstudiantes]);
 
   const handleToggleActivo = useCallback(async (id: string, estadoActual: boolean) => {
+    const estudiante = estudiantes.find(e => e.id === id);
+    if (!estudiante) return;
+    
+    // ✅ Validar permisos antes de cambiar estado
+    if (!puedeGestionarEstudiantes(estudiante.gradoId)) {
+      alert('❌ No tienes permisos para modificar el estado de este estudiante');
+      return;
+    }
+    
     try {
       await updateDoc(doc(db, 'estudiantes', id), {
         activo: !estadoActual
@@ -374,7 +470,7 @@ export default function Estudiantes() {
     } catch (error) {
       console.error('Error actualizando estado:', error);
     }
-  }, [cargarEstudiantes]);
+  }, [cargarEstudiantes, estudiantes, puedeGestionarEstudiantes]);
 
   useEffect(() => {
     cargarAniosLectivos();
@@ -383,6 +479,9 @@ export default function Estudiantes() {
   }, [cargarAniosLectivos, cargarGrados, cargarEstudiantes]);
 
   const estudiantesFiltrados = estudiantes.filter(est => {
+    // ✅ Solo mostrar estudiantes de grados que puede ver (gradosAsignados, no solo tutor)
+    if (!puedeVerGrado(est.gradoId)) return false;
+    
     const matchGrado = grados.find(g => g.id === est.gradoId);
     const searchText = searchTerm.toLowerCase();
     
@@ -393,6 +492,9 @@ export default function Estudiantes() {
       (matchGrado && `${matchGrado.nombre} ${matchGrado.paralelo}`.toLowerCase().includes(searchText))
     );
   });
+
+  // ✅ Verificar si el usuario puede crear estudiantes en algún grado
+  const puedeCrearEnAlgunGrado = grados.some(g => puedeGestionarEstudiantes(g.id));
 
   if (loading) {
     return (
@@ -413,17 +515,42 @@ export default function Estudiantes() {
       subtitle="Administra la matrícula de alumnos"
       showBack
       action={
-        <button
-          onClick={() => setShowForm(!showForm)}
-          className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg transition-all text-sm font-medium shadow-sm hover:shadow-md"
-        >
-          <FaPlus className="text-sm" />
-          {showForm ? 'Cancelar' : 'Nuevo Estudiante'}
-        </button>
+        // ✅ Solo mostrar botón si puede crear en algún grado
+        puedeCrearEnAlgunGrado ? (
+          <button
+            onClick={() => setShowForm(!showForm)}
+            className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg transition-all text-sm font-medium shadow-sm hover:shadow-md"
+          >
+            <FaPlus className="text-sm" />
+            {showForm ? 'Cancelar' : 'Nuevo Estudiante'}
+          </button>
+        ) : null
       }
     >
+      {/* ✅ Mensaje para docentes sin grados asignados */}
+      {docenteSinGrados && (
+        <div className="bg-yellow-50 border-2 border-yellow-300 rounded-xl px-8 py-12 mb-6">
+          <div className="flex items-start gap-4 max-w-3xl">
+            <div className="bg-yellow-100 p-3 rounded-full">
+              <FaExclamationTriangle className="text-yellow-600 text-2xl" />
+            </div>
+            <div className="flex-1">
+              <h3 className="text-yellow-800 font-bold text-xl mb-3">
+                No tienes grados asignados
+              </h3>
+              <p className="text-yellow-700 mb-2">
+                Contacta al administrador del sistema para que te asigne los grados que podrás gestionar.
+              </p>
+              <p className="text-yellow-600 text-sm">
+                Una vez que te asignen grados, podrás ver y gestionar estudiantes en esta sección.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ✅ Indicador de Año Lectivo Activo */}
-      {anioActivo && (
+      {!docenteSinGrados && anioActivo && (
         <div className="bg-blue-50 border border-blue-200 rounded-lg px-4 py-3 mb-6">
           <div className="flex items-center gap-2 text-blue-800">
             <FaCalendarAlt className="text-sm" />
@@ -433,7 +560,7 @@ export default function Estudiantes() {
         </div>
       )}
 
-      {!anioActivo && (
+      {!docenteSinGrados && !anioActivo && (
         <div className="bg-yellow-50 border border-yellow-200 rounded-lg px-4 py-3 mb-6">
           <div className="flex items-start gap-2">
             <FaInfoCircle className="text-yellow-600 mt-0.5" />
@@ -449,7 +576,8 @@ export default function Estudiantes() {
         </div>
       )}
 
-      {showForm && (
+      {/* ✅ Formulario solo si puede crear */}
+      {!docenteSinGrados && showForm && puedeCrearEnAlgunGrado && (
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 mb-6 overflow-hidden">
           <div className="bg-linear-to-r from-blue-600 to-blue-700 px-5 py-3 flex items-center justify-between">
             <h3 className="text-white font-semibold text-base">
@@ -545,11 +673,14 @@ export default function Estudiantes() {
                     required
                   >
                     <option value="">Seleccionar...</option>
-                    {grados.map(grado => (
-                      <option key={grado.id} value={grado.id}>
-                        {grado.nombre} - {grado.paralelo}
-                      </option>
-                    ))}
+                    {grados
+                      .filter(g => puedeGestionarEstudiantes(g.id)) // ✅ Solo mostrar grados donde puede crear
+                      .map(grado => (
+                        <option key={grado.id} value={grado.id}>
+                          {grado.nombre} - {grado.paralelo}
+                          {userData?.tutorDe?.includes(grado.id) && ' (Tutor)'}
+                        </option>
+                      ))}
                   </select>
                 </div>
 
@@ -579,11 +710,14 @@ export default function Estudiantes() {
                     required
                   >
                     <option value="">Seleccionar grado...</option>
-                    {grados.map(grado => (
-                      <option key={grado.id} value={grado.id}>
-                        {grado.nombre} - {grado.paralelo}
-                      </option>
-                    ))}
+                    {grados
+                      .filter(g => puedeGestionarEstudiantes(g.id)) // ✅ Solo mostrar grados donde puede crear
+                      .map(grado => (
+                        <option key={grado.id} value={grado.id}>
+                          {grado.nombre} - {grado.paralelo}
+                          {userData?.tutorDe?.includes(grado.id) && ' (Tutor)'}
+                        </option>
+                      ))}
                   </select>
                 </div>
 
@@ -630,153 +764,198 @@ export default function Estudiantes() {
         </div>
       )}
 
-      <div className="bg-white rounded-xl shadow-sm border border-slate-200 mb-6 p-4">
-        <div className="relative">
-          <FaSearch className="absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400" />
-          <input
-            type="text"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            placeholder="Buscar por apellidos, nombres, cédula o grado..."
-            className="w-full pl-10 pr-4 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all"
-          />
-        </div>
-      </div>
+      {/* ✅ Contenido solo si no es docente sin grados */}
+      {!docenteSinGrados && (
+        <>
+          <div className="bg-white rounded-xl shadow-sm border border-slate-200 mb-6 p-4">
+            <div className="relative">
+              <FaSearch className="absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400" />
+              <input
+                type="text"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                placeholder="Buscar por apellidos, nombres, cédula o grado..."
+                className="w-full pl-10 pr-4 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all"
+              />
+            </div>
+          </div>
 
-      <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead className="bg-slate-50 border-b border-slate-200">
-              <tr>
-                <th className="px-5 py-3 text-left text-xs font-semibold text-slate-700 uppercase tracking-wider">
-                  Apellidos y Nombres
-                </th>
-                <th className="px-5 py-3 text-left text-xs font-semibold text-slate-700 uppercase tracking-wider">
-                  Grado
-                </th>
-                <th className="px-5 py-3 text-center text-xs font-semibold text-slate-700 uppercase tracking-wider w-32">
-                  Estado
-                </th>
-                <th className="px-5 py-3 text-center text-xs font-semibold text-slate-700 uppercase tracking-wider w-32">
-                  Acciones
-                </th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-200">
-              {estudiantesFiltrados.length === 0 ? (
-                <tr>
-                  <td colSpan={4} className="px-5 py-16 text-center">
-                    <div className="flex flex-col items-center">
-                      <div className="bg-slate-100 rounded-full p-4 mb-3">
-                        <FaUsers className="text-3xl text-slate-400" />
-                      </div>
-                      <p className="text-slate-600 font-medium mb-1">
-                        {searchTerm ? 'No se encontraron estudiantes' : 'No hay estudiantes registrados'}
-                      </p>
-                      {!searchTerm && (
-                        <>
-                          <p className="text-slate-500 text-sm mb-3">Comienza registrando el primer estudiante</p>
-                          <button
-                            onClick={() => setShowForm(true)}
-                            className="inline-flex items-center gap-2 text-blue-600 hover:text-blue-700 font-medium text-sm"
-                          >
-                            <FaPlus className="text-xs" />
-                            Registrar estudiante
-                          </button>
-                        </>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              ) : (
-                estudiantesFiltrados.map((est) => {
-                  const grado = grados.find(g => g.id === est.gradoId);
-                  
-                  return (
-                    <tr key={est.id} className="hover:bg-slate-50 transition-colors">
-                      <td className="px-5 py-3">
-                        <div>
-                          <div className="font-semibold text-slate-900 text-sm">
-                            {est.apellidos} {est.nombres}
+          <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead className="bg-slate-50 border-b border-slate-200">
+                  <tr>
+                    <th className="px-5 py-3 text-left text-xs font-semibold text-slate-700 uppercase tracking-wider">
+                      Apellidos y Nombres
+                    </th>
+                    <th className="px-5 py-3 text-left text-xs font-semibold text-slate-700 uppercase tracking-wider">
+                      Grado
+                    </th>
+                    <th className="px-5 py-3 text-center text-xs font-semibold text-slate-700 uppercase tracking-wider w-32">
+                      Estado
+                    </th>
+                    <th className="px-5 py-3 text-center text-xs font-semibold text-slate-700 uppercase tracking-wider w-32">
+                      Acciones
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-200">
+                  {estudiantesFiltrados.length === 0 ? (
+                    <tr>
+                      <td colSpan={4} className="px-5 py-16 text-center">
+                        <div className="flex flex-col items-center">
+                          <div className="bg-slate-100 rounded-full p-4 mb-3">
+                            <FaUsers className="text-3xl text-slate-400" />
                           </div>
-                          {est.cedula && (
-                            <div className="text-slate-500 text-xs mt-0.5">
-                              CI: {est.cedula}
-                            </div>
-                          )}
-                        </div>
-                      </td>
-                      <td className="px-5 py-3">
-                        {grado ? (
-                          <div className="flex items-center gap-2">
-                            <div className="bg-linear-to-br from-blue-500 to-purple-600 text-white rounded w-6 h-6 flex items-center justify-center text-xs font-bold">
-                              {grado.paralelo}
-                            </div>
-                            <div className="text-sm text-slate-700">
-                              {grado.nombre}
-                            </div>
-                          </div>
-                        ) : (
-                          <span className="text-slate-400 text-sm">N/A</span>
-                        )}
-                      </td>
-                      <td className="px-5 py-3 text-center">
-                        <button
-                          onClick={() => handleToggleActivo(est.id, est.activo)}
-                          className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold transition-all ${
-                            est.activo
-                              ? 'bg-linear-to-r from-green-500 to-green-600 text-white shadow-sm'
-                              : 'bg-slate-100 text-slate-600'
-                          }`}
-                        >
-                          {est.activo ? (
+                          <p className="text-slate-600 font-medium mb-1">
+                            {searchTerm ? 'No se encontraron estudiantes' : 'No hay estudiantes registrados'}
+                          </p>
+                          {!searchTerm && puedeCrearEnAlgunGrado && (
                             <>
-                              <FaCheck className="mr-1 text-[10px]" />
-                              Activo
+                              <p className="text-slate-500 text-sm mb-3">Comienza registrando el primer estudiante</p>
+                              <button
+                                onClick={() => setShowForm(true)}
+                                className="inline-flex items-center gap-2 text-blue-600 hover:text-blue-700 font-medium text-sm"
+                              >
+                                <FaPlus className="text-xs" />
+                                Registrar estudiante
+                              </button>
                             </>
-                          ) : (
-                            'Inactivo'
                           )}
-                        </button>
-                      </td>
-                      <td className="px-5 py-3">
-                        <div className="flex justify-center gap-1">
-                          <button
-                            onClick={() => handleEdit(est)}
-                            className="p-1.5 text-blue-600 hover:bg-blue-50 rounded transition-all"
-                            title="Editar"
-                          >
-                            <FaEdit className="text-sm" />
-                          </button>
-                          <button
-                            onClick={() => handleDelete(est.id)}
-                            className="p-1.5 text-red-600 hover:bg-red-50 rounded transition-all"
-                            title="Eliminar"
-                          >
-                            <FaTrash className="text-sm" />
-                          </button>
                         </div>
                       </td>
                     </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
-        
-        {estudiantesFiltrados.length > 0 && (
-          <div className="bg-slate-50 px-5 py-3 border-t border-slate-200">
-            <div className="flex items-center justify-between text-xs text-slate-600">
-              <span>
-                Mostrando <strong>{estudiantesFiltrados.length}</strong> estudiante{estudiantesFiltrados.length !== 1 ? 's' : ''}
-                {searchTerm && ` de ${estudiantes.length}`}
-              </span>
-              <span>{estudiantes.filter(e => e.activo).length} activo{estudiantes.filter(e => e.activo).length !== 1 ? 's' : ''}</span>
+                  ) : (
+                    estudiantesFiltrados.map((est) => {
+                      const grado = grados.find(g => g.id === est.gradoId);
+                      const puedeEditar = puedeGestionarEstudiantes(est.gradoId);
+                      const esTutorDelGrado = userData?.tutorDe?.includes(est.gradoId);
+                      
+                      return (
+                        <tr key={est.id} className="hover:bg-slate-50 transition-colors">
+                          <td className="px-5 py-3">
+                            <div>
+                              <div className="font-semibold text-slate-900 text-sm">
+                                {est.apellidos} {est.nombres}
+                              </div>
+                              {est.cedula && (
+                                <div className="text-slate-500 text-xs mt-0.5">
+                                  CI: {est.cedula}
+                                </div>
+                              )}
+                            </div>
+                          </td>
+                          <td className="px-5 py-3">
+                            {grado ? (
+                              <div className="flex items-center gap-2">
+                                <div className="bg-linear-to-br from-blue-500 to-purple-600 text-white rounded w-6 h-6 flex items-center justify-center text-xs font-bold">
+                                  {grado.paralelo}
+                                </div>
+                                <div className="text-sm text-slate-700">
+                                  {grado.nombre}
+                                </div>
+                                {esTutorDelGrado && (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-purple-100 text-purple-700 rounded text-xs font-medium">
+                                    <FaUserTie className="w-3 h-3" />
+                                    Tutor
+                                  </span>
+                                )}
+                              </div>
+                            ) : (
+                              <span className="text-slate-400 text-sm">N/A</span>
+                            )}
+                          </td>
+                          <td className="px-5 py-3 text-center">
+                            <button
+                              onClick={() => handleToggleActivo(est.id, est.activo)}
+                              disabled={!puedeEditar}
+                              className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold transition-all ${
+                                est.activo
+                                  ? 'bg-linear-to-r from-green-500 to-green-600 text-white shadow-sm'
+                                  : 'bg-slate-100 text-slate-600'
+                              } ${!puedeEditar ? 'opacity-60 cursor-not-allowed' : ''}`}
+                            >
+                              {est.activo ? (
+                                <>
+                                  <FaCheck className="mr-1 text-[10px]" />
+                                  Activo
+                                </>
+                              ) : (
+                                'Inactivo'
+                              )}
+                            </button>
+                          </td>
+                          <td className="px-5 py-3">
+                            <div className="flex justify-center gap-1">
+                              <button
+                                onClick={() => handleEdit(est)}
+                                disabled={!puedeEditar}
+                                className={`p-1.5 rounded transition-all ${
+                                  puedeEditar 
+                                    ? 'text-blue-600 hover:bg-blue-50' 
+                                    : 'text-slate-300 cursor-not-allowed'
+                                }`}
+                                title={puedeEditar ? "Editar" : "No tienes permisos"}
+                              >
+                                <FaEdit className="text-sm" />
+                              </button>
+                              <button
+                                onClick={() => handleDelete(est.id)}
+                                disabled={!puedeEditar}
+                                className={`p-1.5 rounded transition-all ${
+                                  puedeEditar 
+                                    ? 'text-red-600 hover:bg-red-50' 
+                                    : 'text-slate-300 cursor-not-allowed'
+                                }`}
+                                title={puedeEditar ? "Eliminar" : "No tienes permisos"}
+                              >
+                                <FaTrash className="text-sm" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
             </div>
+            
+            {estudiantesFiltrados.length > 0 && (
+              <div className="bg-slate-50 px-5 py-3 border-t border-slate-200">
+                <div className="flex items-center justify-between text-xs text-slate-600">
+                  <span>
+                    Mostrando <strong>{estudiantesFiltrados.length}</strong> estudiante{estudiantesFiltrados.length !== 1 ? 's' : ''}
+                    {searchTerm && ` de ${estudiantes.length}`}
+                  </span>
+                  <span>{estudiantes.filter(e => e.activo).length} activo{estudiantes.filter(e => e.activo).length !== 1 ? 's' : ''}</span>
+                </div>
+              </div>
+            )}
           </div>
-        )}
-      </div>
+
+          {/* ✅ Info sobre permisos */}
+          {userData?.role === 'docente' && (
+            <div className="mt-4 bg-purple-50 border border-purple-200 rounded-lg p-4">
+              <div className="flex items-start gap-2">
+                <FaUserTie className="text-purple-600 mt-0.5" />
+                <div className="text-sm text-purple-900">
+                  <p className="font-semibold mb-1">
+                    {userData?.tutorDe && userData.tutorDe.length > 0
+                      ? `Eres tutor de ${userData.tutorDe.length} grado(s)`
+                      : 'No eres tutor de ningún grado'}
+                  </p>
+                  <p className="text-xs">
+                    {userData?.tutorDe && userData.tutorDe.length > 0
+                      ? 'Puedes crear, editar y eliminar estudiantes solo en los grados donde eres tutor.'
+                      : 'Como docente sin rol de tutor, solo puedes visualizar los estudiantes de tus grados asignados.'}
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+        </>
+      )}
 
       <ConfirmModal
         isOpen={showConfirmModal}

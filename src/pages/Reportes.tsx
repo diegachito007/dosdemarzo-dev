@@ -1,5 +1,5 @@
 import { useState, useEffect, startTransition, useCallback } from "react";
-import React from "react"; // ✅ Agregar esto
+import React from "react";
 import {
   collection,
   query,
@@ -9,6 +9,7 @@ import {
   Timestamp,
 } from "firebase/firestore";
 import { db } from "../lib/firebase";
+import { useAuth } from "../context/AuthContext";
 import type {
   Estudiante,
   Grado,
@@ -24,7 +25,24 @@ import {
   FaUsers,
   FaExclamationTriangle,
   FaSearch,
+  FaUserTie,
+  FaCalendarAlt,
+  FaClock,
+  FaGraduationCap,
+  FaCogs,
 } from "react-icons/fa";
+import { Link } from "react-router-dom";
+
+// ✅ Interfaz para configuración institucional
+interface InstitutionData {
+  nombreInstitucion?: string;
+  codigoAmie?: string;
+  nombreRector?: string;
+  tituloRector?: string;
+  direccion?: string;
+  telefono?: string;
+  logo?: string;
+}
 
 interface CalificacionDoc {
   id: string;
@@ -55,7 +73,6 @@ interface AsistenciaDoc {
   updatedAt?: Timestamp;
 }
 
-// ✅ Escala cualitativa según el PDF
 const ESCALA_CUALITATIVA: Record<string, { descripcion: string; valor: number }> = {
   "A+": { descripcion: "Superado(S)", valor: 10 },
   "A-": { descripcion: "Logrado(L)", valor: 9 },
@@ -70,7 +87,8 @@ const ESCALA_CUALITATIVA: Record<string, { descripcion: string; valor: number }>
 };
 
 export default function Reportes() {
-  const [, setAniosLectivosData] = useState<AnioLectivo[]>([]);
+  const { userData } = useAuth();
+  const [aniosLectivosData, setAniosLectivosData] = useState<AnioLectivo[]>([]);
   const [grados, setGrados] = useState<Grado[]>([]);
   const [periodos, setPeriodos] = useState<PeriodoEvaluacion[]>([]);
   const [estudiantes, setEstudiantes] = useState<Estudiante[]>([]);
@@ -78,7 +96,9 @@ export default function Reportes() {
   const [destrezas, setDestrezas] = useState<Destreza[]>([]);
   const [calificaciones, setCalificaciones] = useState<CalificacionDoc[]>([]);
   const [asistencias, setAsistencias] = useState<AsistenciaDoc[]>([]);
+  const [institutionData, setInstitutionData] = useState<InstitutionData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadingInstitution, setLoadingInstitution] = useState(true);
 
   const [selectedGradoId, setSelectedGradoId] = useState("");
   const [selectedPeriodoId, setSelectedPeriodoId] = useState("");
@@ -86,6 +106,34 @@ export default function Reportes() {
   const [activeReport, setActiveReport] = useState<
     "individualGeneral" | "masivo"
   >("individualGeneral");
+
+  // ✅ Verificar si es docente sin grados tutor
+  const docenteSinTutoria = userData?.role === 'docente' && (!userData?.tutorDe || userData.tutorDe.length === 0);
+
+  // ✅ Obtener año lectivo activo
+  const anioActivo = aniosLectivosData.find(a => a.activo);
+
+  // ✅ Nombre del docente tutor (desde configuración personal)
+  const nombreDocenteTutor = userData?.nombreDocumento || '';
+
+  // ✅ Cargar configuración institucional
+  useEffect(() => {
+    const cargarConfiguracion = async () => {
+      try {
+        const configSnap = await getDocs(collection(db, "configuracionInstitucional"));
+        if (!configSnap.empty) {
+          const data = configSnap.docs[0].data() as InstitutionData;
+          setInstitutionData(data);
+        }
+      } catch (error) {
+        console.error("Error cargando configuración institucional:", error);
+      } finally {
+        setLoadingInstitution(false);
+      }
+    };
+    
+    cargarConfiguracion();
+  }, []);
 
   const cargarDatos = useCallback(async () => {
     try {
@@ -111,11 +159,31 @@ export default function Reportes() {
         );
       }
 
-      const gradosQuery = query(
-        collection(db, "grados"),
-        where("activo", "==", true),
-        orderBy("orden", "asc")
-      );
+      // ✅ FILTRAR GRADOS SEGÚN ROL
+      let gradosQuery;
+      if (userData?.role === 'docente' && userData?.tutorDe && userData.tutorDe.length > 0) {
+        gradosQuery = query(
+          collection(db, "grados"),
+          where("__name__", "in", userData.tutorDe),
+          where("activo", "==", true),
+          orderBy("orden", "asc")
+        );
+      } else if (userData?.role === 'docente') {
+        startTransition(() => {
+          setAniosLectivosData(aniosData);
+          setPeriodos(periodosData);
+          setGrados([]);
+          setLoading(false);
+        });
+        return;
+      } else {
+        gradosQuery = query(
+          collection(db, "grados"),
+          where("activo", "==", true),
+          orderBy("orden", "asc")
+        );
+      }
+
       const gradosSnap = await getDocs(gradosQuery);
       const gradosData = gradosSnap.docs.map(
         (doc) => ({ id: doc.id, ...doc.data() }) as Grado
@@ -129,7 +197,7 @@ export default function Reportes() {
           setSelectedGradoId(gradosData[0].id);
         }
         if (periodosData.length > 0 && !selectedPeriodoId) {
-          setSelectedPeriodoId(periodosData[0].id);
+          setSelectedPeriodoId(periodosData[periodosData.length - 1].id);
         }
         setLoading(false);
       });
@@ -137,7 +205,7 @@ export default function Reportes() {
       console.error("Error cargando datos:", error);
       startTransition(() => setLoading(false));
     }
-  }, [selectedGradoId, selectedPeriodoId]);
+  }, [selectedGradoId, selectedPeriodoId, userData]);
 
   const cargarEstudiantes = useCallback(async (gradoId: string) => {
     try {
@@ -247,7 +315,6 @@ export default function Reportes() {
     cargarCalificaciones,
   ]);
 
-  // ✅ Convertir nota numérica a letra
   const notaALetra = (nota: number): string => {
     if (nota >= 10) return "A+";
     if (nota >= 9) return "A-";
@@ -262,12 +329,10 @@ export default function Reportes() {
     return "-";
   };
 
-  // ✅ Obtener descripción de la letra
   const obtenerDescripcion = (letra: string): string => {
     return ESCALA_CUALITATIVA[letra]?.descripcion || "-";
   };
 
-  // ✅ Calcular promedio del ámbito para un período específico
   const calcularPromedioAmbito = (
     estudianteId: string,
     ambitoId: string,
@@ -287,7 +352,6 @@ export default function Reportes() {
     return parseFloat((suma / califsEstudiante.length).toFixed(1));
   };
 
-  // ✅ Calcular promedio general (promedio de los 10 ámbitos) para un período
   const calcularPromedioGeneral = (
     estudianteId: string,
     periodoId: string
@@ -325,14 +389,12 @@ export default function Reportes() {
     };
   };
 
-  // ✅ Determinar qué trimestres mostrar según el seleccionado
   const obtenerTrimestresAMostrar = () => {
     const periodoSeleccionado = periodos.find((p) => p.id === selectedPeriodoId);
     if (!periodoSeleccionado) return [];
 
     const ordenSeleccionado = periodoSeleccionado.orden;
     
-    // Mostrar todos los trimestres hasta el seleccionado
     return periodos
       .filter((p) => p.orden <= ordenSeleccionado)
       .sort((a, b) => a.orden - b.orden);
@@ -359,26 +421,35 @@ export default function Reportes() {
   const estudianteActual = estudiantes.find((e) => e.id === selectedEstudianteId);
   const trimestresAMostrar = obtenerTrimestresAMostrar();
 
-  // ✅ Componente para renderizar un boletín
   const renderBoletin = (estudiante: Estudiante) => {
     const asistencia = calcularAsistenciaEstudiante(estudiante.id);
+    
+    // ✅ Datos dinámicos para el boletín
+    const institucionTexto = institutionData?.nombreInstitucion 
+      ? `INSTITUCIÓN: ${institutionData.nombreInstitucion.toUpperCase()}`
+      : 'INSTITUCIÓN: [Configurar nombre]';
+    
+    const amieTexto = institutionData?.codigoAmie 
+      ? `CÓDIGO AMIE: ${institutionData.codigoAmie}`
+      : 'CÓDIGO AMIE: [Configurar código]';
+    
+    const nombreRector = institutionData?.nombreRector || '';
+    const tituloRector = institutionData?.tituloRector || '';
 
     return (
       <div className="bg-white border-2 border-slate-800 p-6 mb-8 page-break">
-        {/* Header */}
         <div className="text-center mb-4 border-b-2 border-slate-800 pb-3">
           <h1 className="text-lg font-bold text-slate-900 mb-1">
             REPORTE DE DESARROLLO INTEGRAL
           </h1>
           <p className="text-xs text-slate-700">
-            INSTITUCIÓN: CECIBEB "Leonardo Pérez Muñoz" CÓDIGO AMIE: 10B00020
+            {institucionTexto} {amieTexto}
           </p>
           <p className="text-xs text-slate-700">
             CURSO/GRADO: {gradoActual?.nombre} - {gradoActual?.paralelo} | FECHA: {new Date().toLocaleDateString('es-ES')}
           </p>
         </div>
 
-        {/* Datos del estudiante */}
         <div className="mb-4 bg-slate-50 p-3 rounded border border-slate-300">
           <div className="grid grid-cols-2 gap-4">
             <div>
@@ -388,13 +459,14 @@ export default function Reportes() {
               </p>
             </div>
             <div>
-              <p className="text-xs text-slate-600 font-semibold">TUTORA:</p>
-              <p className="font-bold text-slate-900 text-sm">Lic. Alexandra Perugachi</p>
+              <p className="text-xs text-slate-600 font-semibold">TUTOR/A:</p>
+              <p className="font-bold text-slate-900 text-sm">
+                {nombreDocenteTutor || '[Configura tu perfil]'}
+              </p>
             </div>
           </div>
         </div>
 
-        {/* Tabla de calificaciones con 3 trimestres */}
         <div className="mb-4">
           <h3 className="font-bold text-sm text-slate-900 mb-2 text-center">
             ÁMBITOS DE DESARROLLO Y APRENDIZAJE
@@ -449,7 +521,6 @@ export default function Reportes() {
                   })}
                 </tr>
               ))}
-              {/* Fila de promedios */}
               <tr className="bg-blue-50 font-bold">
                 <td className="border border-slate-800 px-2 py-1 text-xs">
                   PROMEDIO
@@ -475,7 +546,6 @@ export default function Reportes() {
           </table>
         </div>
 
-        {/* Comportamiento y Asistencia */}
         <div className="mb-4 grid grid-cols-2 gap-3">
           <div className="border border-slate-800 p-2">
             <p className="text-xs font-bold mb-1">COMPORTAMIENTO</p>
@@ -491,7 +561,6 @@ export default function Reportes() {
           </div>
         </div>
 
-        {/* Escala de estimación */}
         <div className="mb-4 border border-slate-800 p-2">
           <p className="text-xs font-bold mb-2">ESCALA DE ESTIMACIÓN CUALITATIVA DE DESTREZAS:</p>
           <div className="grid grid-cols-2 gap-2 text-xs">
@@ -503,23 +572,24 @@ export default function Reportes() {
           </div>
         </div>
 
-        {/* Recomendaciones */}
         <div className="mb-4 border border-slate-800 p-2">
           <p className="text-xs font-bold mb-1">RECOMENDACIONES:</p>
           <p className="text-xs">Reforzar lo aprendido como vocales, sonidos m,p y n, así como sumas y restas</p>
         </div>
 
-        {/* Firmas */}
+        {/* ✅ Firmas con datos dinámicos */}
         <div className="mt-8 grid grid-cols-2 gap-8">
           <div className="text-center">
             <div className="border-t border-slate-800 pt-1 mt-12">
-              <p className="text-xs font-bold">LIC. XIMENA VALENCIA</p>
-              <p className="text-xs">DIRECTORA DEL CECIBEB</p>
+              <p className="text-xs font-bold">{tituloRector} {nombreRector.toUpperCase()}</p>
+              <p className="text-xs">{institutionData?.nombreInstitucion ? 'DIRECTOR/A' : 'DIRECTOR/A'}</p>
             </div>
           </div>
           <div className="text-center">
             <div className="border-t border-slate-800 pt-1 mt-12">
-              <p className="text-xs font-bold">LIC. ALEXANDRA PERUGACHI</p>
+              <p className="text-xs font-bold">
+                {nombreDocenteTutor ? nombreDocenteTutor.toUpperCase() : '[CONFIGURA TU PERFIL]'}
+              </p>
               <p className="text-xs">DOCENTE TUTOR</p>
             </div>
           </div>
@@ -530,143 +600,327 @@ export default function Reportes() {
 
   return (
     <Layout title="Reportes" subtitle="Genera reportes y boletines" showBack>
-      {/* Filtros */}
-      <div className="bg-white rounded-xl shadow-sm border border-slate-200 mb-6 p-6">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div>
-            <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-2">
-              Grado y Paralelo *
-            </label>
-            <select
-              value={selectedGradoId}
-              onChange={(e) => setSelectedGradoId(e.target.value)}
-              className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500"
-            >
-              {grados.map((grado) => (
-                <option key={grado.id} value={grado.id}>
-                  {grado.nombre} - {grado.paralelo}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-2">
-              Período *
-            </label>
-            <select
-              value={selectedPeriodoId}
-              onChange={(e) => setSelectedPeriodoId(e.target.value)}
-              className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500"
-            >
-              {periodos.map((periodo) => (
-                <option key={periodo.id} value={periodo.id}>
-                  {periodo.nombre}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {activeReport === "individualGeneral" && (
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-2">
-                Estudiante *
-              </label>
-              <select
-                value={selectedEstudianteId}
-                onChange={(e) => setSelectedEstudianteId(e.target.value)}
-                className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500"
+      {/* ✅ ALERTA: Si es super_admin y no hay configuración institucional */}
+      {userData?.role === 'super_admin' && loadingInstitution === false && !institutionData && (
+        <div className="mb-6 bg-amber-50 border-l-4 border-amber-400 p-4 rounded-lg">
+          <div className="flex items-start gap-3">
+            <FaCogs className="text-amber-600 text-xl mt-0.5" />
+            <div className="flex-1">
+              <h3 className="font-semibold text-amber-900">
+                Configuración institucional pendiente
+              </h3>
+              <p className="text-sm text-amber-700 mt-1">
+                Los reportes se generarán sin los datos de la institución. Configura los datos para que aparezcan correctamente.
+              </p>
+              <Link 
+                to="/configuracion-institucional"
+                className="inline-flex items-center gap-2 mt-3 px-4 py-2 bg-amber-600 text-white rounded-lg text-sm font-medium hover:bg-amber-700 transition-colors"
               >
-                <option value="">Seleccionar estudiante...</option>
-                {estudiantes.map((est) => (
-                  <option key={est.id} value={est.id}>
-                    {est.apellidos} {est.nombres}
-                  </option>
-                ))}
-              </select>
+                Configurar ahora
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                </svg>
+              </Link>
             </div>
-          )}
-        </div>
-      </div>
-
-      {/* Tabs de Reportes */}
-      <div className="bg-white rounded-xl shadow-sm border border-slate-200 mb-6 overflow-hidden">
-        <div className="flex border-b border-slate-200">
-          <button
-            onClick={() => setActiveReport("individualGeneral")}
-            className={`flex-1 px-6 py-4 text-sm font-semibold transition-all ${
-              activeReport === "individualGeneral"
-                ? "bg-blue-50 text-blue-700 border-b-2 border-blue-600"
-                : "text-slate-600 hover:bg-slate-50"
-            }`}
-          >
-            <FaUserGraduate className="inline mr-2" />
-            Individual General
-          </button>
-          <button
-            onClick={() => setActiveReport("masivo")}
-            className={`flex-1 px-6 py-4 text-sm font-semibold transition-all ${
-              activeReport === "masivo"
-                ? "bg-blue-50 text-blue-700 border-b-2 border-blue-600"
-                : "text-slate-600 hover:bg-slate-50"
-            }`}
-          >
-            <FaUsers className="inline mr-2" />
-            Masivo
-          </button>
-        </div>
-
-        <div className="p-6">
-          <div className="flex justify-end mb-6 no-print">
-            <button
-              onClick={imprimirReporte}
-              className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-lg text-sm font-semibold transition-all"
-            >
-              <FaPrint />
-              Imprimir Reporte
-            </button>
           </div>
-
-          {/* REPORTE 1: Individual General */}
-          {activeReport === "individualGeneral" && (
-            <div>
-              {!selectedEstudianteId ? (
-                <div className="text-center py-12 text-slate-500">
-                  <FaSearch className="text-4xl mx-auto mb-3 text-slate-300" />
-                  <p className="font-medium mb-1">Selecciona un estudiante</p>
-                  <p className="text-sm">para ver su boletín general</p>
-                </div>
-              ) : estudianteActual ? (
-                renderBoletin(estudianteActual)
-              ) : null}
-            </div>
-          )}
-
-          {/* REPORTE 2: Masivo */}
-          {activeReport === "masivo" && (
-            <div>
-              {estudiantes.length === 0 ? (
-                <div className="text-center py-12 text-slate-500">
-                  <FaExclamationTriangle className="text-4xl mx-auto mb-3 text-slate-300" />
-                  <p className="font-medium mb-1">No hay estudiantes</p>
-                  <p className="text-sm">No hay estudiantes registrados en este grado</p>
-                </div>
-              ) : (
-                <div>
-                  <p className="text-sm text-slate-600 mb-4">
-                    Se generarán {estudiantes.length} boletines
-                  </p>
-                  {estudiantes.map((estudiante) => (
-                    <div key={estudiante.id}>
-                      {renderBoletin(estudiante)}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
         </div>
-      </div>
+      )}
+
+      {/* ✅ ALERTA: Si el docente no tiene nombreDocumento configurado */}
+      {!nombreDocenteTutor && (
+        <div className="mb-6 bg-blue-50 border-l-4 border-blue-400 p-4 rounded-lg">
+          <div className="flex items-start gap-3">
+            <FaUserTie className="text-blue-600 text-xl mt-0.5" />
+            <div className="flex-1">
+              <h3 className="font-semibold text-blue-900">
+                Configura tu nombre para documentos
+              </h3>
+              <p className="text-sm text-blue-700 mt-1">
+                Tu nombre no aparecerá en las firmas de los boletines hasta que configures tu perfil.
+              </p>
+              <Link 
+                to="/configuracion"
+                className="inline-flex items-center gap-2 mt-3 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors"
+              >
+                Configurar mi perfil
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                </svg>
+              </Link>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ✅ Mensaje para docentes sin tutoría */}
+      {docenteSinTutoria && (
+        <div className="bg-yellow-50 border-2 border-yellow-300 rounded-xl px-8 py-12 mb-6">
+          <div className="flex items-start gap-4 max-w-3xl">
+            <div className="bg-yellow-100 p-3 rounded-full">
+              <FaExclamationTriangle className="text-yellow-600 text-2xl" />
+            </div>
+            <div className="flex-1">
+              <h3 className="text-yellow-800 font-bold text-xl mb-3">
+                No eres tutor de ningún grado
+              </h3>
+              <p className="text-yellow-700 mb-2">
+                Solo los tutores pueden generar reportes de estudiantes.
+              </p>
+              <p className="text-yellow-600 text-sm">
+                Contacta al administrador para que te asigne como tutor de algún grado.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ✅ Mostrar contenido solo si NO es docente sin tutoría */}
+      {!docenteSinTutoria && (
+        <>
+          {/* ✅ Banner de Año Lectivo Activo */}
+          {anioActivo && (
+            <div className="bg-blue-50 border border-blue-200 rounded-lg px-4 py-3 mb-6">
+              <div className="flex items-center gap-2 text-blue-800">
+                <FaCalendarAlt className="text-sm" />
+                <span className="text-sm font-medium">Trabajando con año lectivo:</span>
+                <span className="text-base font-bold text-blue-900">{anioActivo.nombre}</span>
+              </div>
+            </div>
+          )}
+
+          {!anioActivo && (
+            <div className="bg-yellow-50 border border-yellow-200 rounded-lg px-4 py-3 mb-6">
+              <div className="flex items-start gap-2">
+                <FaExclamationTriangle className="text-yellow-600 mt-0.5" />
+                <div>
+                  <h4 className="text-yellow-800 font-semibold text-sm mb-1">
+                    No hay año lectivo activo
+                  </h4>
+                  <p className="text-yellow-700 text-sm">
+                    Debes crear y activar un año lectivo primero en el módulo de Años Lectivos.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ✅ Selector de Grado - Tarjetas Compactas */}
+          {grados.length > 0 && (
+            <div className="bg-white rounded-xl shadow-sm border border-slate-200 mb-6 p-4">
+              <h3 className="text-base font-bold text-slate-800 mb-3 flex items-center gap-2">
+                <FaGraduationCap className="text-blue-600" />
+                Selecciona un Grado
+              </h3>
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2">
+                {grados.map((grado) => {
+                  const isSelected = selectedGradoId === grado.id;
+                  return (
+                    <button
+                      key={grado.id}
+                      onClick={() => {
+                        setSelectedGradoId(grado.id);
+                        setSelectedEstudianteId("");
+                      }}
+                      className={`p-3 rounded-lg border-2 transition-all duration-200 text-left text-sm ${
+                        isSelected
+                          ? 'border-blue-500 bg-blue-50 shadow-sm'
+                          : 'border-slate-200 hover:border-blue-300 hover:bg-slate-50'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2">
+                        <div className={`w-8 h-8 rounded flex items-center justify-center text-white font-bold text-xs ${
+                          isSelected
+                            ? 'bg-linear-to-br from-blue-500 to-purple-600'
+                            : 'bg-linear-to-br from-slate-400 to-slate-500'
+                        }`}>
+                          {grado.paralelo}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="font-semibold text-slate-900 truncate">
+                            {grado.nombre}
+                          </div>
+                          <div className="text-slate-500 text-xs">
+                            {grado.paralelo}
+                          </div>
+                        </div>
+                        {isSelected && (
+                          <FaUserGraduate className="text-blue-600 text-xs shrink-0" />
+                        )}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* ✅ Selector de Período - Tarjetas Compactas */}
+          {selectedGradoId && periodos.length > 0 && (
+            <div className="bg-white rounded-xl shadow-sm border border-slate-200 mb-6 p-4">
+              <h3 className="text-base font-bold text-slate-800 mb-3 flex items-center gap-2">
+                <FaClock className="text-green-600" />
+                Período del Reporte
+              </h3>
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
+                {periodos.map((periodo) => {
+                  const isSelected = selectedPeriodoId === periodo.id;
+                  return (
+                    <button
+                      key={periodo.id}
+                      onClick={() => setSelectedPeriodoId(periodo.id)}
+                      className={`p-3 rounded-lg border-2 transition-all duration-200 text-left text-sm ${
+                        isSelected
+                          ? 'border-green-500 bg-green-50 shadow-sm'
+                          : 'border-slate-200 hover:border-green-300 hover:bg-slate-50'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2">
+                        <div className={`w-8 h-8 rounded flex items-center justify-center text-white font-bold text-xs ${
+                          isSelected
+                            ? 'bg-linear-to-br from-green-500 to-teal-600'
+                            : 'bg-linear-to-br from-slate-400 to-slate-500'
+                        }`}>
+                          {periodo.orden}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="font-semibold text-slate-900 truncate">
+                            {periodo.nombre}
+                          </div>
+                          <div className="text-slate-500 text-xs">
+                            {periodo.tipo}
+                          </div>
+                        </div>
+                        {isSelected && (
+                          <FaClock className="text-green-600 text-xs shrink-0" />
+                        )}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="text-xs text-slate-500 mt-2">
+                💡 Se mostrarán todos los períodos hasta el seleccionado
+              </p>
+            </div>
+          )}
+
+          {/* Tabs de Reportes + Selector Estudiante + Imprimir */}
+          {selectedGradoId && selectedPeriodoId && (
+            <div className="bg-white rounded-xl shadow-sm border border-slate-200 mb-6 overflow-hidden">
+              <div className="p-4 border-b border-slate-200">
+                <div className="flex flex-col lg:flex-row gap-4 items-start lg:items-center justify-between">
+                  {/* Tabs */}
+                  <div className="flex gap-2 w-full lg:w-auto">
+                    <button
+                      onClick={() => setActiveReport("individualGeneral")}
+                      className={`flex-1 lg:flex-none px-4 py-2 rounded-lg text-sm font-semibold transition-all flex items-center justify-center gap-2 ${
+                        activeReport === "individualGeneral"
+                          ? "bg-blue-600 text-white shadow"
+                          : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                      }`}
+                    >
+                      <FaUserGraduate className="text-sm" />
+                      Individual
+                    </button>
+                    <button
+                      onClick={() => setActiveReport("masivo")}
+                      className={`flex-1 lg:flex-none px-4 py-2 rounded-lg text-sm font-semibold transition-all flex items-center justify-center gap-2 ${
+                        activeReport === "masivo"
+                          ? "bg-blue-600 text-white shadow"
+                          : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                      }`}
+                    >
+                      <FaUsers className="text-sm" />
+                      Masivo
+                    </button>
+                  </div>
+
+                  {/* Selector Estudiante (solo Individual) */}
+                  {activeReport === "individualGeneral" && (
+                    <select
+                      value={selectedEstudianteId}
+                      onChange={(e) => setSelectedEstudianteId(e.target.value)}
+                      className="flex-1 lg:w-64 border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500"
+                    >
+                      <option value="">Seleccionar estudiante...</option>
+                      {estudiantes.map((est) => (
+                        <option key={est.id} value={est.id}>
+                          {est.apellidos} {est.nombres}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+
+                  {/* Botón Imprimir */}
+                  <button
+                    onClick={imprimirReporte}
+                    className="w-full lg:w-auto bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-all flex items-center justify-center gap-2"
+                  >
+                    <FaPrint />
+                    Imprimir
+                  </button>
+                </div>
+              </div>
+
+              <div className="p-6">
+                {activeReport === "individualGeneral" && (
+                  <div>
+                    {!selectedEstudianteId ? (
+                      <div className="text-center py-12 text-slate-500">
+                        <FaSearch className="text-4xl mx-auto mb-3 text-slate-300" />
+                        <p className="font-medium mb-1">Selecciona un estudiante</p>
+                        <p className="text-sm">para ver su boletín general</p>
+                      </div>
+                    ) : estudianteActual ? (
+                      renderBoletin(estudianteActual)
+                    ) : null}
+                  </div>
+                )}
+
+                {activeReport === "masivo" && (
+                  <div>
+                    {estudiantes.length === 0 ? (
+                      <div className="text-center py-12 text-slate-500">
+                        <FaExclamationTriangle className="text-4xl mx-auto mb-3 text-slate-300" />
+                        <p className="font-medium mb-1">No hay estudiantes</p>
+                        <p className="text-sm">No hay estudiantes registrados en este grado</p>
+                      </div>
+                    ) : (
+                      <div>
+                        <p className="text-sm text-slate-600 mb-4">
+                          Se generarán {estudiantes.length} boletines
+                        </p>
+                        {estudiantes.map((estudiante) => (
+                          <div key={estudiante.id}>
+                            {renderBoletin(estudiante)}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* ✅ Info sobre permisos */}
+          {userData?.role === 'docente' && (
+            <div className="bg-purple-50 border border-purple-200 rounded-lg p-4">
+              <div className="flex items-start gap-2">
+                <FaUserTie className="text-purple-600 mt-0.5" />
+                <div className="text-sm text-purple-900">
+                  <p className="font-semibold mb-1">
+                    Eres tutor de {userData?.tutorDe?.length || 0} grado(s)
+                  </p>
+                  <p className="text-xs">
+                    Solo puedes generar reportes de los grados donde eres tutor.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+        </>
+      )}
 
       <style>{`
         @media print {

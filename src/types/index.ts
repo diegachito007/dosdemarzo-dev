@@ -3,7 +3,7 @@ export interface AnioLectivo {
   nombre: string;
   fechaInicio: string;
   fechaFin: string;
-  tipoEvaluacion: 'trimestral' | 'quimestral';
+  tipoEvaluacion: "trimestral" | "quimestral";
   activo: boolean;
   createdAt: string;
 }
@@ -11,7 +11,7 @@ export interface AnioLectivo {
 export interface PeriodoEvaluacion {
   id: string;
   nombre: string;
-  tipo: 'trimestre' | 'quimestre';
+  tipo: "trimestre" | "quimestre";
   anioLectivoId: string;
   fechaInicio: string;
   fechaFin: string;
@@ -77,8 +77,11 @@ export interface AppUser {
   uid: string;
   email: string;
   displayName: string;
-  photoURL?: string;
-  role: 'admin' | 'teacher';
-  status: 'active' | 'pending' | 'rejected';
+  photoURL?: string | null;
+  role: "super_admin" | "docente";
+  status: "active" | "pending" | "rejected" | "blocked";
+  gradosAsignados?: string[];
+  tutorDe?: string[];
+  nombreDocumento?: string; 
   createdAt: string;
 }

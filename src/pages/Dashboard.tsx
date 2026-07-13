@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, startTransition } from "react";
 import { useAuth } from "../context/AuthContext";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { collection, query, where, getDocs } from "firebase/firestore";
 import { db } from "../lib/firebase";
 import {
@@ -12,12 +12,29 @@ import {
   FaSignOutAlt,
   FaTrophy,
   FaClipboardList,
+  FaUserShield,
+  FaUserTie,
+  FaCogs,
+  FaSchool,
+  FaUserCog,
+  FaChevronDown,
 } from "react-icons/fa";
 
-export default function Dashboard() {
-  const { user, logout } = useAuth();
+// ✅ Interfaz para los datos institucionales
+interface InstitutionData {
+  nombreInstitucion?: string;
+  codigoAmie?: string;
+  nombreRector?: string;
+  logo?: string;
+  direccion?: string;
+  telefono?: string;
+}
 
-  // ✅ Estados para stats dinámicos
+export default function Dashboard() {
+  const { user, userData, logout } = useAuth();
+  const navigate = useNavigate();
+  const [showDropdown, setShowDropdown] = useState(false);
+  
   const [stats, setStats] = useState({
     aniosActivos: 0,
     gradosActivos: 0,
@@ -26,39 +43,100 @@ export default function Dashboard() {
     calificaciones: 0,
   });
 
-  // ✅ Cargar estadísticas reales
+  // ✅ Estado para datos institucionales
+  const [institutionData, setInstitutionData] = useState<InstitutionData | null>(null);
+  const [loadingInstitution, setLoadingInstitution] = useState(true);
+
+  // ✅ Cargar datos institucionales
+  useEffect(() => {
+    const cargarConfiguracion = async () => {
+      try {
+        const configSnap = await getDocs(collection(db, "configuracionInstitucional"));
+        if (!configSnap.empty) {
+          const data = configSnap.docs[0].data() as InstitutionData;
+          setInstitutionData(data);
+        }
+      } catch (error) {
+        console.error("Error cargando configuración institucional:", error);
+      } finally {
+        setLoadingInstitution(false);
+      }
+    };
+    
+    cargarConfiguracion();
+  }, []);
+
+  // ✅ Nombre para mostrar (prioriza nombreDocumento)
+  const nombreUsuario = userData?.nombreDocumento 
+    ? userData.nombreDocumento
+    : user?.displayName || 'Usuario';
+
   const cargarStats = useCallback(async () => {
     try {
-      // Años activos
       const aniosQuery = query(
         collection(db, "aniosLectivos"),
         where("activo", "==", true),
       );
       const aniosSnap = await getDocs(aniosQuery);
 
-      // Grados activos
-      const gradosQuery = query(
-        collection(db, "grados"),
-        where("activo", "==", true),
-      );
+      let gradosQuery;
+      if (userData?.role === 'docente' && userData?.gradosAsignados && userData.gradosAsignados.length > 0) {
+        gradosQuery = query(
+          collection(db, "grados"),
+          where("activo", "==", true),
+          where("__name__", "in", userData.gradosAsignados)
+        );
+      } else {
+        gradosQuery = query(
+          collection(db, "grados"),
+          where("activo", "==", true),
+        );
+      }
       const gradosSnap = await getDocs(gradosQuery);
 
-      // Estudiantes activos
-      const estudiantesQuery = query(
-        collection(db, "estudiantes"),
-        where("activo", "==", true),
-      );
+      let estudiantesQuery;
+      if (userData?.role === 'docente' && userData?.gradosAsignados && userData.gradosAsignados.length > 0) {
+        estudiantesQuery = query(
+          collection(db, "estudiantes"),
+          where("activo", "==", true),
+          where("gradoId", "in", userData.gradosAsignados)
+        );
+      } else {
+        estudiantesQuery = query(
+          collection(db, "estudiantes"),
+          where("activo", "==", true),
+        );
+      }
       const estudiantesSnap = await getDocs(estudiantesQuery);
 
-      // Ámbitos (todos)
-      const ambitosSnap = await getDocs(collection(db, "ambitos"));
+      let ambitosQuery;
+      if (userData?.role === 'docente' && userData?.gradosAsignados && userData.gradosAsignados.length > 0) {
+        ambitosQuery = query(
+          collection(db, "ambitos"),
+          where("gradoId", "in", userData.gradosAsignados),
+          where("activo", "==", true)
+        );
+      } else {
+        ambitosQuery = query(
+          collection(db, "ambitos"),
+          where("activo", "==", true)
+        );
+      }
+      const ambitosSnap = await getDocs(ambitosQuery);
 
-      // Calificaciones (todas)
-      const calificacionesSnap = await getDocs(
-        collection(db, "calificaciones"),
-      );
+      let calificacionesQuery;
+      if (userData?.role === 'docente' && userData?.gradosAsignados && userData.gradosAsignados.length > 0) {
+        calificacionesQuery = query(
+          collection(db, "calificaciones"),
+          where("gradoId", "in", userData.gradosAsignados)
+        );
+      } else {
+        calificacionesQuery = query(
+          collection(db, "calificaciones")
+        );
+      }
+      const calificacionesSnap = await getDocs(calificacionesQuery);
 
-      // ✅ Envolver setStats en startTransition
       startTransition(() => {
         setStats({
           aniosActivos: aniosSnap.size,
@@ -71,13 +149,12 @@ export default function Dashboard() {
     } catch (error) {
       console.error("Error cargando estadísticas:", error);
     }
-  }, []);
+  }, [userData]);
 
   useEffect(() => {
     cargarStats();
   }, [cargarStats]);
 
-  // ✅ Módulos ordenados por jerarquía lógica
   const modules = [
     {
       path: "/anios-lectivos",
@@ -87,6 +164,7 @@ export default function Dashboard() {
       desc: "Base del sistema: periodos académicos",
       stats: `${stats.aniosActivos} activo${stats.aniosActivos !== 1 ? "s" : ""}`,
       badge: "BASE",
+      roles: ["super_admin"],
     },
     {
       path: "/grados",
@@ -96,6 +174,7 @@ export default function Dashboard() {
       desc: "Niveles educativos y paralelos",
       stats: `${stats.gradosActivos} activo${stats.gradosActivos !== 1 ? "s" : ""}`,
       badge: "NIVEL 2",
+      roles: ["super_admin", "docente"],
     },
     {
       path: "/estudiantes",
@@ -105,6 +184,7 @@ export default function Dashboard() {
       desc: "Matrícula de alumnos",
       stats: `${stats.estudiantesActivos} activo${stats.estudiantesActivos !== 1 ? "s" : ""}`,
       badge: "NIVEL 3",
+      roles: ["super_admin", "docente"],
     },
     {
       path: "/ambitos-destrezas",
@@ -114,6 +194,7 @@ export default function Dashboard() {
       desc: "Competencias y destrezas",
       stats: `${stats.ambitos} ámbito${stats.ambitos !== 1 ? "s" : ""}`,
       badge: "NIVEL 3",
+      roles: ["super_admin"],
     },
     {
       path: "/calificaciones",
@@ -123,6 +204,7 @@ export default function Dashboard() {
       desc: "Registro de notas",
       stats: `${stats.calificaciones} registro${stats.calificaciones !== 1 ? "s" : ""}`,
       badge: "NIVEL 4",
+      roles: ["super_admin", "docente"],
     },
     {
       path: "/reportes",
@@ -130,14 +212,41 @@ export default function Dashboard() {
       icon: FaClipboardList,
       color: "from-teal-500 to-teal-600",
       desc: "Informes y estadísticas",
-      stats: "Próximamente",
+      stats: "Generar",
       badge: "NIVEL 5",
+      roles: ["super_admin", "docente"],
+    },
+    {
+      path: "/configuracion-institucional",
+      name: "Configuración Institucional",
+      icon: FaCogs,
+      color: "from-slate-600 to-slate-700",
+      desc: "Datos de la institución y rector/a",
+      stats: "Admin",
+      badge: "ADMIN",
+      roles: ["super_admin"],
+    },
+    {
+      path: "/gestion-usuarios",
+      name: "Gestión de Usuarios",
+      icon: FaUserShield,
+      color: "from-red-500 to-red-600",
+      desc: "Administrar usuarios del sistema",
+      stats: "Admin",
+      badge: "ADMIN",
+      roles: ["super_admin"],
     },
   ];
 
+  const userRole = userData?.role || 'docente';
+  const filteredModules = modules.filter(mod => mod.roles.includes(userRole));
+
+  // ✅ Verificar si es tutor de algún grado
+  const esTutor = userData?.tutorDe && userData.tutorDe.length > 0;
+  const gradosTutor = userData?.tutorDe || [];
+
   return (
     <div className="min-h-screen bg-linear-to-br from-slate-50 to-slate-100">
-      {/* Header */}
       <header className="bg-white shadow-lg border-b border-slate-200">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
           <div className="flex flex-col md:flex-row justify-between items-center gap-4">
@@ -147,61 +256,223 @@ export default function Dashboard() {
               </div>
               <div>
                 <h1 className="text-2xl md:text-3xl font-bold bg-linear-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
-                  Sistema de Calificaciones
+                  Gestión Escolar
                 </h1>
-                <p className="text-slate-600 text-sm">
-                  Gestión educativa integral
+                <p className="text-slate-600 text-sm flex items-center gap-2 flex-wrap">
+                  {institutionData?.nombreInstitucion && (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-amber-100 text-amber-700 rounded-full text-xs font-semibold">
+                      <FaSchool className="w-3 h-3" />
+                      {institutionData.nombreInstitucion}
+                    </span>
+                  )}
+                  {userData?.role && (
+                    <span className="px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full text-xs font-semibold">
+                      {userData.role === 'super_admin' ? 'Super Admin' : 'Docente'}
+                    </span>
+                  )}
+                  {esTutor && (
+                    <span className="px-2 py-0.5 bg-purple-100 text-purple-700 rounded-full text-xs font-semibold inline-flex items-center gap-1">
+                      <FaUserTie className="w-3 h-3" />
+                      Tutor ({gradosTutor.length})
+                    </span>
+                  )}
                 </p>
               </div>
             </div>
 
-            <div className="flex items-center gap-4 bg-slate-50 px-6 py-3 rounded-xl border border-slate-200">
-              <div className="text-right hidden sm:block">
-                <p className="text-sm font-semibold text-slate-800">
-                  {user?.displayName}
-                </p>
-                <p className="text-xs text-slate-500">{user?.email}</p>
-              </div>
-              <img
-                src={user?.photoURL || "https://via.placeholder.com/150"}
-                alt="avatar"
-                className="w-12 h-12 rounded-full border-2 border-blue-500 shadow-md"
-              />
+            {/* ✅ Dropdown de Usuario */}
+            <div className="relative">
               <button
-                onClick={logout}
-                className="p-2 text-slate-600 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
-                title="Cerrar sesión"
+                onClick={() => setShowDropdown(!showDropdown)}
+                className="flex items-center gap-3 bg-slate-50 hover:bg-slate-100 px-3 py-2 rounded-xl border border-slate-200 transition-all"
               >
-                <FaSignOutAlt className="text-xl" />
+                <div className="text-right hidden sm:block">
+                  <p className="text-sm font-semibold text-slate-800 max-w-45 truncate">
+                    {nombreUsuario}
+                  </p>
+                  <p className="text-xs text-slate-500 max-w-45 truncate">
+                    {user?.email}
+                  </p>
+                </div>
+                <img
+                  src={user?.photoURL || "https://via.placeholder.com/150"}
+                  alt="avatar"
+                  className="w-12 h-12 rounded-full border-2 border-blue-500 shadow-md"
+                />
+                <FaChevronDown className={`text-slate-400 text-xs transition-transform ${showDropdown ? 'rotate-180' : ''}`} />
               </button>
+
+              {/* ✅ Dropdown */}
+              {showDropdown && (
+                <>
+                  {/* Overlay para cerrar al hacer click fuera */}
+                  <div 
+                    className="fixed inset-0 z-40" 
+                    onClick={() => setShowDropdown(false)}
+                  />
+                  
+                  {/* Menú */}
+                  <div className="absolute right-0 mt-2 w-72 bg-white rounded-xl shadow-2xl border border-slate-200 py-2 z-50">
+                    {/* Info del usuario */}
+                    <div className="px-4 py-3 border-b border-slate-100">
+                      <div className="flex items-center gap-3">
+                        <img 
+                          src={user?.photoURL || 'https://via.placeholder.com/150'} 
+                          alt="avatar" 
+                          className="w-14 h-14 rounded-full border-2 border-blue-500"
+                        />
+                        <div className="min-w-0 flex-1">
+                          <p className="font-semibold text-slate-900 text-sm truncate">
+                            {nombreUsuario}
+                          </p>
+                          <p className="text-xs text-slate-500 truncate">{user?.email}</p>
+                          <div className="flex gap-1 mt-1 flex-wrap">
+                            <span className="inline-block px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full text-xs font-medium">
+                              {userData?.role === 'super_admin' ? 'Super Admin' : 'Docente'}
+                            </span>
+                            {esTutor && (
+                              <span className="inline-block px-2 py-0.5 bg-purple-100 text-purple-700 rounded-full text-xs font-medium">
+                                Tutor
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Opciones */}
+                    <div className="py-1">
+                      <button
+                        onClick={() => {
+                          setShowDropdown(false);
+                          navigate('/configuracion');
+                        }}
+                        className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50 transition-colors"
+                      >
+                        <div className="w-8 h-8 rounded-lg bg-blue-100 text-blue-600 flex items-center justify-center">
+                          <FaUserCog className="text-sm" />
+                        </div>
+                        <div className="text-left flex-1">
+                          <p className="font-medium">Mi Perfil</p>
+                          <p className="text-xs text-slate-500">Editar nombre para documentos</p>
+                        </div>
+                      </button>
+
+                      {userData?.role === 'super_admin' && (
+                        <button
+                          onClick={() => {
+                            setShowDropdown(false);
+                            navigate('/configuracion-institucional');
+                          }}
+                          className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50 transition-colors"
+                        >
+                          <div className="w-8 h-8 rounded-lg bg-amber-100 text-amber-600 flex items-center justify-center">
+                            <FaSchool className="text-sm" />
+                          </div>
+                          <div className="text-left flex-1">
+                            <p className="font-medium">Config. Institucional</p>
+                            <p className="text-xs text-slate-500">Datos de la institución</p>
+                          </div>
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Separador */}
+                    <div className="border-t border-slate-100 my-1"></div>
+
+                    {/* Cerrar sesión */}
+                    <div className="py-1">
+                      <button
+                        onClick={async () => {
+                          setShowDropdown(false);
+                          await logout();
+                        }}
+                        className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-red-600 hover:bg-red-50 transition-colors"
+                      >
+                        <div className="w-8 h-8 rounded-lg bg-red-100 text-red-600 flex items-center justify-center">
+                          <FaSignOutAlt className="text-sm" />
+                        </div>
+                        <span className="font-medium">Cerrar Sesión</span>
+                      </button>
+                    </div>
+                  </div>
+                </>
+              )}
             </div>
           </div>
         </div>
       </header>
 
-      {/* Contenido Principal */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* Bienvenida */}
+        {/* ✅ ALERTA: Si es super_admin y no hay configuración institucional */}
+        {userData?.role === 'super_admin' && loadingInstitution === false && !institutionData && (
+          <div className="mb-6 bg-amber-50 border-l-4 border-amber-400 p-4 rounded-lg">
+            <div className="flex items-start gap-3">
+              <FaCogs className="text-amber-600 text-xl mt-0.5" />
+              <div className="flex-1">
+                <h3 className="font-semibold text-amber-900">
+                  Configuración institucional pendiente
+                </h3>
+                <p className="text-sm text-amber-700 mt-1">
+                  Para generar reportes oficiales, necesitas configurar los datos de la institución.
+                </p>
+                <Link 
+                  to="/configuracion-institucional"
+                  className="inline-flex items-center gap-2 mt-3 px-4 py-2 bg-amber-600 text-white rounded-lg text-sm font-medium hover:bg-amber-700 transition-colors"
+                >
+                  Configurar ahora
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                  </svg>
+                </Link>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ✅ ALERTA: Si no tiene nombreDocumento configurado */}
+        {!userData?.nombreDocumento && (
+          <div className="mb-6 bg-blue-50 border-l-4 border-blue-400 p-4 rounded-lg">
+            <div className="flex items-start gap-3">
+              <FaUserCog className="text-blue-600 text-xl mt-0.5" />
+              <div className="flex-1">
+                <h3 className="font-semibold text-blue-900">
+                  Completa tu información personal
+                </h3>
+                <p className="text-sm text-blue-700 mt-1">
+                  Para que tu nombre aparezca correctamente en los reportes y documentos oficiales, configura tu nombre para documentos.
+                </p>
+                <button
+                  onClick={() => navigate('/configuracion')}
+                  className="inline-flex items-center gap-2 mt-3 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors"
+                >
+                  Configurar mi perfil
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         <div className="mb-8">
           <h2 className="text-2xl font-bold text-slate-800 mb-2">
-            ¡Bienvenido, {user?.displayName?.split(" ")[0] || "Usuario"}! 👋
+            ¡Bienvenido, {nombreUsuario.split(" ")[0] || "Usuario"}! 👋
           </h2>
           <p className="text-slate-600">
             Selecciona un módulo para comenzar a gestionar
           </p>
         </div>
 
-        {/* Grid de Módulos */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {modules.map((mod) => (
+          {filteredModules.map((mod) => (
             <Link
               key={mod.path}
               to={mod.path}
               className="group relative bg-white rounded-2xl shadow-md hover:shadow-2xl transition-all duration-300 overflow-hidden border border-slate-200 hover:border-transparent transform hover:-translate-y-1"
             >
-              {/* Gradiente superior */}
               <div className={`h-2 bg-linear-to-r ${mod.color}`} />
-
               <div className="p-6">
                 <div className="flex items-start justify-between mb-4">
                   <div
@@ -218,12 +489,10 @@ export default function Dashboard() {
                     </span>
                   </div>
                 </div>
-
                 <h3 className="text-xl font-bold text-slate-800 mb-2 group-hover:text-blue-600 transition-colors">
                   {mod.name}
                 </h3>
                 <p className="text-slate-600 text-sm mb-4">{mod.desc}</p>
-
                 <div className="flex items-center text-blue-600 font-semibold text-sm group-hover:translate-x-2 transition-transform">
                   Acceder
                   <svg
@@ -241,8 +510,6 @@ export default function Dashboard() {
                   </svg>
                 </div>
               </div>
-
-              {/* Efecto hover */}
               <div
                 className={`absolute inset-0 bg-linear-to-br ${mod.color} opacity-0 group-hover:opacity-5 transition-opacity duration-300`}
               />
@@ -250,7 +517,6 @@ export default function Dashboard() {
           ))}
         </div>
 
-        {/* Stats Rápidas */}
         <div className="mt-12 grid grid-cols-1 md:grid-cols-4 gap-4">
           <div className="bg-white rounded-xl p-6 shadow-md border border-slate-200">
             <div className="flex items-center gap-3">
@@ -265,7 +531,6 @@ export default function Dashboard() {
               </div>
             </div>
           </div>
-
           <div className="bg-white rounded-xl p-6 shadow-md border border-slate-200">
             <div className="flex items-center gap-3">
               <div className="p-2 bg-blue-100 rounded-lg">
@@ -279,7 +544,6 @@ export default function Dashboard() {
               </div>
             </div>
           </div>
-
           <div className="bg-white rounded-xl p-6 shadow-md border border-slate-200">
             <div className="flex items-center gap-3">
               <div className="p-2 bg-green-100 rounded-lg">
@@ -293,7 +557,6 @@ export default function Dashboard() {
               </div>
             </div>
           </div>
-
           <div className="bg-white rounded-xl p-6 shadow-md border border-slate-200">
             <div className="flex items-center gap-3">
               <div className="p-2 bg-purple-100 rounded-lg">
@@ -310,11 +573,10 @@ export default function Dashboard() {
         </div>
       </main>
 
-      {/* Footer */}
       <footer className="bg-white border-t border-slate-200 mt-12">
         <div className="max-w-7xl mx-auto px-4 py-6 text-center text-slate-600 text-sm">
           <p>
-            © 2026 Sistema de Calificaciones - Todos los derechos reservados
+            © 2026 Gestión Escolar - Todos los derechos reservados
           </p>
         </div>
       </footer>

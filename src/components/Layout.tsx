@@ -1,7 +1,15 @@
+import { useState } from 'react';
 import type { ReactNode } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { Link, useNavigate } from 'react-router-dom';
-import { FaTrophy, FaSignOutAlt, FaArrowLeft } from 'react-icons/fa';
+import { 
+  FaTrophy, 
+  FaSignOutAlt, 
+  FaArrowLeft, 
+  FaUserCog, 
+  FaChevronDown,
+  FaSchool
+} from 'react-icons/fa';
 
 interface LayoutProps {
   children: ReactNode;
@@ -10,20 +18,26 @@ interface LayoutProps {
   showBack?: boolean;
   backTo?: string;
   action?: ReactNode;
-  showFooter?: boolean; // ✅ Nueva prop opcional
+  showFooter?: boolean;
 }
 
-export default function Layout({ 
-  children, 
-  title, 
+export default function Layout({
+  children,
+  title,
   subtitle,
   showBack = false,
   backTo = '/',
   action,
-  showFooter = false // ✅ Por defecto NO muestra footer
+  showFooter = false
 }: LayoutProps) {
-  const { user, logout } = useAuth();
+  const { user, userData, logout } = useAuth();
   const navigate = useNavigate();
+  const [showDropdown, setShowDropdown] = useState(false);
+
+  // ✅ Nombre para mostrar (prioriza nombreDocumento)
+  const nombreUsuario = userData?.nombreDocumento 
+    ? userData.nombreDocumento
+    : user?.displayName || 'Usuario';
 
   return (
     <div className="min-h-screen bg-linear-to-br from-slate-50 to-slate-100 flex flex-col">
@@ -38,36 +52,136 @@ export default function Layout({
               </div>
               <div className="hidden sm:block">
                 <h1 className="text-lg font-bold bg-linear-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
-                  Sistema de Calificaciones
+                  Gestión Escolar
                 </h1>
-                <p className="text-xs text-slate-500">Gestión educativa integral</p>
+                <p className="text-xs text-slate-500">Sistema integral educativo</p>
               </div>
             </Link>
 
-            {/* Usuario y Logout */}
-            <div className="flex items-center gap-3 bg-slate-50 px-4 py-2 rounded-lg border border-slate-200">
-              <div className="text-right hidden md:block">
-                <p className="text-sm font-semibold text-slate-800">{user?.displayName}</p>
-                <p className="text-xs text-slate-500">{user?.email}</p>
-              </div>
-              <img 
-                src={user?.photoURL || 'https://via.placeholder.com/150'} 
-                alt="avatar" 
-                className="w-10 h-10 rounded-full border-2 border-blue-500 shadow-md"
-              />
+            {/* Usuario con Dropdown */}
+            <div className="relative">
               <button
-                onClick={logout}
-                className="p-2 text-slate-600 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
-                title="Cerrar sesión"
+                onClick={() => setShowDropdown(!showDropdown)}
+                className="flex items-center gap-3 bg-slate-50 hover:bg-slate-100 px-3 py-2 rounded-lg border border-slate-200 transition-all"
               >
-                <FaSignOutAlt className="text-lg" />
+                <div className="text-right hidden md:block">
+                  <p className="text-sm font-semibold text-slate-800 max-w-45 truncate">
+                    {nombreUsuario}
+                  </p>
+                  <p className="text-xs text-slate-500 max-w-45 truncate">
+                    {user?.email}
+                  </p>
+                </div>
+                <img 
+                  src={user?.photoURL || 'https://via.placeholder.com/150'} 
+                  alt="avatar" 
+                  className="w-10 h-10 rounded-full border-2 border-blue-500 shadow-md"
+                />
+                <FaChevronDown className={`text-slate-400 text-xs transition-transform ${showDropdown ? 'rotate-180' : ''}`} />
               </button>
+
+              {/* ✅ Dropdown */}
+              {showDropdown && (
+                <>
+                  {/* Overlay para cerrar al hacer click fuera */}
+                  <div 
+                    className="fixed inset-0 z-40" 
+                    onClick={() => setShowDropdown(false)}
+                  />
+                  
+                  {/* Menú */}
+                  <div className="absolute right-0 mt-2 w-72 bg-white rounded-xl shadow-2xl border border-slate-200 py-2 z-50">
+                    {/* Info del usuario */}
+                    <div className="px-4 py-3 border-b border-slate-100">
+                      <div className="flex items-center gap-3">
+                        <img 
+                          src={user?.photoURL || 'https://via.placeholder.com/150'} 
+                          alt="avatar" 
+                          className="w-14 h-14 rounded-full border-2 border-blue-500"
+                        />
+                        <div className="min-w-0 flex-1">
+                          <p className="font-semibold text-slate-900 text-sm truncate">
+                            {nombreUsuario}
+                          </p>
+                          <p className="text-xs text-slate-500 truncate">{user?.email}</p>
+                          <div className="flex gap-1 mt-1 flex-wrap">
+                            <span className="inline-block px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full text-xs font-medium">
+                              {userData?.role === 'super_admin' ? 'Super Admin' : 'Docente'}
+                            </span>
+                            {userData?.tutorDe && userData.tutorDe.length > 0 && (
+                              <span className="inline-block px-2 py-0.5 bg-purple-100 text-purple-700 rounded-full text-xs font-medium">
+                                Tutor
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Opciones */}
+                    <div className="py-1">
+                      <button
+                        onClick={() => {
+                          setShowDropdown(false);
+                          navigate('/configuracion');
+                        }}
+                        className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50 transition-colors"
+                      >
+                        <div className="w-8 h-8 rounded-lg bg-blue-100 text-blue-600 flex items-center justify-center">
+                          <FaUserCog className="text-sm" />
+                        </div>
+                        <div className="text-left flex-1">
+                          <p className="font-medium">Mi Perfil</p>
+                          <p className="text-xs text-slate-500">Editar nombre para documentos</p>
+                        </div>
+                      </button>
+
+                      {userData?.role === 'super_admin' && (
+                        <button
+                          onClick={() => {
+                            setShowDropdown(false);
+                            navigate('/configuracion-institucional');
+                          }}
+                          className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50 transition-colors"
+                        >
+                          <div className="w-8 h-8 rounded-lg bg-amber-100 text-amber-600 flex items-center justify-center">
+                            <FaSchool className="text-sm" />
+                          </div>
+                          <div className="text-left flex-1">
+                            <p className="font-medium">Config. Institucional</p>
+                            <p className="text-xs text-slate-500">Datos de la institución</p>
+                          </div>
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Separador */}
+                    <div className="border-t border-slate-100 my-1"></div>
+
+                    {/* Cerrar sesión */}
+                    <div className="py-1">
+                      <button
+                        onClick={async () => {
+                          setShowDropdown(false);
+                          await logout();
+                        }}
+                        className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-red-600 hover:bg-red-50 transition-colors"
+                      >
+                        <div className="w-8 h-8 rounded-lg bg-red-100 text-red-600 flex items-center justify-center">
+                          <FaSignOutAlt className="text-sm" />
+                        </div>
+                        <span className="font-medium">Cerrar Sesión</span>
+                      </button>
+                    </div>
+                  </div>
+                </>
+              )}
             </div>
           </div>
         </div>
       </header>
 
-      {/* Contenido Principal - flex-grow para ocupar espacio */}
+      {/* Contenido Principal */}
       <main className="grow max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-6">
         {/* Barra de navegación */}
         <div className="mb-6 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
@@ -88,7 +202,6 @@ export default function Layout({
               )}
             </div>
           </div>
-          
           {action && (
             <div className="flex items-center gap-3">
               {action}
@@ -100,11 +213,11 @@ export default function Layout({
         {children}
       </main>
 
-      {/* ✅ Footer - Solo se muestra si showFooter es true */}
+      {/* Footer - Solo se muestra si showFooter es true */}
       {showFooter && (
         <footer className="bg-white border-t border-slate-200 mt-auto">
           <div className="max-w-7xl mx-auto px-4 py-4 text-center text-slate-600 text-sm">
-            <p>© 2026 Sistema de Calificaciones - Todos los derechos reservados</p>
+            <p>© 2026 Gestión Escolar - Todos los derechos reservados</p>
           </div>
         </footer>
       )}

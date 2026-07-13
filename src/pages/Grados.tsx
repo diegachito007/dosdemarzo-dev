@@ -1,11 +1,11 @@
 import { useState, useEffect, startTransition, useCallback } from 'react';
-import { 
-  collection, 
-  query, 
-  orderBy, 
-  addDoc, 
-  updateDoc, 
-  deleteDoc, 
+import {
+  collection,
+  query,
+  orderBy,
+  addDoc,
+  updateDoc,
+  deleteDoc,
   doc,
   serverTimestamp,
   getDocs,
@@ -15,14 +15,31 @@ import { db } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
 import type { Grado, AnioLectivo } from '../types';
 import Layout from '../components/Layout';
-import { FaPlus, FaEdit, FaTrash, FaCheck, FaTimes, FaGraduationCap, FaInfoCircle, FaCalendarAlt } from 'react-icons/fa';
+import { FaPlus, FaEdit, FaTrash, FaCheck, FaTimes, FaGraduationCap, FaInfoCircle, FaCalendarAlt, FaExclamationTriangle } from 'react-icons/fa';
 
-const NIVELES = ['Inicial 1', 'Inicial 2', 'Preparatoria'];
+// ✅ NIVELES ACTUALIZADOS con todos los grados
+const NIVELES = [
+  'Inicial 1',
+  'Inicial 2',
+  'Preparatoria',
+  '1ro EGB',
+  '2do EGB',
+  '3ro EGB',
+  '4to EGB',
+  '5to EGB',
+  '6to EGB',
+  '7mo EGB',
+  '8vo EGB',
+  '9no EGB',
+  '10mo EGB'
+];
+
 const PARALELOS = ['A', 'B', 'C', 'D', 'E'];
 
 export default function Grados() {
-  const { user } = useAuth();
+  const { user, userData } = useAuth();
   const [grados, setGrados] = useState<Grado[]>([]);
+  const [gradosFiltrados, setGradosFiltrados] = useState<Grado[]>([]);
   const [aniosLectivos, setAniosLectivos] = useState<AnioLectivo[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
@@ -33,6 +50,12 @@ export default function Grados() {
     paralelo: '',
     activo: true
   });
+
+  // ✅ SIMPLIFICADO: Solo super_admin puede gestionar
+  const puedeGestionar = userData?.role === 'super_admin';
+
+  // ✅ Verificar si es docente sin grados asignados
+  const docenteSinGrados = userData?.role === 'docente' && (!userData?.gradosAsignados || userData.gradosAsignados.length === 0);
 
   // ✅ Obtener año lectivo activo automáticamente
   const anioActivo = aniosLectivos.find(a => a.activo);
@@ -66,10 +89,23 @@ export default function Grados() {
 
   const cargarGrados = useCallback(async () => {
     try {
-      const q = query(
-        collection(db, 'grados'),
-        orderBy('orden', 'asc')
-      );
+      let q;
+      
+      // ✅ Si es docente, solo cargar sus grados asignados
+      if (userData?.role === 'docente' && userData?.gradosAsignados && userData.gradosAsignados.length > 0) {
+        q = query(
+          collection(db, 'grados'),
+          where('__name__', 'in', userData.gradosAsignados),
+          orderBy('orden', 'asc')
+        );
+      } else {
+        // Super admin ven todos los grados
+        q = query(
+          collection(db, 'grados'),
+          orderBy('orden', 'asc')
+        );
+      }
+      
       const snap = await getDocs(q);
       const data = snap.docs.map(doc => ({
         id: doc.id,
@@ -78,6 +114,7 @@ export default function Grados() {
       
       startTransition(() => {
         setGrados(data);
+        setGradosFiltrados(data);
         setLoading(false);
       });
     } catch (error) {
@@ -86,7 +123,7 @@ export default function Grados() {
         setLoading(false);
       });
     }
-  }, []);
+  }, [userData]);
 
   const guardarGrado = useCallback(async () => {
     if (!anioActivo) {
@@ -111,7 +148,7 @@ export default function Grados() {
         await addDoc(collection(db, 'grados'), {
           nombre: formData.nombre,
           paralelo: formData.paralelo,
-          anioLectivoId: anioActivo.id, // ✅ Automático
+          anioLectivoId: anioActivo.id,
           activo: true,
           orden,
           createdAt: serverTimestamp(),
@@ -211,7 +248,7 @@ export default function Grados() {
       title="Grados" 
       subtitle="Gestiona los niveles educativos y paralelos"
       showBack
-      action={
+      action={puedeGestionar ? (
         <button
           onClick={() => setShowForm(!showForm)}
           className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg transition-all text-sm font-medium shadow-sm hover:shadow-md"
@@ -219,7 +256,7 @@ export default function Grados() {
           <FaPlus className="text-sm" />
           {showForm ? 'Cancelar' : 'Nuevo Grado'}
         </button>
-      }
+      ) : null}
     >
       {/* ✅ Indicador de Año Lectivo Activo */}
       {anioActivo && (
@@ -248,8 +285,30 @@ export default function Grados() {
         </div>
       )}
 
-      {/* Formulario */}
-      {showForm && (
+      {/* ✅ Mensaje para docentes sin grados asignados - SOLO ESTO, SIN TABLA */}
+      {docenteSinGrados && (
+        <div className="bg-yellow-50 border-2 border-yellow-300 rounded-xl px-8 py-12 mb-6">
+          <div className="flex items-start gap-4 max-w-3xl">
+            <div className="bg-yellow-100 p-3 rounded-full">
+              <FaExclamationTriangle className="text-yellow-600 text-2xl" />
+            </div>
+            <div className="flex-1">
+              <h3 className="text-yellow-800 font-bold text-xl mb-3">
+                No tienes grados asignados
+              </h3>
+              <p className="text-yellow-700 mb-2">
+                Contacta al administrador del sistema para que te asigne los grados que podrás gestionar.
+              </p>
+              <p className="text-yellow-600 text-sm">
+                Una vez que te asignen grados, podrás verlos y gestionarlos en esta sección.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Formulario - SOLO para super_admin */}
+      {showForm && puedeGestionar && (
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 mb-6 overflow-hidden">
           <div className="bg-linear-to-r from-blue-600 to-blue-700 px-5 py-3">
             <h3 className="text-white font-semibold text-base">
@@ -340,114 +399,122 @@ export default function Grados() {
         </div>
       )}
 
-      {/* Tabla de Grados */}
-      <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead className="bg-slate-50 border-b border-slate-200">
-              <tr>
-                <th className="px-5 py-3 text-left text-xs font-semibold text-slate-700 uppercase tracking-wider">
-                  Grado
-                </th>
-                <th className="px-5 py-3 text-center text-xs font-semibold text-slate-700 uppercase tracking-wider w-32">
-                  Estado
-                </th>
-                <th className="px-5 py-3 text-center text-xs font-semibold text-slate-700 uppercase tracking-wider w-32">
-                  Acciones
-                </th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-200">
-              {grados.length === 0 ? (
+      {/* ✅ Tabla de Grados - SOLO si NO es docente sin grados */}
+      {!docenteSinGrados && (
+        <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead className="bg-slate-50 border-b border-slate-200">
                 <tr>
-                  <td colSpan={3} className="px-5 py-16 text-center">
-                    <div className="flex flex-col items-center">
-                      <div className="bg-slate-100 rounded-full p-4 mb-3">
-                        <FaGraduationCap className="text-3xl text-slate-400" />
-                      </div>
-                      <p className="text-slate-600 font-medium mb-1">No hay grados registrados</p>
-                      <p className="text-slate-500 text-sm mb-3">Comienza creando el primer grado</p>
-                      <button
-                        onClick={() => setShowForm(true)}
-                        className="inline-flex items-center gap-2 text-blue-600 hover:text-blue-700 font-medium text-sm"
-                      >
-                        <FaPlus className="text-xs" />
-                        Crear grado
-                      </button>
-                    </div>
-                  </td>
+                  <th className="px-5 py-3 text-left text-xs font-semibold text-slate-700 uppercase tracking-wider">
+                    Grado
+                  </th>
+                  <th className="px-5 py-3 text-center text-xs font-semibold text-slate-700 uppercase tracking-wider w-32">
+                    Estado
+                  </th>
+                  {puedeGestionar && (
+                    <th className="px-5 py-3 text-center text-xs font-semibold text-slate-700 uppercase tracking-wider w-32">
+                      Acciones
+                    </th>
+                  )}
                 </tr>
-              ) : (
-                grados.map((grado) => (
-                  <tr key={grado.id} className="hover:bg-slate-50 transition-colors">
-                    <td className="px-5 py-3">
-                      <div className="flex items-center gap-3">
-                        <div className="bg-linear-to-br from-blue-500 to-purple-600 text-white rounded-lg w-10 h-10 flex items-center justify-center font-bold text-sm">
-                          {grado.paralelo}
+              </thead>
+              <tbody className="divide-y divide-slate-200">
+                {gradosFiltrados.length === 0 ? (
+                  <tr>
+                    <td colSpan={puedeGestionar ? 3 : 2} className="px-5 py-16 text-center">
+                      <div className="flex flex-col items-center">
+                        <div className="bg-slate-100 rounded-full p-4 mb-3">
+                          <FaGraduationCap className="text-3xl text-slate-400" />
                         </div>
-                        <div>
-                          <div className="font-bold text-slate-900 text-base">
-                            {grado.nombre}
-                          </div>
-                          <div className="text-slate-500 text-xs">
-                            Paralelo {grado.paralelo}
-                          </div>
-                        </div>
-                      </div>
-                    </td>
-                    <td className="px-5 py-3 text-center">
-                      <button
-                        onClick={() => handleToggleActivo(grado.id, grado.activo)}
-                        className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold transition-all ${
-                          grado.activo
-                            ? 'bg-linear-to-r from-green-500 to-green-600 text-white shadow-sm'
-                            : 'bg-slate-100 text-slate-600'
-                        }`}
-                      >
-                        {grado.activo ? (
-                          <>
-                            <FaCheck className="mr-1 text-[10px]" />
-                            Activo
-                          </>
-                        ) : (
-                          'Inactivo'
-                        )}
-                      </button>
-                    </td>
-                    <td className="px-5 py-3">
-                      <div className="flex justify-center gap-1">
-                        <button
-                          onClick={() => handleEdit(grado)}
-                          className="p-1.5 text-blue-600 hover:bg-blue-50 rounded transition-all"
-                          title="Editar"
-                        >
-                          <FaEdit className="text-sm" />
-                        </button>
-                        <button
-                          onClick={() => handleDelete(grado.id)}
-                          className="p-1.5 text-red-600 hover:bg-red-50 rounded transition-all"
-                          title="Eliminar"
-                        >
-                          <FaTrash className="text-sm" />
-                        </button>
+                        <p className="text-slate-600 font-medium mb-1">
+                          {userData?.role === 'docente' 
+                            ? 'No tienes grados asignados' 
+                            : 'No hay grados registrados'}
+                        </p>
+                        <p className="text-slate-500 text-sm mb-3">
+                          {userData?.role === 'docente' 
+                            ? 'El administrador debe asignarte grados' 
+                            : 'Comienza creando el primer grado'}
+                        </p>
                       </div>
                     </td>
                   </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-        
-        {grados.length > 0 && (
-          <div className="bg-slate-50 px-5 py-3 border-t border-slate-200">
-            <div className="flex items-center justify-between text-xs text-slate-600">
-              <span>Total: <strong>{grados.length}</strong> grado{grados.length !== 1 ? 's' : ''}</span>
-              <span>{grados.filter(g => g.activo).length} activo{grados.filter(g => g.activo).length !== 1 ? 's' : ''}</span>
-            </div>
+                ) : (
+                  gradosFiltrados.map((grado) => (
+                    <tr key={grado.id} className="hover:bg-slate-50 transition-colors">
+                      <td className="px-5 py-3">
+                        <div className="flex items-center gap-3">
+                          <div className="bg-linear-to-br from-blue-500 to-purple-600 text-white rounded-lg w-10 h-10 flex items-center justify-center font-bold text-sm">
+                            {grado.paralelo}
+                          </div>
+                          <div>
+                            <div className="font-bold text-slate-900 text-base">
+                              {grado.nombre}
+                            </div>
+                            <div className="text-slate-500 text-xs">
+                              Paralelo {grado.paralelo}
+                            </div>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-5 py-3 text-center">
+                        <button
+                          onClick={() => puedeGestionar && handleToggleActivo(grado.id, grado.activo)}
+                          disabled={!puedeGestionar}
+                          className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold transition-all ${
+                            grado.activo
+                              ? 'bg-linear-to-r from-green-500 to-green-600 text-white shadow-sm'
+                              : 'bg-slate-100 text-slate-600'
+                          } ${!puedeGestionar ? 'cursor-default' : 'cursor-pointer hover:opacity-90'}`}
+                        >
+                          {grado.activo ? (
+                            <>
+                              <FaCheck className="mr-1 text-[10px]" />
+                              Activo
+                            </>
+                          ) : (
+                            'Inactivo'
+                          )}
+                        </button>
+                      </td>
+                      {puedeGestionar && (
+                        <td className="px-5 py-3">
+                          <div className="flex justify-center gap-1">
+                            <button
+                              onClick={() => handleEdit(grado)}
+                              className="p-1.5 text-blue-600 hover:bg-blue-50 rounded transition-all"
+                              title="Editar"
+                            >
+                              <FaEdit className="text-sm" />
+                            </button>
+                            <button
+                              onClick={() => handleDelete(grado.id)}
+                              className="p-1.5 text-red-600 hover:bg-red-50 rounded transition-all"
+                              title="Eliminar"
+                            >
+                              <FaTrash className="text-sm" />
+                            </button>
+                          </div>
+                        </td>
+                      )}
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
           </div>
-        )}
-      </div>
+          
+          {gradosFiltrados.length > 0 && (
+            <div className="bg-slate-50 px-5 py-3 border-t border-slate-200">
+              <div className="flex items-center justify-between text-xs text-slate-600">
+                <span>Total: <strong>{gradosFiltrados.length}</strong> grado{gradosFiltrados.length !== 1 ? 's' : ''}</span>
+                <span>{gradosFiltrados.filter(g => g.activo).length} activo{gradosFiltrados.filter(g => g.activo).length !== 1 ? 's' : ''}</span>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </Layout>
   );
 }
