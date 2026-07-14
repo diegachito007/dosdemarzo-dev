@@ -34,7 +34,7 @@ export default function Dashboard() {
   const { user, userData, logout } = useAuth();
   const navigate = useNavigate();
   const [showDropdown, setShowDropdown] = useState(false);
-  
+
   const [stats, setStats] = useState({
     aniosActivos: 0,
     gradosActivos: 0,
@@ -44,14 +44,17 @@ export default function Dashboard() {
   });
 
   // ✅ Estado para datos institucionales
-  const [institutionData, setInstitutionData] = useState<InstitutionData | null>(null);
+  const [institutionData, setInstitutionData] =
+    useState<InstitutionData | null>(null);
   const [loadingInstitution, setLoadingInstitution] = useState(true);
 
   // ✅ Cargar datos institucionales
   useEffect(() => {
     const cargarConfiguracion = async () => {
       try {
-        const configSnap = await getDocs(collection(db, "configuracionInstitucional"));
+        const configSnap = await getDocs(
+          collection(db, "configuracionInstitucional"),
+        );
         if (!configSnap.empty) {
           const data = configSnap.docs[0].data() as InstitutionData;
           setInstitutionData(data);
@@ -62,14 +65,14 @@ export default function Dashboard() {
         setLoadingInstitution(false);
       }
     };
-    
+
     cargarConfiguracion();
   }, []);
 
   // ✅ Nombre para mostrar (prioriza nombreDocumento)
-  const nombreUsuario = userData?.nombreDocumento 
+  const nombreUsuario = userData?.nombreDocumento
     ? userData.nombreDocumento
-    : user?.displayName || 'Usuario';
+    : user?.displayName || "Usuario";
 
   const cargarStats = useCallback(async () => {
     try {
@@ -80,11 +83,15 @@ export default function Dashboard() {
       const aniosSnap = await getDocs(aniosQuery);
 
       let gradosQuery;
-      if (userData?.role === 'docente' && userData?.gradosAsignados && userData.gradosAsignados.length > 0) {
+      if (
+        userData?.role === "docente" &&
+        userData?.gradosAsignados &&
+        userData.gradosAsignados.length > 0
+      ) {
         gradosQuery = query(
           collection(db, "grados"),
           where("activo", "==", true),
-          where("__name__", "in", userData.gradosAsignados)
+          where("__name__", "in", userData.gradosAsignados),
         );
       } else {
         gradosQuery = query(
@@ -95,11 +102,15 @@ export default function Dashboard() {
       const gradosSnap = await getDocs(gradosQuery);
 
       let estudiantesQuery;
-      if (userData?.role === 'docente' && userData?.gradosAsignados && userData.gradosAsignados.length > 0) {
+      if (
+        userData?.role === "docente" &&
+        userData?.gradosAsignados &&
+        userData.gradosAsignados.length > 0
+      ) {
         estudiantesQuery = query(
           collection(db, "estudiantes"),
           where("activo", "==", true),
-          where("gradoId", "in", userData.gradosAsignados)
+          where("gradoId", "in", userData.gradosAsignados),
         );
       } else {
         estudiantesQuery = query(
@@ -110,30 +121,36 @@ export default function Dashboard() {
       const estudiantesSnap = await getDocs(estudiantesQuery);
 
       let ambitosQuery;
-      if (userData?.role === 'docente' && userData?.gradosAsignados && userData.gradosAsignados.length > 0) {
+      if (
+        userData?.role === "docente" &&
+        userData?.gradosAsignados &&
+        userData.gradosAsignados.length > 0
+      ) {
         ambitosQuery = query(
           collection(db, "ambitos"),
           where("gradoId", "in", userData.gradosAsignados),
-          where("activo", "==", true)
+          where("activo", "==", true),
         );
       } else {
         ambitosQuery = query(
           collection(db, "ambitos"),
-          where("activo", "==", true)
+          where("activo", "==", true),
         );
       }
       const ambitosSnap = await getDocs(ambitosQuery);
 
       let calificacionesQuery;
-      if (userData?.role === 'docente' && userData?.gradosAsignados && userData.gradosAsignados.length > 0) {
+      if (
+        userData?.role === "docente" &&
+        userData?.gradosAsignados &&
+        userData.gradosAsignados.length > 0
+      ) {
         calificacionesQuery = query(
           collection(db, "calificaciones"),
-          where("gradoId", "in", userData.gradosAsignados)
+          where("gradoId", "in", userData.gradosAsignados),
         );
       } else {
-        calificacionesQuery = query(
-          collection(db, "calificaciones")
-        );
+        calificacionesQuery = query(collection(db, "calificaciones"));
       }
       const calificacionesSnap = await getDocs(calificacionesQuery);
 
@@ -238,8 +255,8 @@ export default function Dashboard() {
     },
   ];
 
-  const userRole = userData?.role || 'docente';
-  const filteredModules = modules.filter(mod => mod.roles.includes(userRole));
+  const userRole = userData?.role || "docente";
+  const filteredModules = modules.filter((mod) => mod.roles.includes(userRole));
 
   // ✅ Verificar si es tutor de algún grado
   const esTutor = userData?.tutorDe && userData.tutorDe.length > 0;
@@ -267,7 +284,9 @@ export default function Dashboard() {
                   )}
                   {userData?.role && (
                     <span className="px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full text-xs font-semibold">
-                      {userData.role === 'super_admin' ? 'Super Admin' : 'Docente'}
+                      {userData.role === "super_admin"
+                        ? "Super Admin"
+                        : "Docente"}
                     </span>
                   )}
                   {esTutor && (
@@ -299,36 +318,44 @@ export default function Dashboard() {
                   alt="avatar"
                   className="w-12 h-12 rounded-full border-2 border-blue-500 shadow-md"
                 />
-                <FaChevronDown className={`text-slate-400 text-xs transition-transform ${showDropdown ? 'rotate-180' : ''}`} />
+                <FaChevronDown
+                  className={`text-slate-400 text-xs transition-transform ${showDropdown ? "rotate-180" : ""}`}
+                />
               </button>
 
               {/* ✅ Dropdown */}
               {showDropdown && (
                 <>
                   {/* Overlay para cerrar al hacer click fuera */}
-                  <div 
-                    className="fixed inset-0 z-40" 
+                  <div
+                    className="fixed inset-0 z-40"
                     onClick={() => setShowDropdown(false)}
                   />
-                  
+
                   {/* Menú */}
                   <div className="absolute right-0 mt-2 w-72 bg-white rounded-xl shadow-2xl border border-slate-200 py-2 z-50">
                     {/* Info del usuario */}
                     <div className="px-4 py-3 border-b border-slate-100">
                       <div className="flex items-center gap-3">
-                        <img 
-                          src={user?.photoURL || 'https://via.placeholder.com/150'} 
-                          alt="avatar" 
+                        <img
+                          src={
+                            user?.photoURL || "https://via.placeholder.com/150"
+                          }
+                          alt="avatar"
                           className="w-14 h-14 rounded-full border-2 border-blue-500"
                         />
                         <div className="min-w-0 flex-1">
                           <p className="font-semibold text-slate-900 text-sm truncate">
                             {nombreUsuario}
                           </p>
-                          <p className="text-xs text-slate-500 truncate">{user?.email}</p>
+                          <p className="text-xs text-slate-500 truncate">
+                            {user?.email}
+                          </p>
                           <div className="flex gap-1 mt-1 flex-wrap">
                             <span className="inline-block px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full text-xs font-medium">
-                              {userData?.role === 'super_admin' ? 'Super Admin' : 'Docente'}
+                              {userData?.role === "super_admin"
+                                ? "Super Admin"
+                                : "Docente"}
                             </span>
                             {esTutor && (
                               <span className="inline-block px-2 py-0.5 bg-purple-100 text-purple-700 rounded-full text-xs font-medium">
@@ -345,7 +372,7 @@ export default function Dashboard() {
                       <button
                         onClick={() => {
                           setShowDropdown(false);
-                          navigate('/configuracion');
+                          navigate("/configuracion");
                         }}
                         className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50 transition-colors"
                       >
@@ -354,15 +381,17 @@ export default function Dashboard() {
                         </div>
                         <div className="text-left flex-1">
                           <p className="font-medium">Mi Perfil</p>
-                          <p className="text-xs text-slate-500">Editar nombre para documentos</p>
+                          <p className="text-xs text-slate-500">
+                            Editar nombre para documentos
+                          </p>
                         </div>
                       </button>
 
-                      {userData?.role === 'super_admin' && (
+                      {userData?.role === "super_admin" && (
                         <button
                           onClick={() => {
                             setShowDropdown(false);
-                            navigate('/configuracion-institucional');
+                            navigate("/configuracion-institucional");
                           }}
                           className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50 transition-colors"
                         >
@@ -371,7 +400,9 @@ export default function Dashboard() {
                           </div>
                           <div className="text-left flex-1">
                             <p className="font-medium">Config. Institucional</p>
-                            <p className="text-xs text-slate-500">Datos de la institución</p>
+                            <p className="text-xs text-slate-500">
+                              Datos de la institución
+                            </p>
                           </div>
                         </button>
                       )}
@@ -405,30 +436,43 @@ export default function Dashboard() {
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* ✅ ALERTA: Si es super_admin y no hay configuración institucional */}
-        {userData?.role === 'super_admin' && loadingInstitution === false && !institutionData && (
-          <div className="mb-6 bg-amber-50 border-l-4 border-amber-400 p-4 rounded-lg">
-            <div className="flex items-start gap-3">
-              <FaCogs className="text-amber-600 text-xl mt-0.5" />
-              <div className="flex-1">
-                <h3 className="font-semibold text-amber-900">
-                  Configuración institucional pendiente
-                </h3>
-                <p className="text-sm text-amber-700 mt-1">
-                  Para generar reportes oficiales, necesitas configurar los datos de la institución.
-                </p>
-                <Link 
-                  to="/configuracion-institucional"
-                  className="inline-flex items-center gap-2 mt-3 px-4 py-2 bg-amber-600 text-white rounded-lg text-sm font-medium hover:bg-amber-700 transition-colors"
-                >
-                  Configurar ahora
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                  </svg>
-                </Link>
+        {userData?.role === "super_admin" &&
+          loadingInstitution === false &&
+          !institutionData && (
+            <div className="mb-6 bg-amber-50 border-l-4 border-amber-400 p-4 rounded-lg">
+              <div className="flex items-start gap-3">
+                <FaCogs className="text-amber-600 text-xl mt-0.5" />
+                <div className="flex-1">
+                  <h3 className="font-semibold text-amber-900">
+                    Configuración institucional pendiente
+                  </h3>
+                  <p className="text-sm text-amber-700 mt-1">
+                    Para generar reportes oficiales, necesitas configurar los
+                    datos de la institución.
+                  </p>
+                  <Link
+                    to="/configuracion-institucional"
+                    className="inline-flex items-center gap-2 mt-3 px-4 py-2 bg-amber-600 text-white rounded-lg text-sm font-medium hover:bg-amber-700 transition-colors"
+                  >
+                    Configurar ahora
+                    <svg
+                      className="w-4 h-4"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M9 5l7 7-7 7"
+                      />
+                    </svg>
+                  </Link>
+                </div>
               </div>
             </div>
-          </div>
-        )}
+          )}
 
         {/* ✅ ALERTA: Si no tiene nombreDocumento configurado */}
         {!userData?.nombreDocumento && (
@@ -440,30 +484,32 @@ export default function Dashboard() {
                   Completa tu información personal
                 </h3>
                 <p className="text-sm text-blue-700 mt-1">
-                  Para que tu nombre aparezca correctamente en los reportes y documentos oficiales, configura tu nombre para documentos.
+                  Para que tu nombre aparezca correctamente en los reportes y
+                  documentos oficiales, configura tu nombre para documentos.
                 </p>
                 <button
-                  onClick={() => navigate('/configuracion')}
+                  onClick={() => navigate("/configuracion")}
                   className="inline-flex items-center gap-2 mt-3 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors"
                 >
                   Configurar mi perfil
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                  <svg
+                    className="w-4 h-4"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M9 5l7 7-7 7"
+                    />
                   </svg>
                 </button>
               </div>
             </div>
           </div>
         )}
-
-        <div className="mb-8">
-          <h2 className="text-2xl font-bold text-slate-800 mb-2">
-            ¡Bienvenido, {nombreUsuario.split(" ")[0] || "Usuario"}! 👋
-          </h2>
-          <p className="text-slate-600">
-            Selecciona un módulo para comenzar a gestionar
-          </p>
-        </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {filteredModules.map((mod) => (
@@ -516,68 +562,11 @@ export default function Dashboard() {
             </Link>
           ))}
         </div>
-
-        <div className="mt-12 grid grid-cols-1 md:grid-cols-4 gap-4">
-          <div className="bg-white rounded-xl p-6 shadow-md border border-slate-200">
-            <div className="flex items-center gap-3">
-              <div className="p-2 bg-pink-100 rounded-lg">
-                <FaCalendarAlt className="text-pink-600 text-xl" />
-              </div>
-              <div>
-                <p className="text-2xl font-bold text-slate-800">
-                  {stats.aniosActivos}
-                </p>
-                <p className="text-sm text-slate-600">Años Activos</p>
-              </div>
-            </div>
-          </div>
-          <div className="bg-white rounded-xl p-6 shadow-md border border-slate-200">
-            <div className="flex items-center gap-3">
-              <div className="p-2 bg-blue-100 rounded-lg">
-                <FaGraduationCap className="text-blue-600 text-xl" />
-              </div>
-              <div>
-                <p className="text-2xl font-bold text-slate-800">
-                  {stats.gradosActivos}
-                </p>
-                <p className="text-sm text-slate-600">Grados Activos</p>
-              </div>
-            </div>
-          </div>
-          <div className="bg-white rounded-xl p-6 shadow-md border border-slate-200">
-            <div className="flex items-center gap-3">
-              <div className="p-2 bg-green-100 rounded-lg">
-                <FaUsers className="text-green-600 text-xl" />
-              </div>
-              <div>
-                <p className="text-2xl font-bold text-slate-800">
-                  {stats.estudiantesActivos}
-                </p>
-                <p className="text-sm text-slate-600">Estudiantes</p>
-              </div>
-            </div>
-          </div>
-          <div className="bg-white rounded-xl p-6 shadow-md border border-slate-200">
-            <div className="flex items-center gap-3">
-              <div className="p-2 bg-purple-100 rounded-lg">
-                <FaBook className="text-purple-600 text-xl" />
-              </div>
-              <div>
-                <p className="text-2xl font-bold text-slate-800">
-                  {stats.ambitos}
-                </p>
-                <p className="text-sm text-slate-600">Ámbitos</p>
-              </div>
-            </div>
-          </div>
-        </div>
       </main>
 
       <footer className="bg-white border-t border-slate-200 mt-12">
         <div className="max-w-7xl mx-auto px-4 py-6 text-center text-slate-600 text-sm">
-          <p>
-            © 2026 Gestión Escolar - Todos los derechos reservados
-          </p>
+          <p>© 2026 Gestión Escolar - Todos los derechos reservados</p>
         </div>
       </footer>
     </div>

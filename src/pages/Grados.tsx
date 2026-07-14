@@ -17,12 +17,11 @@ import type { Grado, AnioLectivo } from '../types';
 import Layout from '../components/Layout';
 import { FaPlus, FaEdit, FaTrash, FaCheck, FaTimes, FaGraduationCap, FaInfoCircle, FaCalendarAlt, FaExclamationTriangle } from 'react-icons/fa';
 
-// ✅ NIVELES ACTUALIZADOS con todos los grados
+// ✅ NIVELES ACTUALIZADOS: Se eliminó '1ro EGB' (equivalente a Preparatoria)
 const NIVELES = [
   'Inicial 1',
   'Inicial 2',
   'Preparatoria',
-  '1ro EGB',
   '2do EGB',
   '3ro EGB',
   '4to EGB',

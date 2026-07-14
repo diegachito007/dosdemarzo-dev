@@ -1,4 +1,4 @@
-import { useState, useEffect, startTransition, useCallback } from "react";
+import { useState, useEffect, startTransition, useCallback, useRef } from "react";
 import {
   collection,
   query,
@@ -37,28 +37,26 @@ export default function AmbitosDestrezas() {
   const [destrezas, setDestrezas] = useState<Destreza[]>([]);
   const [loading, setLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
-
   const [selectedGradoId, setSelectedGradoId] = useState("");
-
   const [currentView, setCurrentView] = useState<"ambitos" | "destrezas">(
     "ambitos",
   );
   const [selectedAmbitoId, setSelectedAmbitoId] = useState<string | null>(null);
-
   const [showAmbitoForm, setShowAmbitoForm] = useState(false);
   const [editingAmbitoId, setEditingAmbitoId] = useState<string | null>(null);
   const [ambitoFormData, setAmbitoFormData] = useState({
     nombre: "",
     orden: 0,
   });
-
   const [showDestrezaForm, setShowDestrezaForm] = useState(false);
   const [editingDestrezaId, setEditingDestrezaId] = useState<string | null>(
     null,
   );
   const [destrezaMassiveData, setDestrezaMassiveData] = useState("");
-
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
+  
+  // ✅ Referencia al formulario de destrezas
+  const destrezaFormRef = useRef<HTMLDivElement>(null);
 
   const resetAmbitoForm = useCallback(() => {
     setAmbitoFormData({ nombre: "", orden: 0 });
@@ -163,15 +161,12 @@ export default function AmbitosDestrezas() {
 
   const guardarAmbito = useCallback(async () => {
     const errors: string[] = [];
-
     if (!ambitoFormData.nombre.trim()) {
       errors.push("El nombre del ámbito es obligatorio");
     }
-
     if (!selectedGradoId) {
       errors.push("Debe seleccionar un grado");
     }
-
     const existe = ambitos.find(
       (a) =>
         a.nombre.toLowerCase() === ambitoFormData.nombre.trim().toLowerCase() &&
@@ -183,14 +178,12 @@ export default function AmbitosDestrezas() {
         `Ya existe un ámbito llamado "${ambitoFormData.nombre}" en este grado`,
       );
     }
-
     if (errors.length > 0) {
       setValidationErrors(errors);
       return;
     }
 
     setIsSaving(true);
-
     try {
       if (editingAmbitoId) {
         await updateDoc(doc(db, "ambitos", editingAmbitoId), {
@@ -208,7 +201,6 @@ export default function AmbitosDestrezas() {
           createdBy: user?.uid,
         });
       }
-
       resetAmbitoForm();
       await cargarAmbitos(selectedGradoId);
     } catch (error) {
@@ -230,15 +222,12 @@ export default function AmbitosDestrezas() {
   // ✅ NUEVA LÓGICA: Separar por punto seguido de salto de línea
   const analizarYGuardarDestrezas = useCallback(async () => {
     const errors: string[] = [];
-
     if (!selectedAmbitoId) {
       errors.push("No hay un ámbito seleccionado");
     }
-
     if (!destrezaMassiveData.trim()) {
       errors.push("Debe ingresar al menos una destreza");
     }
-
     if (errors.length > 0) {
       setValidationErrors(errors);
       return;
@@ -283,7 +272,6 @@ export default function AmbitosDestrezas() {
         (existente) => existente.descripcion.toLowerCase() === d.toLowerCase(),
       ),
     );
-
     if (duplicadas.length > 0) {
       setValidationErrors([
         `${duplicadas.length} destreza(s) ya existe(n) en este ámbito.`,
@@ -300,7 +288,6 @@ export default function AmbitosDestrezas() {
       }
       vistas.add(lower);
     });
-
     if (duplicadasInternas.length > 0) {
       setValidationErrors([
         `${duplicadasInternas.length} destreza(s) duplicada(s) en el lote.`,
@@ -309,14 +296,11 @@ export default function AmbitosDestrezas() {
     }
 
     setIsSaving(true);
-
     try {
       const ambito = ambitos.find((a) => a.id === selectedAmbitoId);
       if (!ambito) throw new Error("Ámbito no encontrado");
-
       const batch = destrezasList.map(async (texto, index) => {
         const nombre = texto.substring(0, 100);
-
         await addDoc(collection(db, "destrezas"), {
           nombre: nombre.trim(),
           descripcion: texto.trim(),
@@ -330,10 +314,8 @@ export default function AmbitosDestrezas() {
       });
 
       await Promise.all(batch);
-
       await cargarDestrezas(selectedGradoId);
       resetDestrezaForm();
-
       alert(
         `✅ Se registraron ${destrezasList.length} destreza(s) en "${ambito.nombre}"`,
       );
@@ -367,7 +349,6 @@ export default function AmbitosDestrezas() {
   const handleDeleteAmbito = useCallback(
     async (id: string) => {
       const destrezasDelAmbito = destrezas.filter((d) => d.ambitoId === id);
-
       if (destrezasDelAmbito.length > 0) {
         if (
           !confirm(
@@ -383,7 +364,6 @@ export default function AmbitosDestrezas() {
       } else {
         if (!confirm("¿Eliminar este ámbito?")) return;
       }
-
       try {
         await deleteDoc(doc(db, "ambitos", id));
         await cargarAmbitos(selectedGradoId);
@@ -410,11 +390,20 @@ export default function AmbitosDestrezas() {
     [selectedGradoId, cargarDestrezas],
   );
 
+  // ✅ SCROLL AUTOMÁTICO al formulario al editar
   const handleEditDestreza = useCallback((destreza: Destreza) => {
     setDestrezaMassiveData(destreza.descripcion);
     setEditingDestrezaId(destreza.id);
     setShowDestrezaForm(true);
     setValidationErrors([]);
+    
+    // ✅ Scroll suave al formulario después de un pequeño delay
+    setTimeout(() => {
+      destrezaFormRef.current?.scrollIntoView({ 
+        behavior: 'smooth', 
+        block: 'center' 
+      });
+    }, 100);
   }, []);
 
   const guardarDestrezaIndividual = useCallback(async () => {
@@ -424,11 +413,9 @@ export default function AmbitosDestrezas() {
     }
 
     setIsSaving(true);
-
     try {
       const ambito = ambitos.find((a) => a.id === selectedAmbitoId);
       if (!ambito) throw new Error("Ámbito no encontrado");
-
       if (editingDestrezaId) {
         await updateDoc(doc(db, "destrezas", editingDestrezaId), {
           nombre: destrezaMassiveData.substring(0, 100).trim(),
@@ -450,7 +437,6 @@ export default function AmbitosDestrezas() {
           createdBy: user?.uid,
         });
       }
-
       await cargarDestrezas(selectedGradoId);
       resetDestrezaForm();
     } catch (error) {
@@ -595,7 +581,6 @@ export default function AmbitosDestrezas() {
                 <h4 className="text-sm font-semibold text-slate-800 mb-3">
                   {editingAmbitoId ? "Editar Ámbito" : "Nuevo Ámbito"}
                 </h4>
-
                 {validationErrors.length > 0 && (
                   <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-3">
                     <ul className="text-red-700 text-sm space-y-1">
@@ -605,7 +590,6 @@ export default function AmbitosDestrezas() {
                     </ul>
                   </div>
                 )}
-
                 <div className="space-y-3">
                   <div>
                     <label className="block text-xs font-semibold text-slate-700 mb-1">
@@ -625,7 +609,6 @@ export default function AmbitosDestrezas() {
                       className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-purple-500 disabled:bg-slate-100 disabled:cursor-not-allowed"
                     />
                   </div>
-
                   <div className="flex gap-2">
                     <button
                       onClick={guardarAmbito}
@@ -746,14 +729,14 @@ export default function AmbitosDestrezas() {
           </div>
 
           <div className="p-5">
+            {/* ✅ Formulario con ref para scroll automático */}
             {showDestrezaForm && (
-              <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 mb-4">
+              <div ref={destrezaFormRef} className="bg-slate-50 border border-slate-200 rounded-lg p-4 mb-4">
                 <h4 className="text-sm font-semibold text-slate-800 mb-3">
                   {editingDestrezaId
                     ? "Editar Destreza"
                     : "Agregar Destrezas (Masivo)"}
                 </h4>
-
                 {validationErrors.length > 0 && (
                   <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-3">
                     <div className="flex items-start gap-2">
@@ -766,7 +749,6 @@ export default function AmbitosDestrezas() {
                     </div>
                   </div>
                 )}
-
                 <div className="space-y-3">
                   <div>
                     <label className="block text-xs font-semibold text-slate-700 mb-1">
@@ -796,7 +778,6 @@ Participa en conversaciones grupales, respetando los turnos de palabra y las opi
                       </p>
                     )}
                   </div>
-
                   <div className="flex gap-2">
                     <button
                       onClick={
@@ -869,9 +850,6 @@ Participa en conversaciones grupales, respetando los turnos de palabra y las opi
                         {index + 1}
                       </div>
                       <div className="flex-1">
-                        <h5 className="font-semibold text-slate-900 text-sm mb-1">
-                          {destreza.nombre}
-                        </h5>
                         <p className="text-slate-600 text-sm whitespace-pre-line">
                           {destreza.descripcion}
                         </p>
