@@ -1,7 +1,10 @@
-import { useState } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import type { ReactNode } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { Link, useNavigate } from 'react-router-dom';
+import { collection, query, where, getDocs } from 'firebase/firestore';
+import { db } from '../lib/firebase';
+import type { Grado, AnioLectivo } from '../types';
 import { 
   FaTrophy, 
   FaSignOutAlt, 
@@ -33,11 +36,63 @@ export default function Layout({
   const { user, userData, logout } = useAuth();
   const navigate = useNavigate();
   const [showDropdown, setShowDropdown] = useState(false);
+  const [, setAniosLectivos] = useState<AnioLectivo[]>([]);
+  const [grados, setGrados] = useState<Grado[]>([]);
 
   // ✅ Nombre para mostrar (prioriza nombreDocumento)
   const nombreUsuario = userData?.nombreDocumento 
     ? userData.nombreDocumento
     : user?.displayName || 'Usuario';
+
+  // ✅ Cargar años lectivos y grados del año activo
+  useEffect(() => {
+    const cargarDatos = async () => {
+      try {
+        // Cargar año lectivo activo
+        const qAnios = query(collection(db, 'aniosLectivos'), where('activo', '==', true));
+        const snapAnios = await getDocs(qAnios);
+        const aniosData = snapAnios.docs.map(doc => ({ id: doc.id, ...doc.data() } as AnioLectivo));
+        setAniosLectivos(aniosData);
+
+        // Cargar grados del año activo (SOLO los asignados al usuario si es docente)
+        if (aniosData.length > 0) {
+          const anioActivo = aniosData[0];
+          let qGrados;
+          
+          if (userData?.role === 'docente' && userData?.gradosAsignados && userData.gradosAsignados.length > 0) {
+            // Docente: solo sus grados asignados
+            qGrados = query(
+              collection(db, 'grados'),
+              where('anioLectivoId', '==', anioActivo.id),
+              where('__name__', 'in', userData.gradosAsignados),
+              where('activo', '==', true)
+            );
+          } else {
+            // Admin: todos los grados activos
+            qGrados = query(
+              collection(db, 'grados'),
+              where('anioLectivoId', '==', anioActivo.id),
+              where('activo', '==', true)
+            );
+          }
+          
+          const snapGrados = await getDocs(qGrados);
+          const gradosData = snapGrados.docs.map(doc => ({ id: doc.id, ...doc.data() } as Grado));
+          setGrados(gradosData);
+        }
+      } catch (error) {
+        console.error('Error cargando datos para Layout:', error);
+      }
+    };
+
+    cargarDatos();
+  }, [userData?.role, userData?.gradosAsignados]);
+
+  // ✅ Filtrar tutorDe solo para el año lectivo activo (misma lógica que Estudiantes.tsx)
+  const tutorDeAnioActivo = useMemo(() => {
+    if (!userData?.tutorDe) return [];
+    return grados.filter(g => userData.tutorDe?.includes(g.id)).map(g => g.id);
+  }, [grados, userData]);
 
   return (
     <div className="min-h-screen bg-linear-to-br from-slate-50 to-slate-100 flex flex-col">
@@ -75,7 +130,7 @@ export default function Layout({
                 <img 
                   src={user?.photoURL || 'https://via.placeholder.com/150'} 
                   alt="avatar" 
-                  className="w-10 h-10 rounded-full border-2 border-blue-500 shadow-md"
+                  className="w-10 h-10 rounded-full border-2 border-blue-500 shadow-md object-cover"
                 />
                 <FaChevronDown className={`text-slate-400 text-xs transition-transform ${showDropdown ? 'rotate-180' : ''}`} />
               </button>
@@ -97,7 +152,7 @@ export default function Layout({
                         <img 
                           src={user?.photoURL || 'https://via.placeholder.com/150'} 
                           alt="avatar" 
-                          className="w-14 h-14 rounded-full border-2 border-blue-500"
+                          className="w-14 h-14 rounded-full border-2 border-blue-500 object-cover"
                         />
                         <div className="min-w-0 flex-1">
                           <p className="font-semibold text-slate-900 text-sm truncate">
@@ -108,9 +163,10 @@ export default function Layout({
                             <span className="inline-block px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full text-xs font-medium">
                               {userData?.role === 'super_admin' ? 'Super Admin' : 'Docente'}
                             </span>
-                            {userData?.tutorDe && userData.tutorDe.length > 0 && (
+                            {/* ✅ CORREGIDO: Mostrar tutor SOLO del año activo */}
+                            {tutorDeAnioActivo.length > 0 && (
                               <span className="inline-block px-2 py-0.5 bg-purple-100 text-purple-700 rounded-full text-xs font-medium">
-                                Tutor
+                                Tutor ({tutorDeAnioActivo.length})
                               </span>
                             )}
                           </div>

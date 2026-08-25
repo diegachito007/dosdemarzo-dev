@@ -1,8 +1,9 @@
-import { useState, useEffect, useCallback, startTransition } from "react";
+import { useState, useEffect, useCallback, startTransition, useMemo } from "react";
 import { useAuth } from "../context/AuthContext";
 import { Link, useNavigate } from "react-router-dom";
 import { collection, query, where, getDocs } from "firebase/firestore";
 import { db } from "../lib/firebase";
+import type { Grado, AnioLectivo } from "../types";
 import {
   FaGraduationCap,
   FaUsers,
@@ -18,9 +19,9 @@ import {
   FaSchool,
   FaUserCog,
   FaChevronDown,
+  FaUserGraduate,
 } from "react-icons/fa";
 
-// ✅ Interfaz para los datos institucionales
 interface InstitutionData {
   nombreInstitucion?: string;
   codigoAmie?: string;
@@ -34,27 +35,23 @@ export default function Dashboard() {
   const { user, userData, logout } = useAuth();
   const navigate = useNavigate();
   const [showDropdown, setShowDropdown] = useState(false);
-
+  const [grados, setGrados] = useState<Grado[]>([]);
+  const [, setAniosLectivos] = useState<AnioLectivo[]>([]);
   const [stats, setStats] = useState({
     aniosActivos: 0,
     gradosActivos: 0,
     estudiantesActivos: 0,
     ambitos: 0,
     calificaciones: 0,
+    solicitudesPendientes: 0,
   });
-
-  // ✅ Estado para datos institucionales
-  const [institutionData, setInstitutionData] =
-    useState<InstitutionData | null>(null);
+  const [institutionData, setInstitutionData] = useState<InstitutionData | null>(null);
   const [loadingInstitution, setLoadingInstitution] = useState(true);
 
-  // ✅ Cargar datos institucionales
   useEffect(() => {
     const cargarConfiguracion = async () => {
       try {
-        const configSnap = await getDocs(
-          collection(db, "configuracionInstitucional"),
-        );
+        const configSnap = await getDocs(collection(db, "configuracionInstitucional"));
         if (!configSnap.empty) {
           const data = configSnap.docs[0].data() as InstitutionData;
           setInstitutionData(data);
@@ -65,94 +62,101 @@ export default function Dashboard() {
         setLoadingInstitution(false);
       }
     };
-
     cargarConfiguracion();
   }, []);
 
-  // ✅ Nombre para mostrar (prioriza nombreDocumento)
+  // ✅ Cargar años lectivos y grados
+  useEffect(() => {
+    const cargarDatos = async () => {
+      try {
+        // Cargar año lectivo activo
+        const qAnios = query(collection(db, 'aniosLectivos'), where('activo', '==', true));
+        const snapAnios = await getDocs(qAnios);
+        const aniosData = snapAnios.docs.map(doc => ({ id: doc.id, ...doc.data() } as AnioLectivo));
+        setAniosLectivos(aniosData);
+
+        // Cargar grados del año activo
+        if (aniosData.length > 0) {
+          const anioActivo = aniosData[0];
+          let qGrados;
+          
+          if (userData?.role === 'docente' && userData?.gradosAsignados && userData.gradosAsignados.length > 0) {
+            qGrados = query(
+              collection(db, 'grados'),
+              where('anioLectivoId', '==', anioActivo.id),
+              where('__name__', 'in', userData.gradosAsignados),
+              where('activo', '==', true)
+            );
+          } else {
+            qGrados = query(
+              collection(db, 'grados'),
+              where('anioLectivoId', '==', anioActivo.id),
+              where('activo', '==', true)
+            );
+          }
+          
+          const snapGrados = await getDocs(qGrados);
+          const gradosData = snapGrados.docs.map(doc => ({ id: doc.id, ...doc.data() } as Grado));
+          setGrados(gradosData);
+        }
+      } catch (error) {
+        console.error('Error cargando datos para Dashboard:', error);
+      }
+    };
+
+    cargarDatos();
+  }, [userData?.role, userData?.gradosAsignados]);
+
+  // ✅ CORRECCIÓN: Filtrar tutorDe solo para el año lectivo activo (igual que en Layout y Estudiantes)
+  const tutorDeAnioActivo = useMemo(() => {
+    if (!userData?.tutorDe) return [];
+    return grados.filter(g => userData.tutorDe?.includes(g.id)).map(g => g.id);
+  }, [grados, userData]);
+
   const nombreUsuario = userData?.nombreDocumento
     ? userData.nombreDocumento
     : user?.displayName || "Usuario";
 
   const cargarStats = useCallback(async () => {
     try {
-      const aniosQuery = query(
-        collection(db, "aniosLectivos"),
-        where("activo", "==", true),
-      );
+      const aniosQuery = query(collection(db, "aniosLectivos"), where("activo", "==", true));
       const aniosSnap = await getDocs(aniosQuery);
 
       let gradosQuery;
-      if (
-        userData?.role === "docente" &&
-        userData?.gradosAsignados &&
-        userData.gradosAsignados.length > 0
-      ) {
-        gradosQuery = query(
-          collection(db, "grados"),
-          where("activo", "==", true),
-          where("__name__", "in", userData.gradosAsignados),
-        );
+      if (userData?.role === "docente" && userData?.gradosAsignados && userData.gradosAsignados.length > 0) {
+        gradosQuery = query(collection(db, "grados"), where("activo", "==", true), where("__name__", "in", userData.gradosAsignados));
       } else {
-        gradosQuery = query(
-          collection(db, "grados"),
-          where("activo", "==", true),
-        );
+        gradosQuery = query(collection(db, "grados"), where("activo", "==", true));
       }
       const gradosSnap = await getDocs(gradosQuery);
 
       let estudiantesQuery;
-      if (
-        userData?.role === "docente" &&
-        userData?.gradosAsignados &&
-        userData.gradosAsignados.length > 0
-      ) {
-        estudiantesQuery = query(
-          collection(db, "estudiantes"),
-          where("activo", "==", true),
-          where("gradoId", "in", userData.gradosAsignados),
-        );
+      if (userData?.role === "docente" && userData?.gradosAsignados && userData.gradosAsignados.length > 0) {
+        estudiantesQuery = query(collection(db, "estudiantes"), where("activo", "==", true), where("gradoId", "in", userData.gradosAsignados));
       } else {
-        estudiantesQuery = query(
-          collection(db, "estudiantes"),
-          where("activo", "==", true),
-        );
+        estudiantesQuery = query(collection(db, "estudiantes"), where("activo", "==", true));
       }
       const estudiantesSnap = await getDocs(estudiantesQuery);
 
       let ambitosQuery;
-      if (
-        userData?.role === "docente" &&
-        userData?.gradosAsignados &&
-        userData.gradosAsignados.length > 0
-      ) {
-        ambitosQuery = query(
-          collection(db, "ambitos"),
-          where("gradoId", "in", userData.gradosAsignados),
-          where("activo", "==", true),
-        );
+      if (userData?.role === "docente" && userData?.gradosAsignados && userData.gradosAsignados.length > 0) {
+        ambitosQuery = query(collection(db, "ambitos"), where("gradoId", "in", userData.gradosAsignados), where("activo", "==", true));
       } else {
-        ambitosQuery = query(
-          collection(db, "ambitos"),
-          where("activo", "==", true),
-        );
+        ambitosQuery = query(collection(db, "ambitos"), where("activo", "==", true));
       }
       const ambitosSnap = await getDocs(ambitosQuery);
 
       let calificacionesQuery;
-      if (
-        userData?.role === "docente" &&
-        userData?.gradosAsignados &&
-        userData.gradosAsignados.length > 0
-      ) {
-        calificacionesQuery = query(
-          collection(db, "calificaciones"),
-          where("gradoId", "in", userData.gradosAsignados),
-        );
+      if (userData?.role === "docente" && userData?.gradosAsignados && userData.gradosAsignados.length > 0) {
+        calificacionesQuery = query(collection(db, "calificaciones"), where("gradoId", "in", userData.gradosAsignados));
       } else {
         calificacionesQuery = query(collection(db, "calificaciones"));
       }
       const calificacionesSnap = await getDocs(calificacionesQuery);
+
+      const solicitudesSnap = await getDocs(
+        query(collection(db, "solicitudesMatriculas"), where("estado", "==", "pendiente"))
+      );
 
       startTransition(() => {
         setStats({
@@ -161,6 +165,7 @@ export default function Dashboard() {
           estudiantesActivos: estudiantesSnap.size,
           ambitos: ambitosSnap.size,
           calificaciones: calificacionesSnap.size,
+          solicitudesPendientes: solicitudesSnap.size,
         });
       });
     } catch (error) {
@@ -173,6 +178,26 @@ export default function Dashboard() {
   }, [cargarStats]);
 
   const modules = [
+    {
+      path: "/configuracion-institucional",
+      name: "Configuración Institucional",
+      icon: FaCogs,
+      color: "from-slate-600 to-slate-700",
+      desc: "Datos de la institución y rector/a",
+      stats: "Admin",
+      badge: "ADMIN",
+      roles: ["super_admin"],
+    },
+    {
+      path: "/gestion-usuarios",
+      name: "Gestión de Usuarios",
+      icon: FaUserShield,
+      color: "from-red-500 to-red-600",
+      desc: "Administrar usuarios del sistema",
+      stats: "Admin",
+      badge: "ADMIN",
+      roles: ["super_admin"],
+    },
     {
       path: "/anios-lectivos",
       name: "Años Lectivos",
@@ -194,16 +219,6 @@ export default function Dashboard() {
       roles: ["super_admin", "docente"],
     },
     {
-      path: "/estudiantes",
-      name: "Estudiantes",
-      icon: FaUsers,
-      color: "from-green-500 to-green-600",
-      desc: "Matrícula de alumnos",
-      stats: `${stats.estudiantesActivos} activo${stats.estudiantesActivos !== 1 ? "s" : ""}`,
-      badge: "NIVEL 3",
-      roles: ["super_admin", "docente"],
-    },
-    {
       path: "/ambitos-destrezas",
       name: "Ámbitos y Destrezas",
       icon: FaBook,
@@ -212,6 +227,26 @@ export default function Dashboard() {
       stats: `${stats.ambitos} ámbito${stats.ambitos !== 1 ? "s" : ""}`,
       badge: "NIVEL 3",
       roles: ["super_admin"],
+    },
+    {
+      path: "/matriculas",
+      name: "Matrículas",
+      icon: FaUserGraduate,
+      color: "from-indigo-500 to-indigo-600",
+      desc: "Revisar y aprobar solicitudes de matrícula",
+      stats: `${stats.solicitudesPendientes} pendiente${stats.solicitudesPendientes !== 1 ? "s" : ""}`,
+      badge: "ADMIN",
+      roles: ["super_admin"],
+    },
+    {
+      path: "/estudiantes",
+      name: "Estudiantes",
+      icon: FaUsers,
+      color: "from-green-500 to-green-600",
+      desc: "Matrícula de alumnos",
+      stats: `${stats.estudiantesActivos} activo${stats.estudiantesActivos !== 1 ? "s" : ""}`,
+      badge: "NIVEL 3",
+      roles: ["super_admin", "docente"],
     },
     {
       path: "/calificaciones",
@@ -233,34 +268,14 @@ export default function Dashboard() {
       badge: "NIVEL 5",
       roles: ["super_admin", "docente"],
     },
-    {
-      path: "/configuracion-institucional",
-      name: "Configuración Institucional",
-      icon: FaCogs,
-      color: "from-slate-600 to-slate-700",
-      desc: "Datos de la institución y rector/a",
-      stats: "Admin",
-      badge: "ADMIN",
-      roles: ["super_admin"],
-    },
-    {
-      path: "/gestion-usuarios",
-      name: "Gestión de Usuarios",
-      icon: FaUserShield,
-      color: "from-red-500 to-red-600",
-      desc: "Administrar usuarios del sistema",
-      stats: "Admin",
-      badge: "ADMIN",
-      roles: ["super_admin"],
-    },
   ];
 
   const userRole = userData?.role || "docente";
   const filteredModules = modules.filter((mod) => mod.roles.includes(userRole));
-
-  // ✅ Verificar si es tutor de algún grado
-  const esTutor = userData?.tutorDe && userData.tutorDe.length > 0;
-  const gradosTutor = userData?.tutorDe || [];
+  
+  // ✅ CORRECCIÓN: Usar tutorDeAnioActivo en lugar de userData.tutorDe
+  const esTutor = tutorDeAnioActivo.length > 0;
+  const gradosTutor = tutorDeAnioActivo;
 
   return (
     <div className="min-h-screen bg-linear-to-br from-slate-50 to-slate-100">
@@ -284,9 +299,7 @@ export default function Dashboard() {
                   )}
                   {userData?.role && (
                     <span className="px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full text-xs font-semibold">
-                      {userData.role === "super_admin"
-                        ? "Super Admin"
-                        : "Docente"}
+                      {userData.role === "super_admin" ? "Super Admin" : "Docente"}
                     </span>
                   )}
                   {esTutor && (
@@ -299,7 +312,6 @@ export default function Dashboard() {
               </div>
             </div>
 
-            {/* ✅ Dropdown de Usuario */}
             <div className="relative">
               <button
                 onClick={() => setShowDropdown(!showDropdown)}
@@ -322,25 +334,17 @@ export default function Dashboard() {
                   className={`text-slate-400 text-xs transition-transform ${showDropdown ? "rotate-180" : ""}`}
                 />
               </button>
-
-              {/* ✅ Dropdown */}
               {showDropdown && (
                 <>
-                  {/* Overlay para cerrar al hacer click fuera */}
                   <div
                     className="fixed inset-0 z-40"
                     onClick={() => setShowDropdown(false)}
                   />
-
-                  {/* Menú */}
                   <div className="absolute right-0 mt-2 w-72 bg-white rounded-xl shadow-2xl border border-slate-200 py-2 z-50">
-                    {/* Info del usuario */}
                     <div className="px-4 py-3 border-b border-slate-100">
                       <div className="flex items-center gap-3">
                         <img
-                          src={
-                            user?.photoURL || "https://via.placeholder.com/150"
-                          }
+                          src={user?.photoURL || "https://via.placeholder.com/150"}
                           alt="avatar"
                           className="w-14 h-14 rounded-full border-2 border-blue-500"
                         />
@@ -353,9 +357,7 @@ export default function Dashboard() {
                           </p>
                           <div className="flex gap-1 mt-1 flex-wrap">
                             <span className="inline-block px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full text-xs font-medium">
-                              {userData?.role === "super_admin"
-                                ? "Super Admin"
-                                : "Docente"}
+                              {userData?.role === "super_admin" ? "Super Admin" : "Docente"}
                             </span>
                             {esTutor && (
                               <span className="inline-block px-2 py-0.5 bg-purple-100 text-purple-700 rounded-full text-xs font-medium">
@@ -366,8 +368,6 @@ export default function Dashboard() {
                         </div>
                       </div>
                     </div>
-
-                    {/* Opciones */}
                     <div className="py-1">
                       <button
                         onClick={() => {
@@ -386,7 +386,6 @@ export default function Dashboard() {
                           </p>
                         </div>
                       </button>
-
                       {userData?.role === "super_admin" && (
                         <button
                           onClick={() => {
@@ -407,11 +406,7 @@ export default function Dashboard() {
                         </button>
                       )}
                     </div>
-
-                    {/* Separador */}
                     <div className="border-t border-slate-100 my-1"></div>
-
-                    {/* Cerrar sesión */}
                     <div className="py-1">
                       <button
                         onClick={async () => {
@@ -435,7 +430,6 @@ export default function Dashboard() {
       </header>
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* ✅ ALERTA: Si es super_admin y no hay configuración institucional */}
         {userData?.role === "super_admin" &&
           loadingInstitution === false &&
           !institutionData && (
@@ -455,18 +449,8 @@ export default function Dashboard() {
                     className="inline-flex items-center gap-2 mt-3 px-4 py-2 bg-amber-600 text-white rounded-lg text-sm font-medium hover:bg-amber-700 transition-colors"
                   >
                     Configurar ahora
-                    <svg
-                      className="w-4 h-4"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M9 5l7 7-7 7"
-                      />
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                     </svg>
                   </Link>
                 </div>
@@ -474,7 +458,6 @@ export default function Dashboard() {
             </div>
           )}
 
-        {/* ✅ ALERTA: Si no tiene nombreDocumento configurado */}
         {!userData?.nombreDocumento && (
           <div className="mb-6 bg-blue-50 border-l-4 border-blue-400 p-4 rounded-lg">
             <div className="flex items-start gap-3">
@@ -492,18 +475,8 @@ export default function Dashboard() {
                   className="inline-flex items-center gap-2 mt-3 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors"
                 >
                   Configurar mi perfil
-                  <svg
-                    className="w-4 h-4"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M9 5l7 7-7 7"
-                    />
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                   </svg>
                 </button>
               </div>
@@ -521,9 +494,7 @@ export default function Dashboard() {
               <div className={`h-2 bg-linear-to-r ${mod.color}`} />
               <div className="p-6">
                 <div className="flex items-start justify-between mb-4">
-                  <div
-                    className={`p-3 rounded-xl bg-linear-to-br ${mod.color} shadow-lg group-hover:scale-110 transition-transform duration-300`}
-                  >
+                  <div className={`p-3 rounded-xl bg-linear-to-br ${mod.color} shadow-lg group-hover:scale-110 transition-transform duration-300`}>
                     <mod.icon className="text-white text-2xl" />
                   </div>
                   <div className="flex flex-col items-end gap-1">
@@ -541,24 +512,12 @@ export default function Dashboard() {
                 <p className="text-slate-600 text-sm mb-4">{mod.desc}</p>
                 <div className="flex items-center text-blue-600 font-semibold text-sm group-hover:translate-x-2 transition-transform">
                   Acceder
-                  <svg
-                    className="w-4 h-4 ml-2"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M9 5l7 7-7 7"
-                    />
+                  <svg className="w-4 h-4 ml-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                   </svg>
                 </div>
               </div>
-              <div
-                className={`absolute inset-0 bg-linear-to-br ${mod.color} opacity-0 group-hover:opacity-5 transition-opacity duration-300`}
-              />
+              <div className={`absolute inset-0 bg-linear-to-br ${mod.color} opacity-0 group-hover:opacity-5 transition-opacity duration-300`} />
             </Link>
           ))}
         </div>

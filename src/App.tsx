@@ -1,6 +1,8 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import type { ReactNode } from 'react';
+
+// Componentes de páginas
 import Login from './components/Login';
 import Dashboard from './pages/Dashboard';
 import Calificaciones from './pages/Calificaciones';
@@ -14,11 +16,14 @@ import GestionUsuarios from './pages/GestionUsuarios';
 import Configuracion from './pages/Configuracion';
 import PendingApproval from './pages/PendingApproval';
 
-// ✅ RUTA PRIVADA CORREGIDA
+// ✅ NUEVOS: Formulario público y Panel de administración
+import Matricula from './pages/Matricula';       // Formulario público (sin login)
+import Matriculas from './pages/Matriculas';     // Panel de administración (solo super_admin)
+
+// ✅ RUTA PRIVADA CORREGIDA (Fail-Closed)
 function PrivateRoute({ children }: { children: ReactNode }) {
   const { user, userData, loading } = useAuth();
 
-  // 1. Muestra loader mientras carga
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50">
@@ -30,12 +35,10 @@ function PrivateRoute({ children }: { children: ReactNode }) {
     );
   }
 
-  // 2. Si no hay usuario, al login
   if (!user) {
     return <Navigate to="/login" replace />;
   }
 
-  // 3. Si userData es null, espera un poco más
   if (!userData) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50">
@@ -47,23 +50,19 @@ function PrivateRoute({ children }: { children: ReactNode }) {
     );
   }
 
-  // 4. Si el usuario está pendiente, ir a pantalla de espera
   if (userData.status === 'pending') {
     return <PendingApproval />;
   }
 
-  // 5. Si está rechazado o bloqueado
   if (userData.status === 'rejected' || userData.status === 'blocked') {
     alert('Tu cuenta ha sido rechazada o bloqueada. Contacta al administrador.');
     return <Navigate to="/login" replace />;
   }
 
-  // 6. Si está activo, permite el acceso
   if (userData.status === 'active') {
     return <>{children}</>;
   }
 
-  // 7. Por defecto, muestra loader
   return (
     <div className="min-h-screen flex items-center justify-center bg-slate-50">
       <div className="text-center">
@@ -74,7 +73,7 @@ function PrivateRoute({ children }: { children: ReactNode }) {
   );
 }
 
-// ✅ Componente para rutas protegidas por rol
+// ✅ Componente para rutas protegidas exclusivamente por rol (Super Admin)
 function AdminRoute({ children }: { children: ReactNode }) {
   const { userData } = useAuth();
   
@@ -90,9 +89,13 @@ function AppRoutes() {
   
   return (
     <Routes>
+      {/* Ruta de Login */}
       <Route path="/login" element={user ? <Navigate to="/" replace /> : <Login />} />
       
-      {/* Rutas públicas (requieren login) */}
+      {/* ✅ 1. RUTA PÚBLICA: Formulario de Matrícula (NO requiere PrivateRoute) */}
+      <Route path="/matricula" element={<Matricula />} />
+      
+      {/* Rutas protegidas (requieren login + estado 'active') */}
       <Route path="/" element={<PrivateRoute><Dashboard /></PrivateRoute>} />
       <Route path="/anios-lectivos" element={<PrivateRoute><AniosLectivos /></PrivateRoute>} />
       <Route path="/grados" element={<PrivateRoute><Grados /></PrivateRoute>} />
@@ -101,13 +104,20 @@ function AppRoutes() {
       <Route path="/calificaciones" element={<PrivateRoute><Calificaciones /></PrivateRoute>} />
       <Route path="/reportes" element={<PrivateRoute><Reportes /></PrivateRoute>} />
       
-      {/* ✅ Perfil personal (todos los usuarios) */}
+      {/* Perfil personal */}
+      <Route path="/configuracion" element={<PrivateRoute><Configuracion /></PrivateRoute>} />
+      
+      {/* ✅ 2. RUTA ADMIN: Panel de Gestión de Matrículas (Solo super_admin) */}
       <Route 
-        path="/configuracion" 
-        element={<PrivateRoute><Configuracion /></PrivateRoute>} 
+        path="/matriculas" 
+        element={
+          <PrivateRoute>
+            <AdminRoute><Matriculas /></AdminRoute>
+          </PrivateRoute>
+        } 
       />
       
-      {/* ✅ Rutas solo para super_admin */}
+      {/* Otras rutas solo para super_admin */}
       <Route 
         path="/configuracion-institucional" 
         element={
@@ -125,7 +135,10 @@ function AppRoutes() {
         } 
       />
       
+      {/* Ruta de espera para pendientes/rechazados */}
       <Route path="/pending-approval" element={<PendingApproval />} />
+      
+      {/* Catch-all */}
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );

@@ -6,12 +6,12 @@ import {
   signOut
 } from 'firebase/auth';
 import type { User } from 'firebase/auth';
-import { 
-  doc, 
-  getDoc, 
-  setDoc, 
-  serverTimestamp, 
-  onSnapshot 
+import {
+  doc,
+  getDoc,
+  setDoc,
+  serverTimestamp,
+  onSnapshot
 } from 'firebase/firestore';
 import { auth, googleProvider, db } from '../lib/firebase';
 import type { AppUser } from '../types';
@@ -44,7 +44,6 @@ export function AuthProvider({ children }: AuthProviderProps) {
         const userRef = doc(db, 'usuarios', firebaseUser.uid);
         const userSnap = await getDoc(userRef);
         
-        // 🔒 Si el usuario NO existe en Firestore, crearlo SIEMPRE como 'pending'
         if (!userSnap.exists()) {
           await setDoc(userRef, {
             uid: firebaseUser.uid,
@@ -59,8 +58,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
             createdAt: serverTimestamp(),
           });
         }
-        
-        // ✅ ESCUCHAR CAMBIOS EN TIEMPO REAL
+
         const unsubscribeSnapshot = onSnapshot(
           userRef,
           (snapshot) => {
@@ -84,12 +82,12 @@ export function AuthProvider({ children }: AuthProviderProps) {
             setLoading(false);
           },
           (error) => {
-            console.error(' Error en onSnapshot:', error);
+            console.error('Error en onSnapshot:', error);
             setUserData(null);
             setLoading(false);
           }
         );
-        
+
         return () => unsubscribeSnapshot();
       } else {
         setUserData(null);
@@ -120,14 +118,11 @@ export function AuthProvider({ children }: AuthProviderProps) {
     await signOut(auth);
   };
 
-  // ✅ SIMPLIFICADO: Solo super_admin puede eliminar usuarios
   const canDeleteUser = useCallback((targetUser: AppUser): boolean => {
     if (!userData) return false;
-    // Solo super_admin puede eliminar usuarios
     if (userData.role === 'super_admin') {
       return userData.uid !== targetUser.uid;
     }
-    // Docentes no pueden eliminar a nadie
     return false;
   }, [userData]);
 

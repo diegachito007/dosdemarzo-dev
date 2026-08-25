@@ -1,4 +1,10 @@
-import { useState, useEffect, startTransition, useCallback, useRef } from "react";
+import {
+  useState,
+  useEffect,
+  startTransition,
+  useCallback,
+  useRef,
+} from "react";
 import {
   collection,
   query,
@@ -13,7 +19,7 @@ import {
 } from "firebase/firestore";
 import { db } from "../lib/firebase";
 import { useAuth } from "../context/AuthContext";
-import type { Ambito, Destreza, Grado } from "../types";
+import type { Ambito, Destreza, Grado, AnioLectivo } from "../types";
 import Layout from "../components/Layout";
 import {
   FaPlus,
@@ -28,11 +34,14 @@ import {
   FaInfoCircle,
   FaUpload,
   FaSpinner,
+  FaPrint,
+  FaCalendarAlt, // ✅ Agregado para el indicador de año lectivo
 } from "react-icons/fa";
 
 export default function AmbitosDestrezas() {
   const { user } = useAuth();
   const [grados, setGrados] = useState<Grado[]>([]);
+  const [aniosLectivos, setAniosLectivos] = useState<AnioLectivo[]>([]); // ✅ Nuevo estado para años lectivos
   const [ambitos, setAmbitos] = useState<Ambito[]>([]);
   const [destrezas, setDestrezas] = useState<Destreza[]>([]);
   const [loading, setLoading] = useState(true);
@@ -48,13 +57,20 @@ export default function AmbitosDestrezas() {
     nombre: "",
     orden: 0,
   });
+
+  // ✅ NUEVO: Estados para ingreso masivo de ámbitos
+  const [isAmbitoMassive, setIsAmbitoMassive] = useState(false);
+  const [ambitoMassiveData, setAmbitoMassiveData] = useState("");
+  const [parsedAmbitos, setParsedAmbitos] = useState<string[]>([]);
+  const [showConfirmAmbitoModal, setShowConfirmAmbitoModal] = useState(false);
+
   const [showDestrezaForm, setShowDestrezaForm] = useState(false);
   const [editingDestrezaId, setEditingDestrezaId] = useState<string | null>(
     null,
   );
   const [destrezaMassiveData, setDestrezaMassiveData] = useState("");
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
-  
+
   // ✅ Referencia al formulario de destrezas
   const destrezaFormRef = useRef<HTMLDivElement>(null);
 
@@ -62,6 +78,10 @@ export default function AmbitosDestrezas() {
     setAmbitoFormData({ nombre: "", orden: 0 });
     setEditingAmbitoId(null);
     setShowAmbitoForm(false);
+    setIsAmbitoMassive(false);
+    setAmbitoMassiveData("");
+    setParsedAmbitos([]);
+    setShowConfirmAmbitoModal(false);
     setValidationErrors([]);
   }, []);
 
@@ -72,20 +92,49 @@ export default function AmbitosDestrezas() {
     setValidationErrors([]);
   }, []);
 
-  const cargarGrados = useCallback(async () => {
+  // ✅ NUEVA: Cargar años lectivos
+  const cargarAniosLectivos = useCallback(async () => {
     try {
       const q = query(
-        collection(db, "grados"),
+        collection(db, "aniosLectivos"),
         where("activo", "==", true),
-        orderBy("orden", "asc"),
       );
       const snap = await getDocs(q);
       const data = snap.docs.map(
-        (doc) =>
-          ({
-            id: doc.id,
-            ...doc.data(),
-          }) as Grado,
+        (doc) => ({ id: doc.id, ...doc.data() }) as AnioLectivo,
+      );
+      startTransition(() => {
+        setAniosLectivos(data);
+      });
+    } catch (error) {
+      console.error("Error cargando años lectivos:", error);
+    }
+  }, []);
+
+  // ✅ CORRECCIÓN CLAVE: Filtrar grados SOLO del año lectivo activo
+  const cargarGrados = useCallback(async () => {
+    try {
+      const anioActivo = aniosLectivos.find((a) => a.activo);
+
+      // Si no hay año activo, limpiamos la lista y detenemos la carga
+      if (!anioActivo) {
+        startTransition(() => {
+          setGrados([]);
+          setLoading(false);
+        });
+        return;
+      }
+
+      const q = query(
+        collection(db, "grados"),
+        where("anioLectivoId", "==", anioActivo.id), // ✅ FILTRO POR AÑO ACTIVO
+        where("activo", "==", true),
+        orderBy("orden", "asc"),
+      );
+
+      const snap = await getDocs(q);
+      const data = snap.docs.map(
+        (doc) => ({ id: doc.id, ...doc.data() }) as Grado,
       );
 
       startTransition(() => {
@@ -93,11 +142,13 @@ export default function AmbitosDestrezas() {
         if (data.length > 0 && !selectedGradoId) {
           setSelectedGradoId(data[0].id);
         }
+        setLoading(false);
       });
     } catch (error) {
       console.error("Error cargando grados:", error);
+      startTransition(() => setLoading(false));
     }
-  }, [selectedGradoId]);
+  }, [selectedGradoId, aniosLectivos]);
 
   const cargarAmbitos = useCallback(async (gradoId: string) => {
     try {
@@ -108,15 +159,11 @@ export default function AmbitosDestrezas() {
       const q = query(
         collection(db, "ambitos"),
         where("gradoId", "==", gradoId),
-        orderBy("orden", "asc"),
+        orderBy("nombre", "asc"),
       );
       const snap = await getDocs(q);
       const data = snap.docs.map(
-        (doc) =>
-          ({
-            id: doc.id,
-            ...doc.data(),
-          }) as Ambito,
+        (doc) => ({ id: doc.id, ...doc.data() }) as Ambito,
       );
 
       startTransition(() => {
@@ -140,11 +187,7 @@ export default function AmbitosDestrezas() {
       );
       const snap = await getDocs(q);
       const data = snap.docs.map(
-        (doc) =>
-          ({
-            id: doc.id,
-            ...doc.data(),
-          }) as Destreza,
+        (doc) => ({ id: doc.id, ...doc.data() }) as Destreza,
       );
 
       startTransition(() => {
@@ -158,6 +201,147 @@ export default function AmbitosDestrezas() {
       });
     }
   }, []);
+
+  const parseAmbitosMassiveData = useCallback(
+    (data: string): { ambitos: string[]; parseErrors: string[] } => {
+      const lines = data.trim().split("\n");
+      const ambitosList: string[] = [];
+      const parseErrors: string[] = [];
+
+      lines.forEach((line, index) => {
+        const trimmedLine = line.trim();
+        if (!trimmedLine) return;
+
+        if (trimmedLine.length < 3) {
+          parseErrors.push(
+            `Línea ${index + 1}: El nombre del ámbito es muy corto (mínimo 3 caracteres)`,
+          );
+          return;
+        }
+
+        ambitosList.push(trimmedLine);
+      });
+
+      return { ambitos: ambitosList, parseErrors };
+    },
+    [],
+  );
+
+  const validarAmbitosMasivos = useCallback(
+    (ambitosList: string[]): string[] => {
+      const allErrors: string[] = [];
+      const nombresVistos = new Set<string>();
+
+      ambitosList.forEach((nombre, index) => {
+        const errors: string[] = [];
+
+        if (nombresVistos.has(nombre.toLowerCase())) {
+          errors.push(`Ámbito "${nombre}" duplicado en el lote`);
+        }
+        nombresVistos.add(nombre.toLowerCase());
+
+        const existe = ambitos.some(
+          (a) => a.nombre.toLowerCase() === nombre.toLowerCase(),
+        );
+        if (existe) {
+          errors.push(`Ya existe un ámbito llamado "${nombre}" en este grado`);
+        }
+
+        if (errors.length > 0) {
+          allErrors.push(`Línea ${index + 1}: ${errors.join(", ")}`);
+        }
+      });
+
+      return allErrors;
+    },
+    [ambitos],
+  );
+
+  const guardarAmbitosMasivos = useCallback(async () => {
+    if (!ambitoMassiveData.trim()) {
+      setValidationErrors([
+        "No hay datos para procesar. Ingrese al menos un ámbito.",
+      ]);
+      return;
+    }
+
+    if (!selectedGradoId) {
+      setValidationErrors(["Debe seleccionar un grado antes de registrar."]);
+      return;
+    }
+
+    const { ambitos: ambitosList, parseErrors } =
+      parseAmbitosMassiveData(ambitoMassiveData);
+
+    if (parseErrors.length > 0) {
+      setValidationErrors(parseErrors);
+      setParsedAmbitos([]);
+      return;
+    }
+
+    if (ambitosList.length === 0) {
+      setValidationErrors([
+        "No se encontraron ámbitos válidos. Verifique el formato.",
+      ]);
+      return;
+    }
+
+    const errors = validarAmbitosMasivos(ambitosList);
+    if (errors.length > 0) {
+      setValidationErrors(errors);
+      setParsedAmbitos([]);
+      return;
+    }
+
+    setParsedAmbitos(ambitosList);
+    setValidationErrors([]);
+    setShowConfirmAmbitoModal(true);
+  }, [
+    ambitoMassiveData,
+    selectedGradoId,
+    parseAmbitosMassiveData,
+    validarAmbitosMasivos,
+  ]);
+
+  const confirmarGuardadoAmbitosMasivos = useCallback(async () => {
+    setShowConfirmAmbitoModal(false);
+    setIsSaving(true);
+
+    try {
+      const maxOrden =
+        ambitos.length > 0 ? Math.max(...ambitos.map((a) => a.orden || 0)) : 0;
+
+      const batch = parsedAmbitos.map(async (nombre, index) => {
+        await addDoc(collection(db, "ambitos"), {
+          nombre: nombre.trim(),
+          gradoId: selectedGradoId,
+          orden: maxOrden + index + 1,
+          activo: true,
+          createdAt: serverTimestamp(),
+          createdBy: user?.uid,
+        });
+      });
+
+      await Promise.all(batch);
+      await cargarAmbitos(selectedGradoId);
+      resetAmbitoForm();
+      alert(
+        `✅ Se registraron ${parsedAmbitos.length} ámbito(s) correctamente`,
+      );
+    } catch (error) {
+      console.error("Error guardando ámbitos masivos:", error);
+      alert("Error al guardar los ámbitos");
+    } finally {
+      setIsSaving(false);
+    }
+  }, [
+    parsedAmbitos,
+    selectedGradoId,
+    ambitos,
+    user,
+    cargarAmbitos,
+    resetAmbitoForm,
+  ]);
 
   const guardarAmbito = useCallback(async () => {
     const errors: string[] = [];
@@ -192,10 +376,14 @@ export default function AmbitosDestrezas() {
           updatedAt: serverTimestamp(),
         });
       } else {
+        const maxOrden =
+          ambitos.length > 0
+            ? Math.max(...ambitos.map((a) => a.orden || 0))
+            : 0;
         await addDoc(collection(db, "ambitos"), {
           nombre: ambitoFormData.nombre.trim(),
           gradoId: selectedGradoId,
-          orden: ambitoFormData.orden,
+          orden: maxOrden + 1,
           activo: true,
           createdAt: serverTimestamp(),
           createdBy: user?.uid,
@@ -219,7 +407,6 @@ export default function AmbitosDestrezas() {
     cargarAmbitos,
   ]);
 
-  // ✅ NUEVA LÓGICA: Separar por punto seguido de salto de línea
   const analizarYGuardarDestrezas = useCallback(async () => {
     const errors: string[] = [];
     if (!selectedAmbitoId) {
@@ -233,8 +420,6 @@ export default function AmbitosDestrezas() {
       return;
     }
 
-    // ✅ Separar por punto seguido de salto de línea (con o sin espacios)
-    // El lookbehind (?<=\.) mantiene el punto en la destreza anterior
     const lineas = destrezaMassiveData.split(/(?<=\.)\s*\n+/);
     const destrezasList = lineas
       .map((d) => d.trim())
@@ -247,7 +432,6 @@ export default function AmbitosDestrezas() {
       return;
     }
 
-    // Validar que cada destreza termine con punto
     const sinPunto = destrezasList.filter((d) => !d.endsWith("."));
     if (sinPunto.length > 0) {
       setValidationErrors([
@@ -337,12 +521,10 @@ export default function AmbitosDestrezas() {
   ]);
 
   const handleEditAmbito = useCallback((ambito: Ambito) => {
-    setAmbitoFormData({
-      nombre: ambito.nombre,
-      orden: ambito.orden || 0,
-    });
+    setAmbitoFormData({ nombre: ambito.nombre, orden: ambito.orden || 0 });
     setEditingAmbitoId(ambito.id);
     setShowAmbitoForm(true);
+    setIsAmbitoMassive(false);
     setValidationErrors([]);
   }, []);
 
@@ -390,18 +572,16 @@ export default function AmbitosDestrezas() {
     [selectedGradoId, cargarDestrezas],
   );
 
-  // ✅ SCROLL AUTOMÁTICO al formulario al editar
   const handleEditDestreza = useCallback((destreza: Destreza) => {
     setDestrezaMassiveData(destreza.descripcion);
     setEditingDestrezaId(destreza.id);
     setShowDestrezaForm(true);
     setValidationErrors([]);
-    
-    // ✅ Scroll suave al formulario después de un pequeño delay
+
     setTimeout(() => {
-      destrezaFormRef.current?.scrollIntoView({ 
-        behavior: 'smooth', 
-        block: 'center' 
+      destrezaFormRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
       });
     }, 100);
   }, []);
@@ -473,9 +653,86 @@ export default function AmbitosDestrezas() {
     resetDestrezaForm();
   }, [resetDestrezaForm]);
 
+  // ✅ NUEVO: Función para imprimir el respaldo
+  const handlePrint = useCallback(() => {
+    const gradoActual = grados.find((g) => g.id === selectedGradoId);
+    if (!gradoActual) return;
+
+    const ambitosConDestrezas = ambitos.map((ambito) => ({
+      ...ambito,
+      destrezas: destrezas.filter((d) => d.ambitoId === ambito.id),
+    }));
+
+    const printContent = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>Respaldo de Ámbitos y Destrezas - ${gradoActual.nombre} ${gradoActual.paralelo}</title>
+      <style>
+        body { font-family: Arial, sans-serif; padding: 30px; color: #333; line-height: 1.5; }
+        h1 { text-align: center; color: #2563eb; font-size: 24px; margin-bottom: 5px; }
+        h2 { text-align: center; color: #555; font-size: 18px; margin-bottom: 30px; font-weight: normal; }
+        .ambito { margin-bottom: 25px; page-break-inside: avoid; }
+        .ambito-title { background-color: #f3f4f6; padding: 10px 15px; font-weight: bold; font-size: 16px; border-left: 4px solid #8b5cf6; margin-bottom: 10px; color: #1f2937; }
+        .destreza { margin-bottom: 8px; padding-left: 20px; position: relative; font-size: 14px; }
+        .destreza::before { content: "•"; position: absolute; left: 0; color: #8b5cf6; font-weight: bold; }
+        .footer { margin-top: 50px; text-align: center; font-size: 12px; color: #777; border-top: 1px solid #ccc; padding-top: 15px; }
+        @media print { body { padding: 0; } }
+      </style>
+    </head>
+    <body>
+      <h1>Respaldo de Ámbitos y Destrezas</h1>
+      <h2>Grado: ${gradoActual.nombre} - Paralelo: ${gradoActual.paralelo}</h2>
+      ${ambitosConDestrezas
+        .map(
+          (ambito) => `
+        <div class="ambito">
+          <div class="ambito-title">${ambito.nombre}</div>
+          ${
+            ambito.destrezas.length > 0
+              ? ambito.destrezas
+                  .map(
+                    (d) => `
+            <div class="destreza">${d.descripcion}</div>
+          `,
+                  )
+                  .join("")
+              : '<div class="destreza" style="color: #999; font-style: italic;">No hay destrezas registradas en este ámbito.</div>'
+          }
+        </div>
+      `,
+        )
+        .join("")}
+      <div class="footer">
+        <p>Generado el: ${new Date().toLocaleDateString("es-EC", { year: "numeric", month: "long", day: "numeric", hour: "2-digit", minute: "2-digit" })}</p>
+        <p>Documento de respaldo interno del sistema de gestión escolar.</p>
+      </div>
+    </body>
+    </html>
+  `;
+
+    const printWindow = window.open("", "_blank");
+    if (printWindow) {
+      printWindow.document.write(printContent);
+      printWindow.document.close();
+      printWindow.focus();
+      setTimeout(() => {
+        printWindow.print();
+      }, 500);
+    }
+  }, [grados, selectedGradoId, ambitos, destrezas]);
+
+  // ✅ useEffect corregido para asegurar el orden de carga
   useEffect(() => {
-    cargarGrados();
-  }, [cargarGrados]);
+    cargarAniosLectivos();
+  }, [cargarAniosLectivos]);
+
+  useEffect(() => {
+    // Solo cargamos los grados cuando ya tenemos los años lectivos
+    if (aniosLectivos.length > 0) {
+      cargarGrados();
+    }
+  }, [aniosLectivos, cargarGrados]);
 
   useEffect(() => {
     if (selectedGradoId) {
@@ -505,6 +762,7 @@ export default function AmbitosDestrezas() {
   const destrezasDelAmbito = selectedAmbitoId
     ? getDestrezasByAmbito(selectedAmbitoId)
     : [];
+  const anioActivo = aniosLectivos.find((a) => a.activo);
 
   return (
     <Layout
@@ -512,24 +770,67 @@ export default function AmbitosDestrezas() {
       subtitle="Configura competencias y destrezas por grado"
       showBack
     >
+      {/* ✅ Indicador de Año Lectivo Activo */}
+      {anioActivo && (
+        <div className="bg-blue-50 border border-blue-200 rounded-lg px-4 py-3 mb-6">
+          <div className="flex items-center gap-2 text-blue-800">
+            <FaCalendarAlt className="text-sm" />
+            <span className="text-sm font-medium">
+              Trabajando con año lectivo:
+            </span>
+            <span className="text-base font-bold text-blue-900">
+              {anioActivo.nombre}
+            </span>
+          </div>
+        </div>
+      )}
+
+      {!anioActivo && (
+        <div className="bg-yellow-50 border border-yellow-200 rounded-lg px-4 py-3 mb-6">
+          <div className="flex items-start gap-2">
+            <FaInfoCircle className="text-yellow-600 mt-0.5" />
+            <div>
+              <h4 className="text-yellow-800 font-semibold text-sm mb-1">
+                No hay año lectivo activo
+              </h4>
+              <p className="text-yellow-700 text-sm">
+                Debes crear y activar un año lectivo primero en el módulo de
+                Años Lectivos.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Selector de Grado */}
       <div className="bg-white rounded-xl shadow-sm border border-slate-200 mb-6 p-4">
-        <div className="flex items-center gap-4">
-          <label className="text-sm font-semibold text-slate-700">Grado:</label>
-          <select
-            value={selectedGradoId}
-            onChange={(e) => {
-              setSelectedGradoId(e.target.value);
-              volverAAmbitos();
-            }}
-            className="flex-1 max-w-md border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500"
-          >
-            {grados.map((grado) => (
-              <option key={grado.id} value={grado.id}>
-                {grado.nombre} - {grado.paralelo}
-              </option>
-            ))}
-          </select>
+        <div className="flex flex-col sm:flex-row sm:items-center gap-4">
+          <div className="flex-1">
+            <label className="text-sm font-semibold text-slate-700 block mb-1">
+              Grado:
+            </label>
+            <select
+              value={selectedGradoId}
+              onChange={(e) => {
+                setSelectedGradoId(e.target.value);
+                volverAAmbitos();
+              }}
+              disabled={grados.length === 0}
+              className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 disabled:bg-slate-100 disabled:cursor-not-allowed"
+            >
+              {grados.length === 0 ? (
+                <option value="">
+                  No hay grados para el año lectivo activo
+                </option>
+              ) : (
+                grados.map((grado) => (
+                  <option key={grado.id} value={grado.id}>
+                    {grado.nombre} - {grado.paralelo}
+                  </option>
+                ))
+              )}
+            </select>
+          </div>
         </div>
       </div>
 
@@ -540,8 +841,7 @@ export default function AmbitosDestrezas() {
             onClick={volverAAmbitos}
             className="inline-flex items-center gap-1 text-blue-600 hover:text-blue-700 font-medium"
           >
-            <FaArrowLeft className="text-xs" />
-            Ámbitos
+            <FaArrowLeft className="text-xs" /> Ámbitos
           </button>
           <span className="text-slate-400">/</span>
           <span className="text-slate-700 font-medium">
@@ -565,22 +865,68 @@ export default function AmbitosDestrezas() {
                 </p>
               </div>
             </div>
-            <button
-              onClick={() => setShowAmbitoForm(!showAmbitoForm)}
-              disabled={isSaving}
-              className="inline-flex items-center gap-2 bg-white/20 hover:bg-white/30 text-white px-3 py-1.5 rounded-lg transition-all text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <FaPlus className="text-xs" />
-              {showAmbitoForm ? "Cancelar" : "Nuevo Ámbito"}
-            </button>
+            <div className="flex gap-2">
+              <button
+                onClick={handlePrint}
+                disabled={ambitos.length === 0}
+                className="inline-flex items-center gap-2 bg-white/20 hover:bg-white/30 text-white px-3 py-1.5 rounded-lg transition-all text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                title="Imprimir respaldo del grado"
+              >
+                <FaPrint className="text-xs" /> Imprimir
+              </button>
+              <button
+                onClick={() => setShowAmbitoForm(!showAmbitoForm)}
+                disabled={isSaving || grados.length === 0}
+                className="inline-flex items-center gap-2 bg-white/20 hover:bg-white/30 text-white px-3 py-1.5 rounded-lg transition-all text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <FaPlus className="text-xs" />{" "}
+                {showAmbitoForm ? "Cancelar" : "Nuevo Ámbito"}
+              </button>
+            </div>
           </div>
 
           <div className="p-5">
-            {showAmbitoForm && (
+            {grados.length === 0 && (
+              <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-4 flex items-start gap-3">
+                <FaInfoCircle className="text-yellow-600 mt-0.5" />
+                <div>
+                  <h4 className="text-yellow-800 font-semibold text-sm">
+                    No hay grados disponibles
+                  </h4>
+                  <p className="text-yellow-700 text-sm">
+                    Debes crear y activar grados para el año lectivo vigente
+                    antes de registrar ámbitos.
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {showAmbitoForm && grados.length > 0 && (
               <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 mb-4">
-                <h4 className="text-sm font-semibold text-slate-800 mb-3">
-                  {editingAmbitoId ? "Editar Ámbito" : "Nuevo Ámbito"}
-                </h4>
+                <div className="flex items-center justify-between mb-3">
+                  <h4 className="text-sm font-semibold text-slate-800">
+                    {editingAmbitoId
+                      ? "Editar Ámbito"
+                      : isAmbitoMassive
+                        ? "Ingreso Masivo de Ámbitos"
+                        : "Nuevo Ámbito"}
+                  </h4>
+                  {!editingAmbitoId && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsAmbitoMassive(!isAmbitoMassive);
+                        setAmbitoMassiveData("");
+                        setParsedAmbitos([]);
+                        setValidationErrors([]);
+                      }}
+                      className="text-xs text-purple-600 hover:text-purple-700 font-medium"
+                    >
+                      {isAmbitoMassive ? "Modo Individual" : "Modo Masivo"}
+                    </button>
+                  )}
+                </div>
+
                 {validationErrors.length > 0 && (
                   <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-3">
                     <ul className="text-red-700 text-sm space-y-1">
@@ -590,57 +936,104 @@ export default function AmbitosDestrezas() {
                     </ul>
                   </div>
                 )}
-                <div className="space-y-3">
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-700 mb-1">
-                      Nombre *
-                    </label>
-                    <input
-                      type="text"
-                      value={ambitoFormData.nombre}
-                      onChange={(e) =>
-                        setAmbitoFormData({
-                          ...ambitoFormData,
-                          nombre: e.target.value,
-                        })
-                      }
-                      placeholder="Ej: Comunicación Oral"
-                      disabled={isSaving}
-                      className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-purple-500 disabled:bg-slate-100 disabled:cursor-not-allowed"
-                    />
+
+                {!isAmbitoMassive ? (
+                  <div className="space-y-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">
+                        Nombre *
+                      </label>
+                      <input
+                        type="text"
+                        value={ambitoFormData.nombre}
+                        onChange={(e) =>
+                          setAmbitoFormData({
+                            ...ambitoFormData,
+                            nombre: e.target.value,
+                          })
+                        }
+                        placeholder="Ej: Comunicación Oral"
+                        disabled={isSaving}
+                        className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-purple-500 disabled:bg-slate-100 disabled:cursor-not-allowed"
+                      />
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={guardarAmbito}
+                        disabled={isSaving}
+                        className="flex-1 inline-flex items-center justify-center gap-2 bg-purple-600 hover:bg-purple-700 text-white px-3 py-2 rounded-lg text-sm font-medium disabled:opacity-70 disabled:cursor-not-allowed"
+                      >
+                        {isSaving ? (
+                          <>
+                            <FaSpinner className="text-xs animate-spin" />{" "}
+                            Guardando...
+                          </>
+                        ) : (
+                          <>
+                            <FaCheck className="text-xs" />{" "}
+                            {editingAmbitoId ? "Actualizar" : "Guardar"}
+                          </>
+                        )}
+                      </button>
+                      <button
+                        onClick={resetAmbitoForm}
+                        disabled={isSaving}
+                        className="flex-1 inline-flex items-center justify-center gap-2 bg-slate-200 hover:bg-slate-300 text-slate-700 px-3 py-2 rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        <FaTimes className="text-xs" /> Cancelar
+                      </button>
+                    </div>
                   </div>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={guardarAmbito}
-                      disabled={isSaving}
-                      className="flex-1 inline-flex items-center justify-center gap-2 bg-purple-600 hover:bg-purple-700 text-white px-3 py-2 rounded-lg text-sm font-medium disabled:opacity-70 disabled:cursor-not-allowed"
-                    >
-                      {isSaving ? (
-                        <>
-                          <FaSpinner className="text-xs animate-spin" />
-                          Guardando...
-                        </>
-                      ) : (
-                        <>
-                          <FaCheck className="text-xs" />
-                          {editingAmbitoId ? "Actualizar" : "Guardar"}
-                        </>
-                      )}
-                    </button>
-                    <button
-                      onClick={resetAmbitoForm}
-                      disabled={isSaving}
-                      className="flex-1 inline-flex items-center justify-center gap-2 bg-slate-200 hover:bg-slate-300 text-slate-700 px-3 py-2 rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      <FaTimes className="text-xs" />
-                      Cancelar
-                    </button>
+                ) : (
+                  <div className="space-y-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">
+                        Ámbitos (uno por línea) *
+                      </label>
+                      <textarea
+                        value={ambitoMassiveData}
+                        onChange={(e) => setAmbitoMassiveData(e.target.value)}
+                        disabled={isSaving}
+                        placeholder={`Ejemplo:\nComunicación Oral\nPensamiento Lógico\nComprensión del Medio Natural`}
+                        rows={8}
+                        className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm font-sans focus:ring-2 focus:ring-purple-500 disabled:bg-slate-100 disabled:cursor-not-allowed"
+                      />
+                      <p className="text-xs text-slate-500 mt-1">
+                        <FaInfoCircle className="inline mr-1" /> Escribe cada
+                        ámbito en una línea separada.
+                      </p>
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={guardarAmbitosMasivos}
+                        disabled={isSaving}
+                        className="flex-1 inline-flex items-center justify-center gap-2 bg-purple-600 hover:bg-purple-700 text-white px-3 py-2 rounded-lg text-sm font-medium disabled:opacity-70 disabled:cursor-not-allowed"
+                      >
+                        {isSaving ? (
+                          <>
+                            <FaSpinner className="text-xs animate-spin" />{" "}
+                            Procesando...
+                          </>
+                        ) : (
+                          <>
+                            <FaUpload className="text-xs" /> Analizar y Guardar
+                          </>
+                        )}
+                      </button>
+                      <button
+                        onClick={resetAmbitoForm}
+                        disabled={isSaving}
+                        className="flex-1 inline-flex items-center justify-center gap-2 bg-slate-200 hover:bg-slate-300 text-slate-700 px-3 py-2 rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        <FaTimes className="text-xs" /> Cancelar
+                      </button>
+                    </div>
                   </div>
-                </div>
+                )}
               </div>
             )}
 
-            {ambitos.length === 0 ? (
+            {ambitos.length === 0 && grados.length > 0 ? (
               <div className="text-center py-12 text-slate-500">
                 <FaBook className="text-4xl mx-auto mb-3 text-slate-300" />
                 <p className="font-medium mb-1">No hay ámbitos registrados</p>
@@ -673,8 +1066,7 @@ export default function AmbitosDestrezas() {
                             className="inline-flex items-center gap-1 bg-teal-50 hover:bg-teal-100 text-teal-700 px-3 py-1.5 rounded-lg text-xs font-medium transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                             title="Gestionar destrezas"
                           >
-                            <FaTasks className="text-xs" />
-                            Destrezas
+                            <FaTasks className="text-xs" /> Destrezas
                           </button>
                           <button
                             onClick={() => handleEditAmbito(ambito)}
@@ -723,15 +1115,17 @@ export default function AmbitosDestrezas() {
               disabled={isSaving}
               className="inline-flex items-center gap-2 bg-white/20 hover:bg-white/30 text-white px-3 py-1.5 rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              <FaPlus className="text-xs" />
+              <FaPlus className="text-xs" />{" "}
               {showDestrezaForm ? "Cancelar" : "Agregar Destrezas"}
             </button>
           </div>
 
           <div className="p-5">
-            {/* ✅ Formulario con ref para scroll automático */}
             {showDestrezaForm && (
-              <div ref={destrezaFormRef} className="bg-slate-50 border border-slate-200 rounded-lg p-4 mb-4">
+              <div
+                ref={destrezaFormRef}
+                className="bg-slate-50 border border-slate-200 rounded-lg p-4 mb-4"
+              >
                 <h4 className="text-sm font-semibold text-slate-800 mb-3">
                   {editingDestrezaId
                     ? "Editar Destreza"
@@ -763,18 +1157,15 @@ export default function AmbitosDestrezas() {
                       placeholder={
                         editingDestrezaId
                           ? "Edita la destreza aquí..."
-                          : `Ejemplo:
-Escucha activamente a sus compañeros y adultos, demostrando atención y respeto en las conversaciones del aula.
-Expresa sus ideas, necesidades y sentimientos con claridad, utilizando un vocabulario adecuado a su edad.
-Participa en conversaciones grupales, respetando los turnos de palabra y las opiniones de los demás.`
+                          : "Ejemplo:\nEscucha activamente a sus compañeros y adultos.\nExpresa sus ideas con claridad."
                       }
                       rows={12}
                       className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm font-sans focus:ring-2 focus:ring-teal-500 disabled:bg-slate-100 disabled:cursor-not-allowed"
                     />
                     {!editingDestrezaId && (
                       <p className="text-xs text-slate-500 mt-1">
-                        <FaInfoCircle className="inline mr-1" />
-                        Escribe cada destreza seguida de un punto (.) y un salto de línea. No necesitas dejar espacios en blanco entre ellas.
+                        <FaInfoCircle className="inline mr-1" /> Escribe cada
+                        destreza seguida de un punto (.) y un salto de línea.
                       </p>
                     )}
                   </div>
@@ -790,22 +1181,17 @@ Participa en conversaciones grupales, respetando los turnos de palabra y las opi
                     >
                       {isSaving ? (
                         <>
-                          <FaSpinner className="text-xs animate-spin" />
-                          {editingDestrezaId ? "Actualizando..." : "Procesando..."}
+                          <FaSpinner className="text-xs animate-spin" />{" "}
+                          {editingDestrezaId
+                            ? "Actualizando..."
+                            : "Procesando..."}
                         </>
                       ) : (
                         <>
-                          {editingDestrezaId ? (
-                            <>
-                              <FaCheck className="text-xs" />
-                              Actualizar
-                            </>
-                          ) : (
-                            <>
-                              <FaUpload className="text-xs" />
-                              Analizar y Guardar
-                            </>
-                          )}
+                          <FaCheck className="text-xs" />{" "}
+                          {editingDestrezaId
+                            ? "Actualizar"
+                            : "Analizar y Guardar"}
                         </>
                       )}
                     </button>
@@ -814,8 +1200,7 @@ Participa en conversaciones grupales, respetando los turnos de palabra y las opi
                       disabled={isSaving}
                       className="flex-1 inline-flex items-center justify-center gap-2 bg-slate-200 hover:bg-slate-300 text-slate-700 px-3 py-2 rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                      <FaTimes className="text-xs" />
-                      Cancelar
+                      <FaTimes className="text-xs" /> Cancelar
                     </button>
                   </div>
                 </div>
@@ -834,8 +1219,7 @@ Participa en conversaciones grupales, respetando los turnos de palabra y las opi
                   disabled={isSaving}
                   className="inline-flex items-center gap-2 text-teal-600 hover:text-teal-700 font-medium text-sm disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  <FaPlus className="text-xs" />
-                  Agregar destrezas
+                  <FaPlus className="text-xs" /> Agregar destrezas
                 </button>
               </div>
             ) : (
@@ -877,6 +1261,64 @@ Participa en conversaciones grupales, respetando los turnos de palabra y las opi
                 ))}
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Confirmación para Ámbitos Masivos */}
+      {showConfirmAmbitoModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="bg-purple-100 p-2 rounded-lg">
+                <FaUpload className="text-purple-600 text-xl" />
+              </div>
+              <h3 className="text-lg font-bold text-slate-900">
+                Confirmar Registro Masivo
+              </h3>
+            </div>
+            <p className="text-slate-600 mb-4">
+              Se analizaron y validaron correctamente{" "}
+              <strong className="text-purple-700">
+                {parsedAmbitos.length}
+              </strong>{" "}
+              ámbito(s). ¿Deseas registrarlos en el sistema?
+            </p>
+            <div className="bg-slate-50 rounded-lg p-3 mb-4 max-h-40 overflow-y-auto">
+              <ul className="text-sm text-slate-700 space-y-1">
+                {parsedAmbitos.map((ambito, idx) => (
+                  <li key={idx}>• {ambito}</li>
+                ))}
+              </ul>
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={confirmarGuardadoAmbitosMasivos}
+                disabled={isSaving}
+                className="flex-1 inline-flex items-center justify-center gap-2 bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isSaving ? (
+                  <>
+                    <FaSpinner className="text-xs animate-spin" />{" "}
+                    Registrando...
+                  </>
+                ) : (
+                  <>
+                    <FaCheck className="text-xs" /> Sí, registrar todos
+                  </>
+                )}
+              </button>
+              <button
+                onClick={() => {
+                  setShowConfirmAmbitoModal(false);
+                  setParsedAmbitos([]);
+                }}
+                disabled={isSaving}
+                className="flex-1 inline-flex items-center justify-center gap-2 bg-slate-200 hover:bg-slate-300 text-slate-700 px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <FaTimes className="text-xs" /> Cancelar
+              </button>
+            </div>
           </div>
         </div>
       )}
