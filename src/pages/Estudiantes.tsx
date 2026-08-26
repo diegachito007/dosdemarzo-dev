@@ -8,7 +8,8 @@ import {
   doc,
   serverTimestamp,
   getDocs,
-  where
+  where,
+  addDoc
 } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
@@ -26,11 +27,22 @@ import {
   FaCalendarAlt,
   FaUserTie,
   FaBookOpen,
-  FaLock
+  FaLock,
+  FaUpload
 } from 'react-icons/fa';
 
+// ✅ Función para formatear texto: MAYÚSCULAS, sin tildes y sin números
+const formatText = (text: string): string => {
+  if (!text) return '';
+  return text
+    .replace(/\d/g, '')
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase();
+};
+
 export default function Estudiantes() {
-  const { userData } = useAuth();
+  const { user, userData } = useAuth();
   const [estudiantes, setEstudiantes] = useState<Estudiante[]>([]);
   const [grados, setGrados] = useState<Grado[]>([]);
   const [aniosLectivos, setAniosLectivos] = useState<AnioLectivo[]>([]);
@@ -38,6 +50,8 @@ export default function Estudiantes() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedGradoId, setSelectedGradoId] = useState<string | null>(null);
+  
+  // Estados para edición individual
   const [formData, setFormData] = useState({
     apellidos: '',
     nombres: '',
@@ -46,23 +60,32 @@ export default function Estudiantes() {
   });
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
 
+  // ✅ Estados para ingreso masivo
+  const [showMassiveForm, setShowMassiveForm] = useState(false);
+  const [massiveData, setMassiveData] = useState("");
+  const [parsedStudents, setParsedStudents] = useState<{cedula: string, apellidos: string, nombres: string}[]>([]);
+  const [isSavingMassive, setIsSavingMassive] = useState(false);
+
   const docenteSinGrados = userData?.role === 'docente' && (!userData?.gradosAsignados || userData.gradosAsignados.length === 0);
   const esAdmin = userData?.role === 'super_admin';
   const anioActivo = aniosLectivos.find(a => a.activo);
 
-  // ✅ CORRECCIÓN: Usar 'userData' completo en las dependencias para satisfacer al compilador de React
+  // ✅ Filtrar tutorDe solo para el año lectivo activo
   const tutorDeAnioActivo = useMemo(() => {
     if (!userData?.tutorDe) return [];
     return grados.filter(g => userData.tutorDe?.includes(g.id)).map(g => g.id);
   }, [grados, userData]);
 
   const puedeGestionarEstudiantes = useCallback((gradoId: string): boolean => {
-    if (userData?.role === 'super_admin') return true;
+    if (esAdmin) return true;
     if (userData?.role === 'docente') {
       return userData?.tutorDe?.includes(gradoId) || false;
     }
     return false;
-  }, [userData?.role, userData?.tutorDe]); // ✅ Dependencias explícitas
+  }, [esAdmin, userData?.role, userData?.tutorDe]);
+
+  // ✅ Solo puede registrar si es admin o tutor del grado seleccionado
+  const puedeRegistrar = (esAdmin || (userData?.role === 'docente' && selectedGradoId && tutorDeAnioActivo.includes(selectedGradoId))) && !!selectedGradoId;
 
   const resetForm = useCallback(() => {
     setFormData({
@@ -243,6 +266,131 @@ export default function Estudiantes() {
     };
   }, [selectedGradoId, esAdmin, userData?.role]);
 
+  // ✅ Parseo de datos masivos (Formato: Cédula, Apellidos y Nombres)
+  const parseMassiveData = useCallback(() => {
+    const lines = massiveData.trim().split('\n');
+    const students: {cedula: string, apellidos: string, nombres: string}[] = [];
+    const errors: string[] = [];
+
+    lines.forEach((line, index) => {
+      const parts = line.split(',').map(p => p.trim());
+      
+      if (parts.length < 2) {
+        errors.push(`Línea ${index + 1}: Formato inválido. Use: Cédula, Apellidos y Nombres`);
+        return;
+      }
+      
+      const [cedula, ...nombreCompletoParts] = parts;
+      const nombreCompleto = nombreCompletoParts.join(' ').trim();
+      
+      if (cedula.length !== 10 || !/^\d+$/.test(cedula)) {
+        errors.push(`Línea ${index + 1}: La cédula "${cedula}" debe tener 10 dígitos numéricos`);
+        return;
+      }
+      
+      if (!nombreCompleto || nombreCompleto.length < 10) {
+        errors.push(`Línea ${index + 1}: El nombre completo es muy corto (mínimo 10 caracteres)`);
+        return;
+      }
+      
+      if (/\d/.test(nombreCompleto)) {
+        errors.push(`Línea ${index + 1}: El nombre no puede contener números`);
+        return;
+      }
+
+      const nombreLimpio = formatText(nombreCompleto);
+      const palabras = nombreLimpio.split(' ').filter(p => p.length > 0);
+      
+      if (palabras.length < 3) {
+        errors.push(`Línea ${index + 1}: Se requieren al menos 3 palabras (2 apellidos + 1 nombre)`);
+        return;
+      }
+      
+      const apellidos = palabras.slice(0, 2).join(' ');
+      const nombres = palabras.slice(2).join(' ');
+
+      students.push({ cedula, apellidos, nombres });
+    });
+
+    if (errors.length > 0) {
+      setValidationErrors(errors);
+      setParsedStudents([]);
+    } else {
+      const cedulasVistas = new Set<string>();
+      const duplicadosInternos = students.filter(s => {
+        if (cedulasVistas.has(s.cedula)) return true;
+        cedulasVistas.add(s.cedula);
+        return false;
+      });
+
+      if (duplicadosInternos.length > 0) {
+        setValidationErrors(['Existen cédulas duplicadas en la lista ingresada']);
+        setParsedStudents([]);
+      } else {
+        setValidationErrors([]);
+        setParsedStudents(students);
+      }
+    }
+  }, [massiveData]);
+
+  // ✅ Guardado masivo
+  const guardarEstudiantesMasivos = useCallback(async () => {
+    if (!anioActivo) {
+      alert('No hay un año lectivo activo.');
+      return;
+    }
+    if (!selectedGradoId) {
+      alert('Debe seleccionar un grado primero.');
+      return;
+    }
+    if (parsedStudents.length === 0) {
+      alert('No hay estudiantes válidos para registrar.');
+      return;
+    }
+
+    setIsSavingMassive(true);
+    try {
+      const q = query(collection(db, 'estudiantes'), where('gradoId', '==', selectedGradoId));
+      const snap = await getDocs(q);
+      const existentes = new Set(snap.docs.map(doc => doc.data().cedula));
+
+      const duplicados = parsedStudents.filter(s => existentes.has(s.cedula));
+      if (duplicados.length > 0) {
+        const cedulasDuplicadas = duplicados.map(s => s.cedula).join(', ');
+        setValidationErrors([`Las siguientes cédulas ya existen en este grado: ${cedulasDuplicadas}`]);
+        setIsSavingMassive(false);
+        return;
+      }
+
+      const promesas = parsedStudents.map(async (est) => {
+        await addDoc(collection(db, 'estudiantes'), {
+          cedula: est.cedula,
+          apellidos: est.apellidos,
+          nombres: est.nombres,
+          gradoId: selectedGradoId,
+          anioLectivoId: anioActivo.id,
+          activo: true,
+          createdAt: serverTimestamp(),
+          createdBy: user?.uid
+        });
+      });
+
+      await Promise.all(promesas);
+      
+      alert(`✅ Se registraron ${parsedStudents.length} estudiante(s) correctamente`);
+      setMassiveData("");
+      setParsedStudents([]);
+      setShowMassiveForm(false);
+      setValidationErrors([]);
+      await cargarEstudiantes();
+    } catch (error) {
+      console.error('Error guardando estudiantes masivos:', error);
+      alert('Error al guardar los estudiantes');
+    } finally {
+      setIsSavingMassive(false);
+    }
+  }, [parsedStudents, selectedGradoId, anioActivo, user, cargarEstudiantes]);
+
   const validarEstudiante = useCallback((cedula: string, apellidos: string, nombres: string, excludeId?: string): string[] => {
     const errors: string[] = [];
     if (!cedula || cedula.trim() === '') {
@@ -363,7 +511,7 @@ export default function Estudiantes() {
 
   if (loading) {
     return (
-      <Layout title="Estudiantes" subtitle="Administra la matrícula de alumnos" showBack>
+      <Layout title="Estudiantes" subtitle="Gestión y registro de estudiantes" showBack>
         <div className="flex items-center justify-center py-20">
           <div className="text-center">
             <div className="animate-spin rounded-full h-10 w-10 border-2 border-blue-600 border-t-transparent mx-auto mb-3"></div>
@@ -377,7 +525,7 @@ export default function Estudiantes() {
   return (
     <Layout
       title="Estudiantes"
-      subtitle="Administra la matrícula de alumnos"
+      subtitle="Gestión y registro de estudiantes"
       showBack
     >
       {docenteSinGrados && (
@@ -429,7 +577,7 @@ export default function Estudiantes() {
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 mb-6 p-4">
           <h3 className="text-sm font-semibold text-slate-700 mb-3 flex items-center gap-2">
             <FaBookOpen className="text-blue-600" />
-            {esAdmin ? 'Seleccionar Grado (opcional):' : 'Mis Grados Asignados:'}
+            {esAdmin ? 'Seleccionar Grado:' : 'Mis Grados Asignados:'}
           </h3>
           <div className="flex flex-wrap gap-2">
             {esAdmin && (
@@ -469,19 +617,14 @@ export default function Estudiantes() {
         </div>
       )}
 
-      {/* ✅ Formulario de edición (solo aparece cuando se edita) */}
+      {/* ✅ Formulario de edición individual */}
       {editingId && (
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 mb-6 overflow-hidden">
           <div className="bg-linear-to-r from-blue-600 to-blue-700 px-5 py-3 flex items-center justify-between">
-            <h3 className="text-white font-semibold text-base">
-              Editar Estudiante
-            </h3>
+            <h3 className="text-white font-semibold text-base">Editar Estudiante</h3>
             <button
               type="button"
-              onClick={() => {
-                resetForm();
-                setEditingId(null);
-              }}
+              onClick={() => { resetForm(); setEditingId(null); }}
               className="text-white text-sm hover:bg-white/20 px-3 py-1 rounded transition"
             >
               Cancelar
@@ -507,9 +650,7 @@ export default function Estudiantes() {
             )}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-4">
               <div>
-                <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-2">
-                  Cédula/Identificación *
-                </label>
+                <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-2">Cédula/Identificación *</label>
                 <input
                   type="text"
                   value={formData.cedula}
@@ -520,9 +661,7 @@ export default function Estudiantes() {
                 />
               </div>
               <div>
-                <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-2">
-                  Apellidos *
-                </label>
+                <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-2">Apellidos *</label>
                 <input
                   type="text"
                   value={formData.apellidos}
@@ -533,9 +672,7 @@ export default function Estudiantes() {
                 />
               </div>
               <div>
-                <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-2">
-                  Nombres *
-                </label>
+                <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-2">Nombres *</label>
                 <input
                   type="text"
                   value={formData.nombres}
@@ -553,32 +690,112 @@ export default function Estudiantes() {
                   onChange={(e) => setFormData({...formData, activo: e.target.checked})}
                   className="w-4 h-4 text-blue-600 border-slate-300 rounded focus:ring-blue-500"
                 />
-                <label htmlFor="activo" className="ml-2 text-sm text-slate-700">
-                  Estudiante activo
-                </label>
+                <label htmlFor="activo" className="ml-2 text-sm text-slate-700">Estudiante activo</label>
               </div>
             </div>
             <div className="flex gap-2 pt-3 border-t border-slate-200">
-              <button
-                type="submit"
-                className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg transition-all text-sm font-medium"
-              >
-                <FaCheck className="text-xs" />
-                Actualizar
+              <button type="submit" className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg transition-all text-sm font-medium">
+                <FaCheck className="text-xs" /> Actualizar
               </button>
-              <button
-                type="button"
-                onClick={() => {
-                  resetForm();
-                  setEditingId(null);
-                }}
-                className="inline-flex items-center gap-2 bg-slate-100 hover:bg-slate-200 text-slate-700 px-4 py-2 rounded-lg transition-all text-sm font-medium"
-              >
-                <FaTimes className="text-xs" />
-                Cancelar
+              <button type="button" onClick={() => { resetForm(); setEditingId(null); }} className="inline-flex items-center gap-2 bg-slate-100 hover:bg-slate-200 text-slate-700 px-4 py-2 rounded-lg transition-all text-sm font-medium">
+                <FaTimes className="text-xs" /> Cancelar
               </button>
             </div>
           </form>
+        </div>
+      )}
+
+      {/* ✅ Formulario de Registro Masivo */}
+      {showMassiveForm && puedeRegistrar && (
+        <div className="bg-white rounded-xl shadow-sm border border-slate-200 mb-6 overflow-hidden">
+          <div className="bg-linear-to-r from-green-600 to-green-700 px-5 py-3 flex items-center justify-between">
+            <h3 className="text-white font-semibold text-base flex items-center gap-2">
+              <FaUpload /> Registro Masivo de Estudiantes
+            </h3>
+            <button
+              type="button"
+              onClick={() => { setShowMassiveForm(false); setMassiveData(""); setParsedStudents([]); setValidationErrors([]); }}
+              className="text-white text-sm hover:bg-white/20 px-3 py-1 rounded transition"
+            >
+              Cancelar
+            </button>
+          </div>
+          <div className="p-5">
+            {validationErrors.length > 0 && (
+              <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4">
+                <div className="flex items-start gap-2">
+                  <FaExclamationTriangle className="text-red-600 mt-0.5 shrink-0" />
+                  <div>
+                    <h4 className="text-red-800 font-semibold text-sm mb-1">Errores de formato:</h4>
+                    <ul className="text-red-700 text-sm space-y-1">
+                      {validationErrors.map((error, idx) => (
+                        <li key={idx}>• {error}</li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+              </div>
+            )}
+            
+            <div className="mb-4">
+              <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-2">
+                Lista de Estudiantes (Uno por línea)
+              </label>
+              <textarea
+                value={massiveData}
+                onChange={(e) => setMassiveData(e.target.value)}
+                placeholder="Ejemplo:&#10;1712345678, PEREZ GARCIA, JUAN CARLOS&#10;1723456789, LOPEZ MARTINEZ, MARIA ELENA"
+                rows={8}
+                className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-green-500 focus:border-green-500 transition-all"
+              />
+              <p className="text-xs text-slate-500 mt-2 flex items-center gap-1">
+                <FaInfoCircle /> Formato obligatorio: <strong>CÉDULA, APELLIDOS Y NOMBRES</strong> (separados por coma). Se convertirán automáticamente a mayúsculas y se separarán en apellidos (2 primeras palabras) y nombres (el resto).
+              </p>
+            </div>
+
+            <div className="flex gap-2 mb-4">
+              <button
+                onClick={parseMassiveData}
+                disabled={isSavingMassive || !massiveData.trim()}
+                className="inline-flex items-center gap-2 bg-slate-600 hover:bg-slate-700 disabled:bg-slate-300 text-white px-4 py-2 rounded-lg transition-all text-sm font-medium"
+              >
+                <FaSearch className="text-xs" /> Validar Lista
+              </button>
+            </div>
+
+            {parsedStudents.length > 0 && (
+              <div className="bg-green-50 border border-green-200 rounded-lg p-4 mb-4">
+                <div className="flex items-center gap-2 text-green-800 mb-3">
+                  <FaCheck className="text-sm" />
+                  <span className="text-sm font-bold">Vista Previa: Se registrarán {parsedStudents.length} estudiante(s) en {grados.find(g => g.id === selectedGradoId)?.nombre} {grados.find(g => g.id === selectedGradoId)?.paralelo}</span>
+                </div>
+                <div className="max-h-40 overflow-y-auto space-y-1">
+                  {parsedStudents.map((est, idx) => (
+                    <div key={idx} className="text-sm text-slate-700 bg-white px-3 py-1.5 rounded border border-green-100">
+                      <span className="font-mono font-semibold">{est.cedula}</span> - {est.apellidos}, {est.nombres}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="flex gap-2 pt-3 border-t border-slate-200">
+              <button
+                onClick={guardarEstudiantesMasivos}
+                disabled={isSavingMassive || parsedStudents.length === 0}
+                className="inline-flex items-center gap-2 bg-green-600 hover:bg-green-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white px-6 py-2.5 rounded-lg transition-all text-sm font-semibold"
+              >
+                {isSavingMassive ? <><FaTimes className="text-xs animate-spin" /> Procesando...</> : <><FaCheck className="text-xs" /> Guardar {parsedStudents.length} Estudiante(s)</>}
+              </button>
+              <button
+                type="button"
+                onClick={() => { setShowMassiveForm(false); setMassiveData(""); setParsedStudents([]); setValidationErrors([]); }}
+                className="inline-flex items-center gap-2 bg-slate-100 hover:bg-slate-200 text-slate-700 px-4 py-2.5 rounded-lg transition-all text-sm font-medium"
+              >
+                <FaTimes className="text-xs" /> Cancelar
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -596,8 +813,8 @@ export default function Estudiantes() {
           {/* Lista de estudiantes */}
           {(selectedGradoId || esAdmin) && (
             <>
-              <div className="bg-white rounded-xl shadow-sm border border-slate-200 mb-6 p-4">
-                <div className="relative">
+              <div className="bg-white rounded-xl shadow-sm border border-slate-200 mb-6 p-4 flex flex-col sm:flex-row justify-between items-center gap-4">
+                <div className="relative w-full sm:w-96">
                   <FaSearch className="absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400" />
                   <input
                     type="text"
@@ -607,24 +824,34 @@ export default function Estudiantes() {
                     className="w-full pl-10 pr-4 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all"
                   />
                 </div>
+                
+                {/* ✅ Botón de Registro Masivo */}
+                {puedeRegistrar && (
+                  <button
+                    onClick={() => setShowMassiveForm(true)}
+                    className="inline-flex items-center gap-2 bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg transition-all text-sm font-medium shadow-sm"
+                  >
+                    <FaUpload className="text-sm" /> Registrar Estudiantes
+                  </button>
+                )}
               </div>
+
               <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                {/* ✅ TABLA RESPONSIVE: Se convierte en tarjetas en móvil */}
                 <div className="overflow-x-auto">
                   <table className="w-full">
-                    <thead className="bg-slate-50 border-b border-slate-200">
+                    <thead className="bg-slate-50 border-b border-slate-200 hidden md:table-header-group">
                       <tr>
-                        <th className="px-5 py-3 text-left text-xs font-semibold text-slate-700 uppercase tracking-wider">
-                          Apellidos y Nombres
-                        </th>
-                        <th className="px-5 py-3 text-left text-xs font-semibold text-slate-700 uppercase tracking-wider">
-                          Grado
-                        </th>
-                        <th className="px-5 py-3 text-center text-xs font-semibold text-slate-700 uppercase tracking-wider w-32">
-                          Estado
-                        </th>
-                        <th className="px-5 py-3 text-center text-xs font-semibold text-slate-700 uppercase tracking-wider w-32">
-                          Acciones
-                        </th>
+                        <th className="px-5 py-3 text-left text-xs font-semibold text-slate-700 uppercase tracking-wider">Apellidos y Nombres</th>
+                        {esAdmin && (
+                          <th className="px-5 py-3 text-left text-xs font-semibold text-slate-700 uppercase tracking-wider">Grado</th>
+                        )}
+                        {puedeRegistrar && (
+                          <>
+                            <th className="px-5 py-3 text-center text-xs font-semibold text-slate-700 uppercase tracking-wider w-32">Estado</th>
+                            <th className="px-5 py-3 text-center text-xs font-semibold text-slate-700 uppercase tracking-wider w-40">Acciones</th>
+                          </>
+                        )}
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-200">
@@ -638,9 +865,9 @@ export default function Estudiantes() {
                               <p className="text-slate-600 font-medium mb-1">
                                 {searchTerm ? 'No se encontraron estudiantes' : 'No hay estudiantes registrados'}
                               </p>
-                              {!searchTerm && (
+                              {!searchTerm && puedeRegistrar && (
                                 <p className="text-slate-500 text-sm">
-                                  Los estudiantes se crean automáticamente al aprobar matrículas
+                                  Utilice el botón "Registrar Estudiantes" para agregar alumnos a este grado.
                                 </p>
                               )}
                             </div>
@@ -650,89 +877,108 @@ export default function Estudiantes() {
                         estudiantesFiltrados.map((est) => {
                           const grado = grados.find(g => g.id === est.gradoId);
                           const puedeEditar = puedeGestionarEstudiantes(est.gradoId);
-                          const esTutorDelGrado = tutorDeAnioActivo.includes(est.gradoId);
+                          
                           return (
-                            <tr key={est.id} className="hover:bg-slate-50 transition-colors">
-                              <td className="px-5 py-3">
-                                <div>
-                                  <div className="font-semibold text-slate-900 text-sm">
-                                    {est.apellidos} {est.nombres}
-                                  </div>
-                                  {est.cedula && (
-                                    <div className="text-slate-500 text-xs mt-0.5">
-                                      CI: {est.cedula}
+                            <tr key={est.id} className="block md:table-row border-b md:border-b-0 border-slate-100 last:border-b-0 hover:bg-slate-50 transition-colors">
+                              
+                              {/* Columna 1: Nombre y Cédula (Visible siempre) */}
+                              <td className="px-5 py-4 block md:table-cell">
+                                <div className="flex flex-col">
+                                  <span className="font-semibold text-slate-900 text-sm">{est.apellidos} {est.nombres}</span>
+                                  {est.cedula && <span className="text-slate-500 text-xs mt-1">CI: {est.cedula}</span>}
+                                  
+                                  {/* ✅ MÓVIL: Estado y Acciones apiladas debajo (Solo si es tutor) */}
+                                  {puedeEditar && (
+                                    <div className="mt-3 flex flex-col gap-2 md:hidden">
+                                      <button
+                                        onClick={() => handleToggleActivo(est.id, est.activo)}
+                                        className={`w-full inline-flex items-center justify-center px-3 py-2 rounded-lg text-sm font-semibold transition-all ${
+                                          est.activo
+                                            ? 'bg-green-100 text-green-700 border border-green-200'
+                                            : 'bg-slate-100 text-slate-600 border border-slate-200'
+                                        }`}
+                                      >
+                                        {est.activo ? <><FaCheck className="mr-2" /> Activo</> : 'Inactivo'}
+                                      </button>
+                                      <div className="flex gap-2">
+                                        <button
+                                          onClick={() => handleEdit(est)}
+                                          className="flex-1 inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-100 text-sm font-medium transition-all"
+                                        >
+                                          <FaEdit /> Editar
+                                        </button>
+                                        {esAdmin && (
+                                          <button
+                                            onClick={() => handleDelete(est.id)}
+                                            className="flex-1 inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-red-50 text-red-600 hover:bg-red-100 text-sm font-medium transition-all"
+                                          >
+                                            <FaTrash /> Eliminar
+                                          </button>
+                                        )}
+                                      </div>
+                                    </div>
+                                  )}
+                                  
+                                  {/* ✅ MÓVIL: Indicador de solo lectura (Si no es tutor) */}
+                                  {!puedeEditar && (
+                                    <div className="mt-2 text-xs text-slate-400 italic md:hidden flex items-center gap-1">
+                                      <FaLock className="text-[10px]" /> Solo lectura
                                     </div>
                                   )}
                                 </div>
                               </td>
-                              <td className="px-5 py-3">
-                                {grado ? (
-                                  <div className="flex items-center gap-2">
-                                    <div className="bg-linear-to-br from-blue-500 to-purple-600 text-white rounded w-6 h-6 flex items-center justify-center text-xs font-bold">
-                                      {grado.paralelo}
+
+                              {/* Columna 2: Grado (Desktop: Solo Admin) */}
+                              {esAdmin && (
+                                <td className="hidden md:table-cell px-5 py-4">
+                                  {grado && (
+                                    <div className="flex items-center gap-2">
+                                      <div className="bg-linear-to-br from-blue-500 to-purple-600 text-white rounded w-6 h-6 flex items-center justify-center text-xs font-bold">
+                                        {grado.paralelo}
+                                      </div>
+                                      <div className="text-sm text-slate-700">{grado.nombre}</div>
                                     </div>
-                                    <div className="text-sm text-slate-700">
-                                      {grado.nombre}
-                                    </div>
-                                    {esTutorDelGrado && (
-                                      <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-purple-100 text-purple-700 rounded text-xs font-medium">
-                                        <FaUserTie className="w-3 h-3" />
-                                        Tutor
-                                      </span>
+                                  )}
+                                </td>
+                              )}
+
+                              {/* Columna 3: Estado (Desktop: Solo si puede editar) */}
+                              {puedeEditar && (
+                                <td className="hidden md:table-cell px-5 py-4 text-center">
+                                  <button
+                                    onClick={() => handleToggleActivo(est.id, est.activo)}
+                                    className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold transition-all ${
+                                      est.activo
+                                        ? 'bg-green-100 text-green-700 border border-green-200'
+                                        : 'bg-slate-100 text-slate-600 border border-slate-200'
+                                    }`}
+                                  >
+                                    {est.activo ? <><FaCheck className="mr-1 text-[10px]" /> Activo</> : 'Inactivo'}
+                                  </button>
+                                </td>
+                              )}
+
+                              {/* Columna 4: Acciones (Desktop: Solo si puede editar) */}
+                              {puedeEditar && (
+                                <td className="hidden md:table-cell px-5 py-4">
+                                  <div className="flex justify-center gap-2">
+                                    <button
+                                      onClick={() => handleEdit(est)}
+                                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg transition-all bg-blue-50 text-blue-600 hover:bg-blue-100 text-xs font-medium"
+                                    >
+                                      <FaEdit /> Editar
+                                    </button>
+                                    {esAdmin && (
+                                      <button
+                                        onClick={() => handleDelete(est.id)}
+                                        className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg transition-all bg-red-50 text-red-600 hover:bg-red-100 text-xs font-medium"
+                                      >
+                                        <FaTrash /> Eliminar
+                                      </button>
                                     )}
                                   </div>
-                                ) : (
-                                  <span className="text-slate-400 text-sm">N/A</span>
-                                )}
-                              </td>
-                              <td className="px-5 py-3 text-center">
-                                <button
-                                  onClick={() => handleToggleActivo(est.id, est.activo)}
-                                  disabled={!puedeEditar}
-                                  className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold transition-all ${
-                                    est.activo
-                                      ? 'bg-linear-to-r from-green-500 to-green-600 text-white shadow-sm'
-                                      : 'bg-slate-100 text-slate-600'
-                                  } ${!puedeEditar ? 'opacity-60 cursor-not-allowed' : ''}`}
-                                >
-                                  {est.activo ? (
-                                    <>
-                                      <FaCheck className="mr-1 text-[10px]" />
-                                      Activo
-                                    </>
-                                  ) : (
-                                    'Inactivo'
-                                  )}
-                                </button>
-                              </td>
-                              <td className="px-5 py-3">
-                                <div className="flex justify-center gap-1">
-                                  <button
-                                    onClick={() => handleEdit(est)}
-                                    disabled={!puedeEditar}
-                                    className={`p-1.5 rounded transition-all ${
-                                      puedeEditar 
-                                        ? 'text-blue-600 hover:bg-blue-50' 
-                                        : 'text-slate-300 cursor-not-allowed'
-                                    }`}
-                                    title={puedeEditar ? "Editar" : "No tienes permisos"}
-                                  >
-                                    <FaEdit className="text-sm" />
-                                  </button>
-                                  {esAdmin && (
-                                    <button
-                                      onClick={() => handleDelete(est.id)}
-                                      className="p-1.5 text-red-600 hover:bg-red-50 rounded transition-all"
-                                      title="Eliminar"
-                                    >
-                                      <FaTrash className="text-sm" />
-                                    </button>
-                                  )}
-                                  {!puedeEditar && !esAdmin && (
-                                    <FaLock className="text-slate-400 text-sm" title="Solo editable por el tutor del grado" />
-                                  )}
-                                </div>
-                              </td>
+                                </td>
+                              )}
                             </tr>
                           );
                         })
@@ -740,13 +986,11 @@ export default function Estudiantes() {
                     </tbody>
                   </table>
                 </div>
+                
                 {estudiantesFiltrados.length > 0 && (
                   <div className="bg-slate-50 px-5 py-3 border-t border-slate-200">
                     <div className="flex items-center justify-between text-xs text-slate-600">
-                      <span>
-                        Mostrando <strong>{estudiantesFiltrados.length}</strong> estudiante{estudiantesFiltrados.length !== 1 ? 's' : ''}
-                        {searchTerm && ` de ${estudiantes.length}`}
-                      </span>
+                      <span>Mostrando <strong>{estudiantesFiltrados.length}</strong> estudiante{estudiantesFiltrados.length !== 1 ? 's' : ''}{searchTerm && ` de ${estudiantes.length}`}</span>
                       <span>{estudiantes.filter(e => e.activo).length} activo{estudiantes.filter(e => e.activo).length !== 1 ? 's' : ''}</span>
                     </div>
                   </div>
@@ -755,7 +999,7 @@ export default function Estudiantes() {
             </>
           )}
 
-          {/* ✅ Información de permisos para docentes (CORREGIDA) */}
+          {/* ✅ Información de permisos para docentes */}
           {userData?.role === 'docente' && (
             <div className="mt-4 bg-purple-50 border border-purple-200 rounded-lg p-4">
               <div className="flex items-start gap-2">
@@ -768,7 +1012,7 @@ export default function Estudiantes() {
                   </p>
                   <p className="text-xs">
                     {tutorDeAnioActivo.length > 0
-                      ? 'Puedes ver todos tus grados asignados, pero solo editar estudiantes de los grados donde eres tutor.'
+                      ? 'Puedes registrar, editar y eliminar estudiantes solo en los grados donde eres tutor.'
                       : 'Como docente sin rol de tutor, solo puedes visualizar los estudiantes de tus grados asignados.'}
                   </p>
                 </div>
