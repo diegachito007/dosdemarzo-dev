@@ -36,6 +36,8 @@ import {
   FaSpinner,
   FaPrint,
   FaCalendarAlt,
+  FaUserCheck,
+  FaCopy,
 } from "react-icons/fa";
 
 export default function AmbitosDestrezas() {
@@ -44,11 +46,12 @@ export default function AmbitosDestrezas() {
   const [aniosLectivos, setAniosLectivos] = useState<AnioLectivo[]>([]);
   const [ambitos, setAmbitos] = useState<Ambito[]>([]);
   const [destrezas, setDestrezas] = useState<Destreza[]>([]);
+  const [todosLosAmbitos, setTodosLosAmbitos] = useState<Ambito[]>([]);
   const [loading, setLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [selectedGradoId, setSelectedGradoId] = useState("");
   const [currentView, setCurrentView] = useState<"ambitos" | "destrezas">(
-    "ambitos"
+    "ambitos",
   );
   const [selectedAmbitoId, setSelectedAmbitoId] = useState<string | null>(null);
   const [showAmbitoForm, setShowAmbitoForm] = useState(false);
@@ -58,7 +61,6 @@ export default function AmbitosDestrezas() {
     orden: 0,
   });
 
-  // ✅ NUEVO: Estados para ingreso masivo de ámbitos
   const [isAmbitoMassive, setIsAmbitoMassive] = useState(false);
   const [ambitoMassiveData, setAmbitoMassiveData] = useState("");
   const [parsedAmbitos, setParsedAmbitos] = useState<string[]>([]);
@@ -66,12 +68,16 @@ export default function AmbitosDestrezas() {
 
   const [showDestrezaForm, setShowDestrezaForm] = useState(false);
   const [editingDestrezaId, setEditingDestrezaId] = useState<string | null>(
-    null
+    null,
   );
   const [destrezaMassiveData, setDestrezaMassiveData] = useState("");
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
 
-  // ✅ Referencia al formulario de destrezas
+  // ✅ NUEVO: Estados para copiar a otros grados
+  const [showCopyModal, setShowCopyModal] = useState(false);
+  const [selectedDestGrados, setSelectedDestGrados] = useState<string[]>([]);
+  const [isCopying, setIsCopying] = useState(false);
+
   const destrezaFormRef = useRef<HTMLDivElement>(null);
 
   const resetAmbitoForm = useCallback(() => {
@@ -92,16 +98,15 @@ export default function AmbitosDestrezas() {
     setValidationErrors([]);
   }, []);
 
-  // ✅ NUEVA: Cargar años lectivos
   const cargarAniosLectivos = useCallback(async () => {
     try {
       const q = query(
         collection(db, "aniosLectivos"),
-        where("activo", "==", true)
+        where("activo", "==", true),
       );
       const snap = await getDocs(q);
       const data = snap.docs.map(
-        (doc) => ({ id: doc.id, ...doc.data() }) as AnioLectivo
+        (doc) => ({ id: doc.id, ...doc.data() }) as AnioLectivo,
       );
       startTransition(() => {
         setAniosLectivos(data);
@@ -111,12 +116,10 @@ export default function AmbitosDestrezas() {
     }
   }, []);
 
-  // ✅ CORRECCIÓN CLAVE: Filtrar grados SOLO del año lectivo activo
   const cargarGrados = useCallback(async () => {
     try {
       const anioActivo = aniosLectivos.find((a) => a.activo);
 
-      // Si no hay año activo, limpiamos la lista y detenemos la carga
       if (!anioActivo) {
         startTransition(() => {
           setGrados([]);
@@ -127,14 +130,14 @@ export default function AmbitosDestrezas() {
 
       const q = query(
         collection(db, "grados"),
-        where("anioLectivoId", "==", anioActivo.id), // ✅ FILTRO POR AÑO ACTIVO
+        where("anioLectivoId", "==", anioActivo.id),
         where("activo", "==", true),
-        orderBy("orden", "asc")
+        orderBy("orden", "asc"),
       );
 
       const snap = await getDocs(q);
       const data = snap.docs.map(
-        (doc) => ({ id: doc.id, ...doc.data() }) as Grado
+        (doc) => ({ id: doc.id, ...doc.data() }) as Grado,
       );
 
       startTransition(() => {
@@ -150,6 +153,20 @@ export default function AmbitosDestrezas() {
     }
   }, [selectedGradoId, aniosLectivos]);
 
+  // ✅ SIN orderBy para evitar índices compuestos
+  const cargarTodosLosAmbitos = useCallback(async () => {
+    try {
+      const q = query(collection(db, "ambitos"), where("activo", "==", true));
+      const snap = await getDocs(q);
+      const data = snap.docs
+        .map((doc) => ({ id: doc.id, ...doc.data() }) as Ambito)
+        .sort((a, b) => a.nombre.localeCompare(b.nombre));
+      startTransition(() => setTodosLosAmbitos(data));
+    } catch (error) {
+      console.error("Error cargando todos los ámbitos:", error);
+    }
+  }, []);
+
   const cargarAmbitos = useCallback(async (gradoId: string) => {
     try {
       startTransition(() => {
@@ -159,11 +176,11 @@ export default function AmbitosDestrezas() {
       const q = query(
         collection(db, "ambitos"),
         where("gradoId", "==", gradoId),
-        orderBy("nombre", "asc")
+        orderBy("nombre", "asc"),
       );
       const snap = await getDocs(q);
       const data = snap.docs.map(
-        (doc) => ({ id: doc.id, ...doc.data() }) as Ambito
+        (doc) => ({ id: doc.id, ...doc.data() }) as Ambito,
       );
 
       startTransition(() => {
@@ -183,11 +200,11 @@ export default function AmbitosDestrezas() {
       const q = query(
         collection(db, "destrezas"),
         where("gradoId", "==", gradoId),
-        orderBy("orden", "asc")
+        orderBy("orden", "asc"),
       );
       const snap = await getDocs(q);
       const data = snap.docs.map(
-        (doc) => ({ id: doc.id, ...doc.data() }) as Destreza
+        (doc) => ({ id: doc.id, ...doc.data() }) as Destreza,
       );
 
       startTransition(() => {
@@ -214,7 +231,7 @@ export default function AmbitosDestrezas() {
 
         if (trimmedLine.length < 1) {
           parseErrors.push(
-            `Línea ${index + 1}: El nombre del ámbito no puede estar vacío.`
+            `Línea ${index + 1}: El nombre del ámbito no puede estar vacío.`,
           );
           return;
         }
@@ -224,7 +241,7 @@ export default function AmbitosDestrezas() {
 
       return { ambitos: ambitosList, parseErrors };
     },
-    []
+    [],
   );
 
   const validarAmbitosMasivos = useCallback(
@@ -241,7 +258,7 @@ export default function AmbitosDestrezas() {
         nombresVistos.add(nombre.toLowerCase());
 
         const existe = ambitos.some(
-          (a) => a.nombre.toLowerCase() === nombre.toLowerCase()
+          (a) => a.nombre.toLowerCase() === nombre.toLowerCase(),
         );
         if (existe) {
           errors.push(`Ya existe un ámbito llamado "${nombre}" en este grado`);
@@ -254,7 +271,7 @@ export default function AmbitosDestrezas() {
 
       return allErrors;
     },
-    [ambitos]
+    [ambitos],
   );
 
   const guardarAmbitosMasivos = useCallback(async () => {
@@ -324,9 +341,10 @@ export default function AmbitosDestrezas() {
 
       await Promise.all(batch);
       await cargarAmbitos(selectedGradoId);
+      await cargarTodosLosAmbitos();
       resetAmbitoForm();
       alert(
-        `✅ Se registraron ${parsedAmbitos.length} ámbito(s) correctamente`
+        `✅ Se registraron ${parsedAmbitos.length} ámbito(s) correctamente`,
       );
     } catch (error) {
       console.error("Error guardando ámbitos masivos:", error);
@@ -340,6 +358,7 @@ export default function AmbitosDestrezas() {
     ambitos,
     user,
     cargarAmbitos,
+    cargarTodosLosAmbitos,
     resetAmbitoForm,
   ]);
 
@@ -355,11 +374,11 @@ export default function AmbitosDestrezas() {
       (a) =>
         a.nombre.toLowerCase() === ambitoFormData.nombre.trim().toLowerCase() &&
         a.gradoId === selectedGradoId &&
-        a.id !== editingAmbitoId
+        a.id !== editingAmbitoId,
     );
     if (existe) {
       errors.push(
-        `Ya existe un ámbito llamado "${ambitoFormData.nombre}" en este grado`
+        `Ya existe un ámbito llamado "${ambitoFormData.nombre}" en este grado`,
       );
     }
     if (errors.length > 0) {
@@ -391,6 +410,7 @@ export default function AmbitosDestrezas() {
       }
       resetAmbitoForm();
       await cargarAmbitos(selectedGradoId);
+      await cargarTodosLosAmbitos();
     } catch (error) {
       console.error("Error guardando ámbito:", error);
       alert("Error al guardar");
@@ -405,7 +425,138 @@ export default function AmbitosDestrezas() {
     user,
     resetAmbitoForm,
     cargarAmbitos,
+    cargarTodosLosAmbitos,
   ]);
+
+  // ✅ NUEVO: Copiar ámbitos y destrezas a otros grados (fusión inteligente)
+  const copiarAGrados = useCallback(async () => {
+    if (selectedDestGrados.length === 0) {
+      alert("⚠️ Selecciona al menos un grado de destino");
+      return;
+    }
+    if (ambitos.length === 0) {
+      alert("⚠️ El grado actual no tiene ámbitos para copiar");
+      return;
+    }
+
+    setIsCopying(true);
+    try {
+      let ambitosCreados = 0;
+      let destrezasCreadas = 0;
+
+      for (const destGradoId of selectedDestGrados) {
+        // 1. Cargar ámbitos existentes en el destino
+        const qAmbDest = query(
+          collection(db, "ambitos"),
+          where("gradoId", "==", destGradoId),
+        );
+        const snapAmbDest = await getDocs(qAmbDest);
+        const ambitosDest = snapAmbDest.docs.map(
+          (d) => ({ id: d.id, ...d.data() }) as Ambito,
+        );
+
+        // 2. Por cada ámbito del grado origen
+        for (const ambitoOrigen of ambitos) {
+          // Buscar ámbito con el mismo nombre en el destino
+          let ambitoDestId = ambitosDest.find(
+            (a) => a.nombre.toLowerCase() === ambitoOrigen.nombre.toLowerCase(),
+          )?.id;
+
+          // Si no existe, crearlo
+          if (!ambitoDestId) {
+            const ref = await addDoc(collection(db, "ambitos"), {
+              nombre: ambitoOrigen.nombre,
+              gradoId: destGradoId,
+              orden: ambitoOrigen.orden || 0,
+              activo: true,
+              createdAt: serverTimestamp(),
+              createdBy: user?.uid,
+            });
+            ambitoDestId = ref.id;
+            ambitosCreados++;
+          }
+
+          // 3. Cargar destrezas del ámbito origen
+          const qDesOrigen = query(
+            collection(db, "destrezas"),
+            where("ambitoId", "==", ambitoOrigen.id),
+          );
+          const snapDesOrigen = await getDocs(qDesOrigen);
+          const destrezasOrigen = snapDesOrigen.docs
+            .map((d) => ({ id: d.id, ...d.data() }) as Destreza)
+            .sort((a, b) => (a.orden || 0) - (b.orden || 0));
+
+          // 4. Cargar destrezas existentes en el ámbito destino
+          const qDesDest = query(
+            collection(db, "destrezas"),
+            where("ambitoId", "==", ambitoDestId),
+          );
+          const snapDesDest = await getDocs(qDesDest);
+          const destrezasDest = snapDesDest.docs.map(
+            (d) => ({ id: d.id, ...d.data() }) as Destreza,
+          );
+
+          // 5. Copiar solo las destrezas que falten
+          let ordenMax =
+            destrezasDest.length > 0
+              ? Math.max(...destrezasDest.map((d) => d.orden || 0))
+              : 0;
+
+          for (const destrezaOrigen of destrezasOrigen) {
+            const existe = destrezasDest.some(
+              (d) =>
+                d.descripcion.toLowerCase() ===
+                destrezaOrigen.descripcion.toLowerCase(),
+            );
+            if (!existe) {
+              ordenMax += 1;
+              await addDoc(collection(db, "destrezas"), {
+                nombre: destrezaOrigen.nombre,
+                descripcion: destrezaOrigen.descripcion,
+                ambitoId: ambitoDestId,
+                gradoId: destGradoId,
+                orden: ordenMax,
+                activo: true,
+                createdAt: serverTimestamp(),
+                createdBy: user?.uid,
+              });
+              destrezasCreadas++;
+            }
+          }
+        }
+      }
+
+      alert(
+        `✅ Copia completada:\n${ambitosCreados} ámbito(s) y ${destrezasCreadas} destreza(s) creados en ${selectedDestGrados.length} grado(s).\n(Lo que ya existía no se duplicó)`,
+      );
+      setShowCopyModal(false);
+      setSelectedDestGrados([]);
+      await cargarTodosLosAmbitos();
+      await cargarAmbitos(selectedGradoId);
+      await cargarDestrezas(selectedGradoId);
+    } catch (error) {
+      console.error("Error copiando ámbitos y destrezas:", error);
+      alert("Error al copiar ámbitos y destrezas");
+    } finally {
+      setIsCopying(false);
+    }
+  }, [
+    selectedDestGrados,
+    ambitos,
+    user,
+    selectedGradoId,
+    cargarTodosLosAmbitos,
+    cargarAmbitos,
+    cargarDestrezas,
+  ]);
+
+  const toggleDestGrado = (gradoId: string) => {
+    setSelectedDestGrados((prev) =>
+      prev.includes(gradoId)
+        ? prev.filter((id) => id !== gradoId)
+        : [...prev, gradoId],
+    );
+  };
 
   const analizarYGuardarDestrezas = useCallback(async () => {
     const errors: string[] = [];
@@ -420,36 +571,40 @@ export default function AmbitosDestrezas() {
       return;
     }
 
-    const lineas = destrezaMassiveData.split(/(?<=\.)\s*\n+/);
-    const destrezasList = lineas
-      .map((d) => d.trim())
-      .filter((d) => d.length > 0);
+    // ✅ MODO INTELIGENTE: detecta si son destrezas largas (con punto) o cortas (una por línea)
+    const lineasLimpias = destrezaMassiveData
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => l.length > 0);
+
+    const usaPuntos = lineasLimpias.some((l) => l.endsWith("."));
+
+    let destrezasList: string[];
+    if (usaPuntos) {
+      // 📖 Modo largo: cada destreza termina en "." (puede ocupar varias líneas)
+      destrezasList = destrezaMassiveData
+        .split(/(?<=\.)\s*\n+/)
+        .map((d) => d.trim())
+        .filter((d) => d.length > 0);
+    } else {
+      // ✏️ Modo corto: cada línea es una destreza (ej: "Matemática"), sin punto
+      destrezasList = lineasLimpias;
+    }
 
     if (destrezasList.length === 0) {
       setValidationErrors([
-        "No se encontraron destrezas válidas. Cada destreza debe terminar con un punto (.)",
+        "No se encontraron destrezas válidas. Escribe al menos una.",
       ]);
       return;
     }
-
-    const sinPunto = destrezasList.filter((d) => !d.endsWith("."));
-    if (sinPunto.length > 0) {
-      setValidationErrors([
-        `${sinPunto.length} destreza(s) no terminan con punto. Cada destreza debe terminar con "."`,
-      ]);
-      return;
-    }
-
-    // ✅ ELIMINADA LA VALIDACIÓN DE MÍNIMO 20 CARACTERES
-    // Ahora permite desde 1 carácter, ya que el filtro anterior (d.length > 0) garantiza que no esté vacío.
 
     const ambitoDestrezas = destrezas.filter(
-      (d) => d.ambitoId === selectedAmbitoId
+      (d) => d.ambitoId === selectedAmbitoId,
     );
     const duplicadas = destrezasList.filter((d) =>
       ambitoDestrezas.some(
-        (existente) => existente.descripcion.toLowerCase() === d.toLowerCase()
-      )
+        (existente) => existente.descripcion.toLowerCase() === d.toLowerCase(),
+      ),
     );
     if (duplicadas.length > 0) {
       setValidationErrors([
@@ -496,7 +651,7 @@ export default function AmbitosDestrezas() {
       await cargarDestrezas(selectedGradoId);
       resetDestrezaForm();
       alert(
-        `✅ Se registraron ${destrezasList.length} destreza(s) en "${ambito.nombre}"`
+        `✅ Se registraron ${destrezasList.length} destreza(s) en "${ambito.nombre}"`,
       );
     } catch (error) {
       console.error("Error guardando destrezas:", error);
@@ -529,13 +684,13 @@ export default function AmbitosDestrezas() {
       if (destrezasDelAmbito.length > 0) {
         if (
           !confirm(
-            `Este ámbito tiene ${destrezasDelAmbito.length} destreza(s). ¿Eliminar también las destrezas?`
+            `Este ámbito tiene ${destrezasDelAmbito.length} destreza(s). ¿Eliminar también las destrezas?`,
           )
         ) {
           return;
         }
         const deleteDestrezas = destrezasDelAmbito.map((d) =>
-          deleteDoc(doc(db, "destrezas", d.id))
+          deleteDoc(doc(db, "destrezas", d.id)),
         );
         await Promise.all(deleteDestrezas);
       } else {
@@ -545,12 +700,19 @@ export default function AmbitosDestrezas() {
         await deleteDoc(doc(db, "ambitos", id));
         await cargarAmbitos(selectedGradoId);
         await cargarDestrezas(selectedGradoId);
+        await cargarTodosLosAmbitos();
       } catch (error) {
         console.error("Error eliminando:", error);
         alert("Error al eliminar");
       }
     },
-    [destrezas, selectedGradoId, cargarAmbitos, cargarDestrezas]
+    [
+      destrezas,
+      selectedGradoId,
+      cargarAmbitos,
+      cargarDestrezas,
+      cargarTodosLosAmbitos,
+    ],
   );
 
   const handleDeleteDestreza = useCallback(
@@ -564,7 +726,7 @@ export default function AmbitosDestrezas() {
         alert("Error al eliminar");
       }
     },
-    [selectedGradoId, cargarDestrezas]
+    [selectedGradoId, cargarDestrezas],
   );
 
   const handleEditDestreza = useCallback((destreza: Destreza) => {
@@ -582,7 +744,6 @@ export default function AmbitosDestrezas() {
   }, []);
 
   const guardarDestrezaIndividual = useCallback(async () => {
-    // ✅ VALIDACIÓN ACTUALIZADA: Solo verifica que no esté vacío (mínimo 1 carácter)
     if (!destrezaMassiveData.trim()) {
       setValidationErrors(["La destreza no puede estar vacía"]);
       return;
@@ -600,7 +761,7 @@ export default function AmbitosDestrezas() {
         });
       } else {
         const ambitoDestrezas = destrezas.filter(
-          (d) => d.ambitoId === selectedAmbitoId
+          (d) => d.ambitoId === selectedAmbitoId,
         );
         await addDoc(collection(db, "destrezas"), {
           nombre: destrezaMassiveData.substring(0, 100).trim(),
@@ -649,7 +810,6 @@ export default function AmbitosDestrezas() {
     resetDestrezaForm();
   }, [resetDestrezaForm]);
 
-  // ✅ NUEVO: Función para imprimir el respaldo
   const handlePrint = useCallback(() => {
     const gradoActual = grados.find((g) => g.id === selectedGradoId);
     if (!gradoActual) return;
@@ -690,13 +850,13 @@ export default function AmbitosDestrezas() {
                   .map(
                     (d) => `
             <div class="destreza">${d.descripcion}</div>
-          `
+          `,
                   )
                   .join("")
               : '<div class="destreza" style="color: #999; font-style: italic;">No hay destrezas registradas en este ámbito.</div>'
           }
         </div>
-      `
+      `,
         )
         .join("")}
       <div class="footer">
@@ -718,17 +878,16 @@ export default function AmbitosDestrezas() {
     }
   }, [grados, selectedGradoId, ambitos, destrezas]);
 
-  // ✅ useEffect corregido para asegurar el orden de carga
   useEffect(() => {
     cargarAniosLectivos();
   }, [cargarAniosLectivos]);
 
   useEffect(() => {
-    // Solo cargamos los grados cuando ya tenemos los años lectivos
     if (aniosLectivos.length > 0) {
       cargarGrados();
+      cargarTodosLosAmbitos();
     }
-  }, [aniosLectivos, cargarGrados]);
+  }, [aniosLectivos, cargarGrados, cargarTodosLosAmbitos]);
 
   useEffect(() => {
     if (selectedGradoId) {
@@ -759,6 +918,8 @@ export default function AmbitosDestrezas() {
     ? getDestrezasByAmbito(selectedAmbitoId)
     : [];
   const anioActivo = aniosLectivos.find((a) => a.activo);
+  const gradoOrigen = grados.find((g) => g.id === selectedGradoId);
+  const gradosDestino = grados.filter((g) => g.id !== selectedGradoId);
 
   return (
     <Layout
@@ -766,7 +927,6 @@ export default function AmbitosDestrezas() {
       subtitle="Configura competencias y destrezas por grado"
       showBack
     >
-      {/* ✅ Indicador de Año Lectivo Activo */}
       {anioActivo && (
         <div className="bg-blue-50 border border-blue-200 rounded-lg px-4 py-3 mb-6">
           <div className="flex items-center gap-2 text-blue-800">
@@ -798,36 +958,81 @@ export default function AmbitosDestrezas() {
         </div>
       )}
 
-      {/* Selector de Grado */}
+      {/* Selector de Grado como botones */}
       <div className="bg-white rounded-xl shadow-sm border border-slate-200 mb-6 p-4">
-        <div className="flex flex-col sm:flex-row sm:items-center gap-4">
-          <div className="flex-1">
-            <label className="text-sm font-semibold text-slate-700 block mb-1">
-              Grado:
-            </label>
-            <select
-              value={selectedGradoId}
-              onChange={(e) => {
-                setSelectedGradoId(e.target.value);
-                volverAAmbitos();
-              }}
-              disabled={grados.length === 0}
-              className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 disabled:bg-slate-100 disabled:cursor-not-allowed"
-            >
-              {grados.length === 0 ? (
-                <option value="">
-                  No hay grados para el año lectivo activo
-                </option>
-              ) : (
-                grados.map((grado) => (
-                  <option key={grado.id} value={grado.id}>
-                    {grado.nombre} - {grado.paralelo}
-                  </option>
-                ))
-              )}
-            </select>
+        <h3 className="text-base font-bold text-slate-800 mb-3 flex items-center gap-2">
+          <FaBook className="text-purple-600" />
+          Selecciona un Grado
+        </h3>
+
+        {grados.length === 0 ? (
+          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 flex items-start gap-3">
+            <FaInfoCircle className="text-yellow-600 mt-0.5" />
+            <div>
+              <h4 className="text-yellow-800 font-semibold text-sm">
+                No hay grados disponibles
+              </h4>
+              <p className="text-yellow-700 text-sm">
+                Debes crear y activar grados para el año lectivo vigente antes
+                de registrar ámbitos.
+              </p>
+            </div>
           </div>
-        </div>
+        ) : (
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2">
+            {grados.map((grado) => {
+              const isSelected = selectedGradoId === grado.id;
+              const ambitosCount = todosLosAmbitos.filter(
+                (a) => a.gradoId === grado.id,
+              ).length;
+              return (
+                <button
+                  key={grado.id}
+                  onClick={() => {
+                    setSelectedGradoId(grado.id);
+                    volverAAmbitos();
+                  }}
+                  className={`p-3 rounded-lg border-2 transition-all duration-200 text-left text-sm ${
+                    isSelected
+                      ? "border-purple-500 bg-purple-50 shadow-sm"
+                      : "border-slate-200 hover:border-purple-300 hover:bg-slate-50"
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <div
+                      className={`w-8 h-8 rounded flex items-center justify-center text-white font-bold text-xs ${
+                        isSelected
+                          ? "bg-linear-to-br from-purple-500 to-indigo-600"
+                          : "bg-linear-to-br from-slate-400 to-slate-500"
+                      }`}
+                    >
+                      {grado.paralelo}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="font-semibold text-slate-900 truncate">
+                        {grado.nombre}
+                      </div>
+                      <div className="text-slate-500 text-xs flex items-center gap-1">
+                        {ambitosCount > 0 ? (
+                          <span className="text-purple-600 font-medium">
+                            {ambitosCount} ámbito{ambitosCount !== 1 ? "s" : ""}
+                          </span>
+                        ) : (
+                          <span className="text-orange-600 font-medium">
+                            Sin ámbitos
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    {isSelected && (
+                      <FaUserCheck className="text-purple-600 text-xs shrink-0" />
+                    )}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* Breadcrumb de navegación */}
@@ -849,7 +1054,7 @@ export default function AmbitosDestrezas() {
       )}
 
       {/* VISTA: LISTA DE ÁMBITOS */}
-      {currentView === "ambitos" && (
+      {currentView === "ambitos" && selectedGradoId && (
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
           <div className="bg-linear-to-r from-purple-600 to-purple-700 px-5 py-4 flex items-center justify-between">
             <div className="flex items-center gap-3">
@@ -862,6 +1067,18 @@ export default function AmbitosDestrezas() {
               </div>
             </div>
             <div className="flex gap-2">
+              {/* ✅ NUEVO: Botón Copiar a otros grados */}
+              <button
+                onClick={() => {
+                  setSelectedDestGrados([]);
+                  setShowCopyModal(true);
+                }}
+                disabled={ambitos.length === 0 || isSaving}
+                className="inline-flex items-center gap-2 bg-white/20 hover:bg-white/30 text-white px-3 py-1.5 rounded-lg transition-all text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                title="Copiar ámbitos y destrezas a otros grados"
+              >
+                <FaCopy className="text-xs" /> Copiar
+              </button>
               <button
                 onClick={handlePrint}
                 disabled={ambitos.length === 0}
@@ -872,7 +1089,7 @@ export default function AmbitosDestrezas() {
               </button>
               <button
                 onClick={() => setShowAmbitoForm(!showAmbitoForm)}
-                disabled={isSaving || grados.length === 0}
+                disabled={isSaving}
                 className="inline-flex items-center gap-2 bg-white/20 hover:bg-white/30 text-white px-3 py-1.5 rounded-lg transition-all text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <FaPlus className="text-xs" />{" "}
@@ -882,30 +1099,15 @@ export default function AmbitosDestrezas() {
           </div>
 
           <div className="p-5">
-            {grados.length === 0 && (
-              <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-4 flex items-start gap-3">
-                <FaInfoCircle className="text-yellow-600 mt-0.5" />
-                <div>
-                  <h4 className="text-yellow-800 font-semibold text-sm">
-                    No hay grados disponibles
-                  </h4>
-                  <p className="text-yellow-700 text-sm">
-                    Debes crear y activar grados para el año lectivo vigente
-                    antes de registrar ámbitos.
-                  </p>
-                </div>
-              </div>
-            )}
-
-            {showAmbitoForm && grados.length > 0 && (
+            {showAmbitoForm && (
               <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 mb-4">
                 <div className="flex items-center justify-between mb-3">
                   <h4 className="text-sm font-semibold text-slate-800">
                     {editingAmbitoId
                       ? "Editar Ámbito"
                       : isAmbitoMassive
-                      ? "Ingreso Masivo de Ámbitos"
-                      : "Nuevo Ámbito"}
+                        ? "Ingreso Masivo de Ámbitos"
+                        : "Nuevo Ámbito"}
                   </h4>
                   {!editingAmbitoId && (
                     <button
@@ -1029,7 +1231,7 @@ export default function AmbitosDestrezas() {
               </div>
             )}
 
-            {ambitos.length === 0 && grados.length > 0 ? (
+            {ambitos.length === 0 ? (
               <div className="text-center py-12 text-slate-500">
                 <FaBook className="text-4xl mx-auto mb-3 text-slate-300" />
                 <p className="font-medium mb-1">No hay ámbitos registrados</p>
@@ -1160,8 +1362,9 @@ export default function AmbitosDestrezas() {
                     />
                     {!editingDestrezaId && (
                       <p className="text-xs text-slate-500 mt-1">
-                        <FaInfoCircle className="inline mr-1" /> Escribe cada
-                        destreza seguida de un punto (.) y un salto de línea.
+                        <FaInfoCircle className="inline mr-1" />
+                        <strong>Destrezas largas:</strong> termina cada una con punto (.).{" "}
+                        <strong>Cortas (una palabra):</strong> una por línea, sin punto.
                       </p>
                     )}
                   </div>
@@ -1310,6 +1513,122 @@ export default function AmbitosDestrezas() {
                   setParsedAmbitos([]);
                 }}
                 disabled={isSaving}
+                className="flex-1 inline-flex items-center justify-center gap-2 bg-slate-200 hover:bg-slate-300 text-slate-700 px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <FaTimes className="text-xs" /> Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ✅ NUEVO: Modal para Copiar a otros grados */}
+      {showCopyModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-lg w-full p-6">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="bg-blue-100 p-2 rounded-lg">
+                <FaCopy className="text-blue-600 text-xl" />
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-slate-900">
+                  Copiar Ámbitos y Destrezas
+                </h3>
+                <p className="text-xs text-slate-500">
+                  Desde:{" "}
+                  <strong className="text-purple-700">
+                    {gradoOrigen?.nombre} - {gradoOrigen?.paralelo}
+                  </strong>{" "}
+                  ({ambitos.length} ámbitos)
+                </p>
+              </div>
+            </div>
+
+            <p className="text-sm text-slate-600 mb-3">
+              Selecciona los grados de destino. Los ámbitos y destrezas que ya
+              existan en el destino <strong>no se duplicarán</strong>.
+            </p>
+
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs font-semibold text-slate-700">
+                {selectedDestGrados.length} seleccionado(s)
+              </span>
+              <button
+                onClick={() =>
+                  setSelectedDestGrados(
+                    selectedDestGrados.length === gradosDestino.length
+                      ? []
+                      : gradosDestino.map((g) => g.id),
+                  )
+                }
+                className="text-xs text-blue-600 hover:text-blue-700 font-medium"
+              >
+                {selectedDestGrados.length === gradosDestino.length
+                  ? "Deseleccionar todos"
+                  : "Seleccionar todos"}
+              </button>
+            </div>
+
+            <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 mb-4 max-h-56 overflow-y-auto space-y-1">
+              {gradosDestino.map((grado) => {
+                const checked = selectedDestGrados.includes(grado.id);
+                const ambitosCount = todosLosAmbitos.filter(
+                  (a) => a.gradoId === grado.id,
+                ).length;
+                return (
+                  <label
+                    key={grado.id}
+                    className={`flex items-center justify-between p-2 rounded-lg cursor-pointer transition-all border ${
+                      checked
+                        ? "bg-blue-50 border-blue-300"
+                        : "bg-white border-slate-200 hover:border-blue-300"
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => toggleDestGrado(grado.id)}
+                        className="w-4 h-4 text-blue-600 border-slate-300 rounded focus:ring-blue-500"
+                      />
+                      <span className="text-sm font-medium text-slate-800">
+                        {grado.nombre} - {grado.paralelo}
+                      </span>
+                    </div>
+                    <span
+                      className={`text-xs ${
+                        ambitosCount > 0 ? "text-purple-600" : "text-orange-600"
+                      }`}
+                    >
+                      {ambitosCount > 0 ? `${ambitosCount} ámbito(s)` : "Vacío"}
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+
+            <div className="flex gap-2">
+              <button
+                onClick={copiarAGrados}
+                disabled={isCopying || selectedDestGrados.length === 0}
+                className="flex-1 inline-flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isCopying ? (
+                  <>
+                    <FaSpinner className="text-xs animate-spin" /> Copiando...
+                  </>
+                ) : (
+                  <>
+                    <FaCopy className="text-xs" /> Copiar ahora
+                  </>
+                )}
+              </button>
+              <button
+                onClick={() => {
+                  setShowCopyModal(false);
+                  setSelectedDestGrados([]);
+                }}
+                disabled={isCopying}
                 className="flex-1 inline-flex items-center justify-center gap-2 bg-slate-200 hover:bg-slate-300 text-slate-700 px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <FaTimes className="text-xs" /> Cancelar
