@@ -32,6 +32,9 @@ import {
   FaSpinner,
   FaLock,
   FaGraduationCap,
+  FaCheck,
+  FaTimes,
+  FaUndo,
 } from "react-icons/fa";
 
 interface AsistenciaData {
@@ -88,14 +91,14 @@ export default function Calificaciones() {
   const [isSaving, setIsSaving] = useState(false);
 
   const [activeTab, setActiveTab] = useState<"asistencia" | "calificaciones">(
-    "asistencia",
+    "asistencia"
   );
   const [selectedGradoId, setSelectedGradoId] = useState("");
   const [selectedAmbitoId, setSelectedAmbitoId] = useState("");
   const [selectedDestrezaId, setSelectedDestrezaId] = useState("");
 
   const [fechaAsistencia, setFechaAsistencia] = useState(
-    new Date().toISOString().split("T")[0],
+    new Date().toISOString().split("T")[0]
   );
   const [asistencias, setAsistencias] = useState<
     Record<string, { estado: "P" | "T" | "A" | "J"; observacion: string }>
@@ -116,20 +119,22 @@ export default function Calificaciones() {
     estudiantes.every((est) => asistencias[est.id]?.estado);
 
   // ✅ Verificar si es docente sin grados asignados
-  const docenteSinGrados = userData?.role === 'docente' && (!userData?.gradosAsignados || userData.gradosAsignados.length === 0);
+  const docenteSinGrados =
+    userData?.role === "docente" &&
+    (!userData?.gradosAsignados || userData.gradosAsignados.length === 0);
 
   // ✅ Obtener año lectivo activo
-  const anioActivo = aniosLectivos.find(a => a.activo);
+  const anioActivo = aniosLectivos.find((a) => a.activo);
 
   const cargarDatos = useCallback(async () => {
     try {
       const aniosQuery = query(
         collection(db, "aniosLectivos"),
-        where("activo", "==", true),
+        where("activo", "==", true)
       );
       const aniosSnap = await getDocs(aniosQuery);
       const aniosData = aniosSnap.docs.map(
-        (doc) => ({ id: doc.id, ...doc.data() }) as AnioLectivo,
+        (doc) => ({ id: doc.id, ...doc.data() }) as AnioLectivo
       );
 
       let periodosData: PeriodoEvaluacion[] = [];
@@ -137,24 +142,28 @@ export default function Calificaciones() {
         const periodosQuery = query(
           collection(db, "periodosEvaluacion"),
           where("anioLectivoId", "==", aniosData[0].id),
-          orderBy("orden", "asc"),
+          orderBy("orden", "asc")
         );
         const periodosSnap = await getDocs(periodosQuery);
         periodosData = periodosSnap.docs.map(
-          (doc) => ({ id: doc.id, ...doc.data() }) as PeriodoEvaluacion,
+          (doc) => ({ id: doc.id, ...doc.data() }) as PeriodoEvaluacion
         );
       }
 
       // ✅ FILTRAR GRADOS SEGÚN ROL
       let gradosQuery;
-      if (userData?.role === 'docente' && userData?.gradosAsignados && userData.gradosAsignados.length > 0) {
+      if (
+        userData?.role === "docente" &&
+        userData?.gradosAsignados &&
+        userData.gradosAsignados.length > 0
+      ) {
         gradosQuery = query(
           collection(db, "grados"),
           where("__name__", "in", userData.gradosAsignados),
           where("activo", "==", true),
-          orderBy("orden", "asc"),
+          orderBy("orden", "asc")
         );
-      } else if (userData?.role === 'docente') {
+      } else if (userData?.role === "docente") {
         startTransition(() => {
           setAniosLectivos(aniosData);
           setPeriodos(periodosData);
@@ -166,13 +175,13 @@ export default function Calificaciones() {
         gradosQuery = query(
           collection(db, "grados"),
           where("activo", "==", true),
-          orderBy("orden", "asc"),
+          orderBy("orden", "asc")
         );
       }
 
       const gradosSnap = await getDocs(gradosQuery);
       const gradosData = gradosSnap.docs.map(
-        (doc) => ({ id: doc.id, ...doc.data() }) as Grado,
+        (doc) => ({ id: doc.id, ...doc.data() }) as Grado
       );
 
       startTransition(() => {
@@ -196,11 +205,11 @@ export default function Calificaciones() {
         collection(db, "estudiantes"),
         where("gradoId", "==", gradoId),
         where("activo", "==", true),
-        orderBy("apellidos", "asc"),
+        orderBy("apellidos", "asc")
       );
       const snap = await getDocs(q);
       const data = snap.docs.map(
-        (doc) => ({ id: doc.id, ...doc.data() }) as Estudiante,
+        (doc) => ({ id: doc.id, ...doc.data() }) as Estudiante
       );
 
       startTransition(() => {
@@ -219,11 +228,11 @@ export default function Calificaciones() {
         collection(db, "ambitos"),
         where("gradoId", "==", gradoId),
         where("activo", "==", true),
-        orderBy("orden", "asc"),
+        orderBy("orden", "asc")
       );
       const snap = await getDocs(q);
       const data = snap.docs.map(
-        (doc) => ({ id: doc.id, ...doc.data() }) as Ambito,
+        (doc) => ({ id: doc.id, ...doc.data() }) as Ambito
       );
 
       startTransition(() => setAmbitos(data));
@@ -238,11 +247,11 @@ export default function Calificaciones() {
         collection(db, "destrezas"),
         where("ambitoId", "==", ambitoId),
         where("activo", "==", true),
-        orderBy("orden", "asc"),
+        orderBy("orden", "asc")
       );
       const snap = await getDocs(q);
       const data = snap.docs.map(
-        (doc) => ({ id: doc.id, ...doc.data() }) as Destreza,
+        (doc) => ({ id: doc.id, ...doc.data() }) as Destreza
       );
 
       startTransition(() => setDestrezas(data));
@@ -255,7 +264,7 @@ export default function Calificaciones() {
     async (gradoId: string, fecha: string) => {
       try {
         const estudiantesDelGrado = estudiantes.filter(
-          (e) => e.gradoId === gradoId,
+          (e) => e.gradoId === gradoId
         );
         const estudianteIds = estudiantesDelGrado.map((e) => e.id);
 
@@ -264,7 +273,7 @@ export default function Calificaciones() {
         const q = query(
           collection(db, "asistencias"),
           where("gradoId", "==", gradoId),
-          where("fecha", "==", fecha),
+          where("fecha", "==", fecha)
         );
         const snap = await getDocs(q);
 
@@ -273,7 +282,7 @@ export default function Calificaciones() {
             ({
               id: doc.id,
               ...doc.data(),
-            }) as unknown as AsistenciaData,
+            }) as unknown as AsistenciaData
         );
 
         const asistenciasMap: Record<
@@ -292,7 +301,7 @@ export default function Calificaciones() {
         console.error("Error cargando asistencias:", error);
       }
     },
-    [estudiantes],
+    [estudiantes]
   );
 
   const cargarCalificaciones = useCallback(
@@ -305,7 +314,7 @@ export default function Calificaciones() {
           collection(db, "calificaciones"),
           where("destrezaId", "==", destrezaId),
           where("gradoId", "==", gradoId),
-          where("periodoId", "==", periodoId),
+          where("periodoId", "==", periodoId)
         );
         const snap = await getDocs(q);
 
@@ -314,7 +323,7 @@ export default function Calificaciones() {
             ({
               id: doc.id,
               ...doc.data(),
-            }) as unknown as CalificacionData,
+            }) as unknown as CalificacionData
         );
 
         const calificacionesMap: Record<
@@ -333,7 +342,7 @@ export default function Calificaciones() {
         console.error("Error cargando calificaciones:", error);
       }
     },
-    [periodoActual],
+    [periodoActual]
   );
 
   const guardarAsistencia = async () => {
@@ -349,7 +358,7 @@ export default function Calificaciones() {
         const q = query(
           collection(db, "asistencias"),
           where("estudianteId", "==", est.id),
-          where("fecha", "==", fechaAsistencia),
+          where("fecha", "==", fechaAsistencia)
         );
         const snap = await getDocs(q);
 
@@ -400,7 +409,7 @@ export default function Calificaciones() {
           collection(db, "calificaciones"),
           where("estudianteId", "==", est.id),
           where("destrezaId", "==", selectedDestrezaId),
-          where("periodoId", "==", periodoId),
+          where("periodoId", "==", periodoId)
         );
         const snap = await getDocs(q);
 
@@ -439,7 +448,7 @@ export default function Calificaciones() {
 
   const actualizarAsistencia = (
     estudianteId: string,
-    estado: "P" | "T" | "A" | "J",
+    estado: "P" | "T" | "A" | "J"
   ) => {
     setAsistencias((prev) => ({
       ...prev,
@@ -450,9 +459,29 @@ export default function Calificaciones() {
     }));
   };
 
+  // ✅ NUEVA FUNCIÓN: Marcar a todos los estudiantes con un estado específico
+  const marcarTodosAsistencia = (estado: "P" | "T" | "A" | "J") => {
+    const nuevasAsistencias: Record<
+      string,
+      { estado: "P" | "T" | "A" | "J"; observacion: string }
+    > = {};
+    estudiantes.forEach((est) => {
+      nuevasAsistencias[est.id] = {
+        estado,
+        observacion: asistencias[est.id]?.observacion || "", // Preservar observación si ya tenía
+      };
+    });
+    setAsistencias(nuevasAsistencias);
+  };
+
+  // ✅ NUEVA FUNCIÓN: Limpiar todas las asistencias
+  const limpiarAsistencias = () => {
+    setAsistencias({});
+  };
+
   const actualizarObservacionAsistencia = (
     estudianteId: string,
-    observacion: string,
+    observacion: string
   ) => {
     setAsistencias((prev) => ({
       ...prev,
@@ -475,7 +504,7 @@ export default function Calificaciones() {
 
   const actualizarObservacionCalificacion = (
     estudianteId: string,
-    observacion: string,
+    observacion: string
   ) => {
     setCalificaciones((prev) => ({
       ...prev,
@@ -550,10 +579,12 @@ export default function Calificaciones() {
                 No tienes grados asignados
               </h3>
               <p className="text-yellow-700 mb-2">
-                Contacta al administrador del sistema para que te asigne los grados que podrás gestionar.
+                Contacta al administrador del sistema para que te asigne los
+                grados que podrás gestionar.
               </p>
               <p className="text-yellow-600 text-sm">
-                Una vez que te asignen grados, podrás registrar asistencia y calificaciones en esta sección.
+                Una vez que te asignen grados, podrás registrar asistencia y
+                calificaciones en esta sección.
               </p>
             </div>
           </div>
@@ -619,16 +650,18 @@ export default function Calificaciones() {
                       }}
                       className={`p-3 rounded-lg border-2 transition-all duration-200 text-left text-sm ${
                         isSelected
-                          ? 'border-blue-500 bg-blue-50 shadow-sm'
-                          : 'border-slate-200 hover:border-blue-300 hover:bg-slate-50'
+                          ? "border-blue-500 bg-blue-50 shadow-sm"
+                          : "border-slate-200 hover:border-blue-300 hover:bg-slate-50"
                       }`}
                     >
                       <div className="flex items-center gap-2">
-                        <div className={`w-8 h-8 rounded flex items-center justify-center text-white font-bold text-xs ${
-                          isSelected
-                            ? 'bg-linear-to-br from-blue-500 to-purple-600'
-                            : 'bg-linear-to-br from-slate-400 to-slate-500'
-                        }`}>
+                        <div
+                          className={`w-8 h-8 rounded flex items-center justify-center text-white font-bold text-xs ${
+                            isSelected
+                              ? "bg-linear-to-br from-blue-500 to-purple-600"
+                              : "bg-linear-to-br from-slate-400 to-slate-500"
+                          }`}
+                        >
                           {grado.paralelo}
                         </div>
                         <div className="flex-1 min-w-0">
@@ -682,14 +715,16 @@ export default function Calificaciones() {
                       Asistencia
                     </button>
                     <button
-                      onClick={() => todosConAsistencia && setActiveTab("calificaciones")}
+                      onClick={() =>
+                        todosConAsistencia && setActiveTab("calificaciones")
+                      }
                       disabled={!todosConAsistencia}
                       className={`flex-1 lg:flex-none px-4 py-2 rounded-lg text-sm font-semibold transition-all flex items-center justify-center gap-2 ${
                         activeTab === "calificaciones"
                           ? "bg-blue-600 text-white shadow"
                           : todosConAsistencia
-                            ? "bg-slate-100 text-slate-700 hover:bg-slate-200"
-                            : "bg-slate-50 text-slate-400 cursor-not-allowed"
+                          ? "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                          : "bg-slate-50 text-slate-400 cursor-not-allowed"
                       }`}
                       title={
                         !todosConAsistencia
@@ -758,15 +793,19 @@ export default function Calificaciones() {
                             </option>
                           ))}
                         </select>
-                        
+
                         {/* ✅ BOTÓN CON shrink-0 PARA QUE NO SE ENCOJA */}
                         <button
                           onClick={guardarCalificaciones}
                           disabled={isSaving || !selectedDestrezaId}
-                          title={!selectedDestrezaId ? "⚠️ Primero debes seleccionar un ámbito y una destreza" : "Guardar calificaciones"}
+                          title={
+                            !selectedDestrezaId
+                              ? "⚠️ Primero debes seleccionar un ámbito y una destreza"
+                              : "Guardar calificaciones"
+                          }
                           className={`w-full sm:w-auto px-4 py-2 rounded-lg text-sm font-semibold transition-all flex items-center justify-center gap-2 shrink-0 ${
-                            !selectedDestrezaId 
-                              ? "bg-slate-300 text-slate-500 cursor-not-allowed" 
+                            !selectedDestrezaId
+                              ? "bg-slate-300 text-slate-500 cursor-not-allowed"
                               : "bg-blue-600 hover:bg-blue-700 text-white shadow-sm hover:shadow-md"
                           }`}
                         >
@@ -786,16 +825,19 @@ export default function Calificaciones() {
               {/* Contenido */}
               <div className="p-4">
                 {/* Alerta de asistencia incompleta */}
-                {activeTab === "asistencia" && !todosConAsistencia && estudiantes.length > 0 && (
-                  <div className="mb-4 bg-yellow-50 border border-yellow-200 rounded-lg px-3 py-2">
-                    <div className="flex items-center gap-2 text-yellow-800">
-                      <FaExclamationTriangle className="text-sm shrink-0" />
-                      <span className="text-xs font-medium">
-                        Debes registrar la asistencia de todos los estudiantes antes de guardar
-                      </span>
+                {activeTab === "asistencia" &&
+                  !todosConAsistencia &&
+                  estudiantes.length > 0 && (
+                    <div className="mb-4 bg-yellow-50 border border-yellow-200 rounded-lg px-3 py-2">
+                      <div className="flex items-center gap-2 text-yellow-800">
+                        <FaExclamationTriangle className="text-sm shrink-0" />
+                        <span className="text-xs font-medium">
+                          Debes registrar la asistencia de todos los estudiantes
+                          antes de guardar
+                        </span>
+                      </div>
                     </div>
-                  </div>
-                )}
+                  )}
 
                 {/* Destreza seleccionada */}
                 {activeTab === "calificaciones" && selectedDestrezaId && (
@@ -836,6 +878,36 @@ export default function Calificaciones() {
                   </div>
                 ) : (
                   <div className="space-y-2">
+                    {/* ✅ BARRA DE ACCIONES RÁPIDAS PARA ASISTENCIA */}
+                    {activeTab === "asistencia" && (
+                      <div className="flex flex-wrap items-center gap-2 mb-4 p-3 bg-slate-50 rounded-lg border border-slate-200">
+                        <span className="text-xs font-semibold text-slate-700 mr-1">
+                          Acción rápida:
+                        </span>
+                        <button
+                          onClick={() => marcarTodosAsistencia("P")}
+                          className="px-3 py-1.5 bg-green-100 text-green-700 hover:bg-green-200 rounded-md text-xs font-bold transition-colors flex items-center gap-1.5"
+                          title="Marcar a todos los estudiantes como Presentes"
+                        >
+                          <FaCheck /> Todos Presentes
+                        </button>
+                        <button
+                          onClick={() => marcarTodosAsistencia("A")}
+                          className="px-3 py-1.5 bg-red-100 text-red-700 hover:bg-red-200 rounded-md text-xs font-bold transition-colors flex items-center gap-1.5"
+                          title="Marcar a todos los estudiantes como Ausentes"
+                        >
+                          <FaTimes /> Todos Ausentes
+                        </button>
+                        <button
+                          onClick={limpiarAsistencias}
+                          className="px-3 py-1.5 bg-slate-200 text-slate-700 hover:bg-slate-300 rounded-md text-xs font-bold transition-colors flex items-center gap-1.5 ml-auto"
+                          title="Limpiar todas las asistencias registradas"
+                        >
+                          <FaUndo /> Limpiar
+                        </button>
+                      </div>
+                    )}
+
                     {estudiantes.map((est) => {
                       if (activeTab === "asistencia") {
                         const asistencia = asistencias[est.id];
@@ -869,25 +941,25 @@ export default function Calificaciones() {
                                           ? estadoBtn === "P"
                                             ? "bg-green-600 text-white shadow-md"
                                             : estadoBtn === "T"
-                                              ? "bg-yellow-600 text-white shadow-md"
-                                              : estadoBtn === "A"
-                                                ? "bg-red-600 text-white shadow-md"
-                                                : "bg-blue-600 text-white shadow-md"
+                                            ? "bg-yellow-600 text-white shadow-md"
+                                            : estadoBtn === "A"
+                                            ? "bg-red-600 text-white shadow-md"
+                                            : "bg-blue-600 text-white shadow-md"
                                           : "bg-slate-100 text-slate-700 hover:bg-slate-200"
                                       }`}
                                       title={
                                         estadoBtn === "P"
                                           ? "Presente"
                                           : estadoBtn === "T"
-                                            ? "Tardanza"
-                                            : estadoBtn === "A"
-                                              ? "Ausente"
-                                              : "Justificado"
+                                          ? "Tardanza"
+                                          : estadoBtn === "A"
+                                          ? "Ausente"
+                                          : "Justificado"
                                       }
                                     >
                                       {estadoBtn}
                                     </button>
-                                  ),
+                                  )
                                 )}
                               </div>
                             </div>
@@ -899,7 +971,7 @@ export default function Calificaciones() {
                                   onChange={(e) =>
                                     actualizarObservacionAsistencia(
                                       est.id,
-                                      e.target.value,
+                                      e.target.value
                                     )
                                   }
                                   placeholder="Observación (opcional)..."
@@ -912,7 +984,8 @@ export default function Calificaciones() {
                       } else {
                         const calificacion = calificaciones[est.id];
                         const nota = calificacion?.nota;
-                        const letra = nota !== undefined ? notaALetra(nota) : "";
+                        const letra =
+                          nota !== undefined ? notaALetra(nota) : "";
                         return (
                           <div
                             key={est.id}
@@ -957,8 +1030,8 @@ export default function Calificaciones() {
                                       ? nota >= 7
                                         ? "border-green-500 text-green-700"
                                         : nota >= 5
-                                          ? "border-yellow-500 text-yellow-700"
-                                          : "border-red-500 text-red-700"
+                                        ? "border-yellow-500 text-yellow-700"
+                                        : "border-red-500 text-red-700"
                                       : "border-slate-300"
                                   }`}
                                 />
@@ -971,7 +1044,7 @@ export default function Calificaciones() {
                                 onChange={(e) =>
                                   actualizarObservacionCalificacion(
                                     est.id,
-                                    e.target.value,
+                                    e.target.value
                                   )
                                 }
                                 placeholder="Observación (opcional)..."
@@ -991,10 +1064,11 @@ export default function Calificaciones() {
                     <div className="text-xs text-slate-600">
                       {
                         Object.keys(asistencias).filter(
-                          (key) => asistencias[key].estado,
+                          (key) => asistencias[key].estado
                         ).length
                       }{" "}
-                      de {estudiantes.length} estudiantes con asistencia registrada
+                      de {estudiantes.length} estudiantes con asistencia
+                      registrada
                     </div>
                   </div>
                 )}

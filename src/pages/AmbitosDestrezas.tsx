@@ -35,20 +35,20 @@ import {
   FaUpload,
   FaSpinner,
   FaPrint,
-  FaCalendarAlt, // ✅ Agregado para el indicador de año lectivo
+  FaCalendarAlt,
 } from "react-icons/fa";
 
 export default function AmbitosDestrezas() {
   const { user } = useAuth();
   const [grados, setGrados] = useState<Grado[]>([]);
-  const [aniosLectivos, setAniosLectivos] = useState<AnioLectivo[]>([]); // ✅ Nuevo estado para años lectivos
+  const [aniosLectivos, setAniosLectivos] = useState<AnioLectivo[]>([]);
   const [ambitos, setAmbitos] = useState<Ambito[]>([]);
   const [destrezas, setDestrezas] = useState<Destreza[]>([]);
   const [loading, setLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [selectedGradoId, setSelectedGradoId] = useState("");
   const [currentView, setCurrentView] = useState<"ambitos" | "destrezas">(
-    "ambitos",
+    "ambitos"
   );
   const [selectedAmbitoId, setSelectedAmbitoId] = useState<string | null>(null);
   const [showAmbitoForm, setShowAmbitoForm] = useState(false);
@@ -66,7 +66,7 @@ export default function AmbitosDestrezas() {
 
   const [showDestrezaForm, setShowDestrezaForm] = useState(false);
   const [editingDestrezaId, setEditingDestrezaId] = useState<string | null>(
-    null,
+    null
   );
   const [destrezaMassiveData, setDestrezaMassiveData] = useState("");
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
@@ -97,11 +97,11 @@ export default function AmbitosDestrezas() {
     try {
       const q = query(
         collection(db, "aniosLectivos"),
-        where("activo", "==", true),
+        where("activo", "==", true)
       );
       const snap = await getDocs(q);
       const data = snap.docs.map(
-        (doc) => ({ id: doc.id, ...doc.data() }) as AnioLectivo,
+        (doc) => ({ id: doc.id, ...doc.data() }) as AnioLectivo
       );
       startTransition(() => {
         setAniosLectivos(data);
@@ -129,12 +129,12 @@ export default function AmbitosDestrezas() {
         collection(db, "grados"),
         where("anioLectivoId", "==", anioActivo.id), // ✅ FILTRO POR AÑO ACTIVO
         where("activo", "==", true),
-        orderBy("orden", "asc"),
+        orderBy("orden", "asc")
       );
 
       const snap = await getDocs(q);
       const data = snap.docs.map(
-        (doc) => ({ id: doc.id, ...doc.data() }) as Grado,
+        (doc) => ({ id: doc.id, ...doc.data() }) as Grado
       );
 
       startTransition(() => {
@@ -159,11 +159,11 @@ export default function AmbitosDestrezas() {
       const q = query(
         collection(db, "ambitos"),
         where("gradoId", "==", gradoId),
-        orderBy("nombre", "asc"),
+        orderBy("nombre", "asc")
       );
       const snap = await getDocs(q);
       const data = snap.docs.map(
-        (doc) => ({ id: doc.id, ...doc.data() }) as Ambito,
+        (doc) => ({ id: doc.id, ...doc.data() }) as Ambito
       );
 
       startTransition(() => {
@@ -183,11 +183,11 @@ export default function AmbitosDestrezas() {
       const q = query(
         collection(db, "destrezas"),
         where("gradoId", "==", gradoId),
-        orderBy("orden", "asc"),
+        orderBy("orden", "asc")
       );
       const snap = await getDocs(q);
       const data = snap.docs.map(
-        (doc) => ({ id: doc.id, ...doc.data() }) as Destreza,
+        (doc) => ({ id: doc.id, ...doc.data() }) as Destreza
       );
 
       startTransition(() => {
@@ -212,9 +212,9 @@ export default function AmbitosDestrezas() {
         const trimmedLine = line.trim();
         if (!trimmedLine) return;
 
-        if (trimmedLine.length < 3) {
+        if (trimmedLine.length < 1) {
           parseErrors.push(
-            `Línea ${index + 1}: El nombre del ámbito es muy corto (mínimo 3 caracteres)`,
+            `Línea ${index + 1}: El nombre del ámbito no puede estar vacío.`
           );
           return;
         }
@@ -224,7 +224,7 @@ export default function AmbitosDestrezas() {
 
       return { ambitos: ambitosList, parseErrors };
     },
-    [],
+    []
   );
 
   const validarAmbitosMasivos = useCallback(
@@ -241,7 +241,7 @@ export default function AmbitosDestrezas() {
         nombresVistos.add(nombre.toLowerCase());
 
         const existe = ambitos.some(
-          (a) => a.nombre.toLowerCase() === nombre.toLowerCase(),
+          (a) => a.nombre.toLowerCase() === nombre.toLowerCase()
         );
         if (existe) {
           errors.push(`Ya existe un ámbito llamado "${nombre}" en este grado`);
@@ -254,7 +254,7 @@ export default function AmbitosDestrezas() {
 
       return allErrors;
     },
-    [ambitos],
+    [ambitos]
   );
 
   const guardarAmbitosMasivos = useCallback(async () => {
@@ -326,7 +326,7 @@ export default function AmbitosDestrezas() {
       await cargarAmbitos(selectedGradoId);
       resetAmbitoForm();
       alert(
-        `✅ Se registraron ${parsedAmbitos.length} ámbito(s) correctamente`,
+        `✅ Se registraron ${parsedAmbitos.length} ámbito(s) correctamente`
       );
     } catch (error) {
       console.error("Error guardando ámbitos masivos:", error);
@@ -355,11 +355,11 @@ export default function AmbitosDestrezas() {
       (a) =>
         a.nombre.toLowerCase() === ambitoFormData.nombre.trim().toLowerCase() &&
         a.gradoId === selectedGradoId &&
-        a.id !== editingAmbitoId,
+        a.id !== editingAmbitoId
     );
     if (existe) {
       errors.push(
-        `Ya existe un ámbito llamado "${ambitoFormData.nombre}" en este grado`,
+        `Ya existe un ámbito llamado "${ambitoFormData.nombre}" en este grado`
       );
     }
     if (errors.length > 0) {
@@ -440,21 +440,16 @@ export default function AmbitosDestrezas() {
       return;
     }
 
-    const destrezasCortas = destrezasList.filter((d) => d.length < 20);
-    if (destrezasCortas.length > 0) {
-      setValidationErrors([
-        `${destrezasCortas.length} destreza(s) muy corta(s). Mínimo 20 caracteres.`,
-      ]);
-      return;
-    }
+    // ✅ ELIMINADA LA VALIDACIÓN DE MÍNIMO 20 CARACTERES
+    // Ahora permite desde 1 carácter, ya que el filtro anterior (d.length > 0) garantiza que no esté vacío.
 
     const ambitoDestrezas = destrezas.filter(
-      (d) => d.ambitoId === selectedAmbitoId,
+      (d) => d.ambitoId === selectedAmbitoId
     );
     const duplicadas = destrezasList.filter((d) =>
       ambitoDestrezas.some(
-        (existente) => existente.descripcion.toLowerCase() === d.toLowerCase(),
-      ),
+        (existente) => existente.descripcion.toLowerCase() === d.toLowerCase()
+      )
     );
     if (duplicadas.length > 0) {
       setValidationErrors([
@@ -501,7 +496,7 @@ export default function AmbitosDestrezas() {
       await cargarDestrezas(selectedGradoId);
       resetDestrezaForm();
       alert(
-        `✅ Se registraron ${destrezasList.length} destreza(s) en "${ambito.nombre}"`,
+        `✅ Se registraron ${destrezasList.length} destreza(s) en "${ambito.nombre}"`
       );
     } catch (error) {
       console.error("Error guardando destrezas:", error);
@@ -534,13 +529,13 @@ export default function AmbitosDestrezas() {
       if (destrezasDelAmbito.length > 0) {
         if (
           !confirm(
-            `Este ámbito tiene ${destrezasDelAmbito.length} destreza(s). ¿Eliminar también las destrezas?`,
+            `Este ámbito tiene ${destrezasDelAmbito.length} destreza(s). ¿Eliminar también las destrezas?`
           )
         ) {
           return;
         }
         const deleteDestrezas = destrezasDelAmbito.map((d) =>
-          deleteDoc(doc(db, "destrezas", d.id)),
+          deleteDoc(doc(db, "destrezas", d.id))
         );
         await Promise.all(deleteDestrezas);
       } else {
@@ -555,7 +550,7 @@ export default function AmbitosDestrezas() {
         alert("Error al eliminar");
       }
     },
-    [destrezas, selectedGradoId, cargarAmbitos, cargarDestrezas],
+    [destrezas, selectedGradoId, cargarAmbitos, cargarDestrezas]
   );
 
   const handleDeleteDestreza = useCallback(
@@ -569,7 +564,7 @@ export default function AmbitosDestrezas() {
         alert("Error al eliminar");
       }
     },
-    [selectedGradoId, cargarDestrezas],
+    [selectedGradoId, cargarDestrezas]
   );
 
   const handleEditDestreza = useCallback((destreza: Destreza) => {
@@ -587,8 +582,9 @@ export default function AmbitosDestrezas() {
   }, []);
 
   const guardarDestrezaIndividual = useCallback(async () => {
-    if (!destrezaMassiveData.trim() || destrezaMassiveData.trim().length < 20) {
-      setValidationErrors(["La destreza debe tener al menos 20 caracteres"]);
+    // ✅ VALIDACIÓN ACTUALIZADA: Solo verifica que no esté vacío (mínimo 1 carácter)
+    if (!destrezaMassiveData.trim()) {
+      setValidationErrors(["La destreza no puede estar vacía"]);
       return;
     }
 
@@ -604,7 +600,7 @@ export default function AmbitosDestrezas() {
         });
       } else {
         const ambitoDestrezas = destrezas.filter(
-          (d) => d.ambitoId === selectedAmbitoId,
+          (d) => d.ambitoId === selectedAmbitoId
         );
         await addDoc(collection(db, "destrezas"), {
           nombre: destrezaMassiveData.substring(0, 100).trim(),
@@ -694,13 +690,13 @@ export default function AmbitosDestrezas() {
                   .map(
                     (d) => `
             <div class="destreza">${d.descripcion}</div>
-          `,
+          `
                   )
                   .join("")
               : '<div class="destreza" style="color: #999; font-style: italic;">No hay destrezas registradas en este ámbito.</div>'
           }
         </div>
-      `,
+      `
         )
         .join("")}
       <div class="footer">
@@ -908,8 +904,8 @@ export default function AmbitosDestrezas() {
                     {editingAmbitoId
                       ? "Editar Ámbito"
                       : isAmbitoMassive
-                        ? "Ingreso Masivo de Ámbitos"
-                        : "Nuevo Ámbito"}
+                      ? "Ingreso Masivo de Ámbitos"
+                      : "Nuevo Ámbito"}
                   </h4>
                   {!editingAmbitoId && (
                     <button
