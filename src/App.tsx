@@ -15,6 +15,7 @@ import ConfiguracionInstitucional from './pages/ConfiguracionInstitucional';
 import GestionUsuarios from './pages/GestionUsuarios';
 import Configuracion from './pages/Configuracion';
 import PendingApproval from './pages/PendingApproval';
+import MiHorario from './pages/MiHorario'; // ✅ NUEVO: Mi Horario
 
 // ✅ NUEVOS: Formulario público y Panel de administración
 import Matricula from './pages/Matricula';       // Formulario público (sin login)
@@ -101,6 +102,7 @@ function AppRoutes() {
       <Route path="/grados" element={<PrivateRoute><Grados /></PrivateRoute>} />
       <Route path="/estudiantes" element={<PrivateRoute><Estudiantes /></PrivateRoute>} />
       <Route path="/ambitos-destrezas" element={<PrivateRoute><AmbitosDestrezas /></PrivateRoute>} />
+      <Route path="/mi-horario" element={<PrivateRoute><MiHorario /></PrivateRoute>} /> {/* ✅ NUEVA RUTA */}
       <Route path="/calificaciones" element={<PrivateRoute><Calificaciones /></PrivateRoute>} />
       <Route path="/reportes" element={<PrivateRoute><Reportes /></PrivateRoute>} />
       

@@ -20,6 +20,7 @@ import {
   FaUserCog,
   FaChevronDown,
   FaUserGraduate,
+  FaChalkboardTeacher, // ✅ Nuevo ícono para Mi Horario
 } from "react-icons/fa";
 
 interface InstitutionData {
@@ -216,7 +217,7 @@ export default function Dashboard() {
       desc: "Niveles educativos y paralelos",
       stats: `${stats.gradosActivos} activo${stats.gradosActivos !== 1 ? "s" : ""}`,
       badge: "NIVEL 2",
-      roles: ["super_admin", "docente"],
+      roles: ["super_admin"],
     },
     {
       path: "/ambitos-destrezas",
@@ -237,6 +238,17 @@ export default function Dashboard() {
       stats: `${stats.solicitudesPendientes} pendiente${stats.solicitudesPendientes !== 1 ? "s" : ""}`,
       badge: "ADMIN",
       roles: ["super_admin"],
+    },
+    // === GRUPO 3: OPERACIÓN DIARIA ===
+    {
+      path: "/mi-horario",
+      name: "Mi Horario",
+      icon: FaChalkboardTeacher,
+      color: "from-cyan-500 to-cyan-600",
+      desc: "Configura las materias que dictas en cada grado",
+      stats: "Configurar",
+      badge: "DOCENTE",
+      roles: ["super_admin", "docente"],
     },
     {
       path: "/estudiantes",

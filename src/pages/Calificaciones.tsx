@@ -1,4 +1,4 @@
-import { useState, useEffect, startTransition, useCallback } from "react";
+import { useState, useEffect, startTransition, useCallback, useMemo } from "react";
 import {
   collection,
   query,
@@ -11,9 +11,11 @@ import {
   where,
   Timestamp,
   deleteDoc,
+  onSnapshot,
 } from "firebase/firestore";
 import { db } from "../lib/firebase";
 import { useAuth } from "../context/AuthContext";
+import { Link } from "react-router-dom";
 import type {
   Estudiante,
   Grado,
@@ -40,6 +42,8 @@ import {
   FaEdit,
   FaTrash,
   FaSyncAlt,
+  FaChalkboardTeacher,
+  FaArrowRight,
 } from "react-icons/fa";
 
 // ==================== INTERFACES ====================
@@ -58,7 +62,6 @@ interface AsistenciaData {
   updatedAt?: Timestamp | Date;
 }
 
-// ✅ NUEVA: Interfaz tipada para el refuerzo (reemplaza el tipo 'any')
 interface RefuerzoData {
   nota: number;
   detalle: string;
@@ -92,6 +95,16 @@ interface CalificacionData {
   docenteId?: string;
   createdAt?: Timestamp | Date;
   updatedAt?: Timestamp | Date;
+}
+
+// ✅ NUEVO: Asignaturas del docente desde Mi Horario
+interface AsignaturaDocente {
+  id: string;
+  docenteId: string;
+  gradoId: string;
+  destrezaId: string;
+  anioLectivoId: string;
+  activo: boolean;
 }
 
 // ==================== CONSTANTES ====================
@@ -173,6 +186,9 @@ export default function Calificaciones() {
   const [loading, setLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
 
+  // ✅ NUEVO: Asignaturas del docente desde Mi Horario (tiempo real)
+  const [asignaturasDocente, setAsignaturasDocente] = useState<AsignaturaDocente[]>([]);
+
   const [activeTab, setActiveTab] = useState<"asistencia" | "calificaciones">("asistencia");
   const [selectedGradoId, setSelectedGradoId] = useState("");
   const [selectedGradoNombre, setSelectedGradoNombre] = useState("");
@@ -187,12 +203,10 @@ export default function Calificaciones() {
     Record<string, { estado: "P" | "T" | "A" | "J"; observacion: string }>
   >({});
 
-  // ✅ CORREGIDO: Tipado con RefuerzoData en lugar de 'any'
   const [calificaciones, setCalificaciones] = useState<
     Record<string, { nota: number; observacion: string; refuerzo?: RefuerzoData | null }>
   >({});
 
-  // Modal de actividad
   const [showActividadModal, setShowActividadModal] = useState(false);
   const [editingActividadId, setEditingActividadId] = useState<string | null>(null);
   const [actividadForm, setActividadForm] = useState({
@@ -202,7 +216,6 @@ export default function Calificaciones() {
     estrategiaNota: "promediar" as "reemplazar" | "promediar" | "maxima",
   });
 
-  // Modal de refuerzo
   const [showRefuerzoModal, setShowRefuerzoModal] = useState(false);
   const [refuerzoEstudianteId, setRefuerzoEstudianteId] = useState<string | null>(null);
   const [refuerzoForm, setRefuerzoForm] = useState({
@@ -223,6 +236,32 @@ export default function Calificaciones() {
     (!userData?.gradosAsignados || userData.gradosAsignados.length === 0);
   const anioActivo = aniosLectivos.find((a) => a.activo);
   const esGradoBachillerato = esBachillerato(selectedGradoNombre);
+
+  // ✅ NUEVO: Materias del docente para el grado seleccionado
+  const materiasDelGradoDocente = useMemo(() => {
+    if (!selectedGradoId) return [];
+    const destrezasIds = asignaturasDocente
+      .filter((a) => a.gradoId === selectedGradoId)
+      .map((a) => a.destrezaId);
+    return destrezas.filter((d) => destrezasIds.includes(d.id));
+  }, [selectedGradoId, asignaturasDocente, destrezas]);
+
+  // ✅ NUEVO: Ámbitos disponibles (solo los que tienen materias asignadas al docente)
+  const ambitosDisponibles = useMemo(() => {
+    if (!selectedGradoId) return [];
+    const ambitosIds = new Set(materiasDelGradoDocente.map((d) => d.ambitoId));
+    return ambitos.filter((a) => ambitosIds.has(a.id));
+  }, [selectedGradoId, materiasDelGradoDocente, ambitos]);
+
+  // ✅ NUEVO: Destrezas disponibles del ámbito seleccionado (filtradas por asignaciones)
+  const destrezasDisponibles = useMemo(() => {
+    if (!selectedAmbitoId) return [];
+    const destrezasIds = new Set(materiasDelGradoDocente.map((d) => d.id));
+    return destrezas.filter((d) => d.ambitoId === selectedAmbitoId && destrezasIds.has(d.id));
+  }, [selectedAmbitoId, materiasDelGradoDocente, destrezas]);
+
+  // ✅ NUEVO: Verificar si el grado tiene materias configuradas
+  const gradoTieneMateriasConfiguradas = materiasDelGradoDocente.length > 0;
 
   const materiaSeleccionada = esGradoBachillerato ? selectedMateriaId : selectedAmbitoId;
 
@@ -310,53 +349,45 @@ export default function Calificaciones() {
     }
   }, []);
 
-  const cargarAmbitos = useCallback(async (gradoId: string) => {
-    try {
-      const q = query(
-        collection(db, "ambitos"),
-        where("gradoId", "==", gradoId),
-        where("activo", "==", true),
-        orderBy("orden", "asc")
-      );
-      const snap = await getDocs(q);
-      const data = snap.docs.map((doc) => ({ id: doc.id, ...doc.data() }) as Ambito);
-      startTransition(() => setAmbitos(data));
-    } catch (error) {
-      console.error("Error cargando ámbitos:", error);
-    }
+  // ✅ Listeners en tiempo real para ámbitos y destrezas
+  useEffect(() => {
+    const qAmbitos = query(collection(db, "ambitos"), where("activo", "==", true));
+    const unsubAmbitos = onSnapshot(qAmbitos, (snapshot) => {
+      const data = snapshot.docs.map((d) => ({ id: d.id, ...d.data() } as Ambito))
+        .sort((a, b) => (a.orden || 0) - (b.orden || 0));
+      setAmbitos(data);
+    });
+    return () => unsubAmbitos();
   }, []);
 
-  const cargarDestrezas = useCallback(async (ambitoId: string) => {
-    try {
-      const q = query(
-        collection(db, "destrezas"),
-        where("ambitoId", "==", ambitoId),
-        where("activo", "==", true),
-        orderBy("orden", "asc")
-      );
-      const snap = await getDocs(q);
-      const data = snap.docs.map((doc) => ({ id: doc.id, ...doc.data() }) as Destreza);
-      startTransition(() => setDestrezas(data));
-    } catch (error) {
-      console.error("Error cargando destrezas:", error);
-    }
+  useEffect(() => {
+    const qDestrezas = query(collection(db, "destrezas"), where("activo", "==", true));
+    const unsubDestrezas = onSnapshot(qDestrezas, (snapshot) => {
+      const data = snapshot.docs.map((d) => ({ id: d.id, ...d.data() } as Destreza))
+        .sort((a, b) => (a.orden || 0) - (b.orden || 0));
+      setDestrezas(data);
+    });
+    return () => unsubDestrezas();
   }, []);
 
-  const cargarTodasDestrezas = useCallback(async (gradoId: string) => {
-    try {
-      const q = query(
-        collection(db, "destrezas"),
-        where("gradoId", "==", gradoId),
-        where("activo", "==", true),
-        orderBy("orden", "asc")
-      );
-      const snap = await getDocs(q);
-      const data = snap.docs.map((doc) => ({ id: doc.id, ...doc.data() }) as Destreza);
-      startTransition(() => setDestrezas(data));
-    } catch (error) {
-      console.error("Error cargando destrezas:", error);
-    }
-  }, []);
+  // ✅ LISTENER EN TIEMPO REAL: Asignaturas del docente (Mi Horario)
+  useEffect(() => {
+    if (!user?.uid || !anioActivo?.id) return;
+
+    const q = query(
+      collection(db, "asignaturasDocente"),
+      where("docenteId", "==", user.uid),
+      where("anioLectivoId", "==", anioActivo.id),
+      where("activo", "==", true)
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const data = snapshot.docs.map((d) => ({ id: d.id, ...d.data() } as AsignaturaDocente));
+      setAsignaturasDocente(data);
+    });
+
+    return () => unsubscribe();
+  }, [user?.uid, anioActivo?.id]);
 
   const cargarActividades = useCallback(async (destrezaId: string) => {
     try {
@@ -369,38 +400,6 @@ export default function Calificaciones() {
     }
   }, []);
 
-  const cargarAsistencias = useCallback(async () => {
-    const ambitoIdParaBuscar = esGradoBachillerato ? selectedMateriaId : selectedAmbitoId;
-    if (!selectedGradoId || !fechaAsistencia || !ambitoIdParaBuscar) {
-      setAsistencias({});
-      return;
-    }
-
-    try {
-      const q = query(
-        collection(db, "asistencias"),
-        where("gradoId", "==", selectedGradoId),
-        where("fecha", "==", fechaAsistencia),
-        where("ambitoId", "==", ambitoIdParaBuscar)
-      );
-      const snap = await getDocs(q);
-      const data = snap.docs.map((doc) => ({ id: doc.id, ...doc.data() }) as unknown as AsistenciaData);
-
-      const asistenciasMap: Record<string, { estado: "P" | "T" | "A" | "J"; observacion: string }> = {};
-      data.forEach((asistencia) => {
-        asistenciasMap[asistencia.estudianteId] = {
-          estado: asistencia.estado,
-          observacion: asistencia.observacion || "",
-        };
-      });
-
-      startTransition(() => setAsistencias(asistenciasMap));
-    } catch (error) {
-      console.error("Error cargando asistencias:", error);
-    }
-  }, [selectedGradoId, fechaAsistencia, selectedMateriaId, selectedAmbitoId, esGradoBachillerato]);
-
-  // ✅ CORREGIDO: Tipado con RefuerzoData en lugar de 'any'
   const cargarCalificaciones = useCallback(async (actividadId: string) => {
     try {
       const q = query(collection(db, "calificaciones"), where("actividadId", "==", actividadId));
@@ -472,7 +471,6 @@ export default function Calificaciones() {
 
       await Promise.all(batch);
       alert("✅ Asistencia guardada correctamente");
-      await cargarAsistencias();
     } catch (error) {
       console.error("Error guardando asistencia:", error);
       alert("Error al guardar asistencia");
@@ -715,20 +713,8 @@ export default function Calificaciones() {
   useEffect(() => {
     if (selectedGradoId) {
       cargarEstudiantes(selectedGradoId);
-      cargarAmbitos(selectedGradoId);
-
-      const grado = grados.find((g) => g.id === selectedGradoId);
-      if (grado && esBachillerato(grado.nombre)) {
-        cargarTodasDestrezas(selectedGradoId);
-      }
     }
-  }, [selectedGradoId, cargarEstudiantes, cargarAmbitos, cargarTodasDestrezas, grados]);
-
-  useEffect(() => {
-    if (selectedAmbitoId && !esGradoBachillerato) {
-      cargarDestrezas(selectedAmbitoId);
-    }
-  }, [selectedAmbitoId, cargarDestrezas, esGradoBachillerato]);
+  }, [selectedGradoId, cargarEstudiantes]);
 
   useEffect(() => {
     if (selectedDestrezaId) {
@@ -742,7 +728,7 @@ export default function Calificaciones() {
     }
   }, [selectedActividadId, cargarCalificaciones]);
 
-  // ✅ Patrón isMounted para evitar el error de ESLint 'set-state-in-effect'
+  // Patrón isMounted para cargar asistencias
   useEffect(() => {
     let isMounted = true;
 
@@ -807,6 +793,7 @@ export default function Calificaciones() {
   }
 
   const actividadSeleccionada = actividades.find((a) => a.id === selectedActividadId);
+  const gradoActual = grados.find((g) => g.id === selectedGradoId);
 
   return (
     <Layout title="Calificaciones" subtitle="Registro de notas y asistencia" showBack>
@@ -865,6 +852,7 @@ export default function Calificaciones() {
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2">
                 {grados.map((grado) => {
                   const isSelected = selectedGradoId === grado.id;
+                  const materiasCount = asignaturasDocente.filter(a => a.gradoId === grado.id).length;
                   return (
                     <button
                       key={grado.id}
@@ -897,7 +885,13 @@ export default function Calificaciones() {
                         </div>
                         <div className="flex-1 min-w-0">
                           <div className="font-semibold text-slate-900 truncate">{grado.nombre}</div>
-                          <div className="text-slate-500 text-xs">{grado.paralelo}</div>
+                          <div className="text-slate-500 text-xs flex items-center gap-1">
+                            {materiasCount > 0 ? (
+                              <span className="text-green-600 font-medium">{materiasCount} materia{materiasCount !== 1 ? 's' : ''}</span>
+                            ) : (
+                              <span className="text-orange-600 font-medium">Sin configurar</span>
+                            )}
+                          </div>
                         </div>
                         {isSelected && <FaUserCheck className="text-blue-600 text-xs shrink-0" />}
                       </div>
@@ -916,7 +910,37 @@ export default function Calificaciones() {
             </div>
           )}
 
-          {selectedGradoId && (
+          {/* ✅ NUEVO: BLOQUEO cuando no hay materias configuradas en el grado */}
+          {selectedGradoId && !gradoTieneMateriasConfiguradas && (
+            <div className="bg-orange-50 border-2 border-orange-300 rounded-xl p-6 mb-4">
+              <div className="flex items-start gap-4">
+                <div className="bg-orange-100 p-3 rounded-full shrink-0">
+                  <FaChalkboardTeacher className="text-orange-600 text-2xl" />
+                </div>
+                <div className="flex-1">
+                  <h3 className="text-orange-900 font-bold text-lg mb-2">
+                    Configura tus materias primero
+                  </h3>
+                  <p className="text-orange-800 mb-4">
+                    No has configurado ninguna materia para{" "}
+                    <strong>{gradoActual?.nombre} - {gradoActual?.paralelo}</strong>.
+                    Antes de tomar asistencia o calificar, debes configurar las materias que dictas en este grado.
+                  </p>
+                  <Link
+                    to="/mi-horario"
+                    className="inline-flex items-center gap-2 bg-orange-600 hover:bg-orange-700 text-white px-4 py-2 rounded-lg font-medium transition-colors"
+                  >
+                    <FaChalkboardTeacher />
+                    Ir a Mi Horario
+                    <FaArrowRight className="text-xs" />
+                  </Link>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ✅ Contenido principal (solo si hay materias configuradas) */}
+          {selectedGradoId && gradoTieneMateriasConfiguradas && (
             <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
               <div className="border-b border-slate-200 p-3">
                 <div className="flex flex-col lg:flex-row gap-3 items-start lg:items-center justify-between">
@@ -948,7 +972,8 @@ export default function Calificaciones() {
                   <div className="flex flex-col sm:flex-row gap-2 w-full lg:w-auto lg:justify-end items-stretch sm:items-center">
                     {activeTab === "asistencia" ? (
                       <>
-                        {esGradoBachillerato && (
+                        {/* ✅ SELECTOR DE MATERIA (solo materias asignadas al docente) */}
+                        {esGradoBachillerato ? (
                           <select
                             value={selectedMateriaId}
                             onChange={(e) => {
@@ -956,8 +981,8 @@ export default function Calificaciones() {
                               setSelectedMateriaId(materiaId);
                               setAsistencias({});
 
-                              if (materiaId && esGradoBachillerato) {
-                                const materia = destrezas.find((d) => d.id === materiaId);
+                              if (materiaId) {
+                                const materia = materiasDelGradoDocente.find((d) => d.id === materiaId);
                                 if (materia) {
                                   setSelectedAmbitoId(materia.ambitoId);
                                   setSelectedDestrezaId(materia.id);
@@ -970,9 +995,30 @@ export default function Calificaciones() {
                             className="w-full sm:w-48 border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 truncate"
                           >
                             <option value="">Seleccionar Materia...</option>
-                            {destrezas.map((destreza) => (
+                            {materiasDelGradoDocente.map((destreza) => (
                               <option key={destreza.id} value={destreza.id}>
                                 {destreza.nombre}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          // Para no bachillerato: selector de ámbito (solo los asignados)
+                          <select
+                            value={selectedAmbitoId}
+                            onChange={(e) => {
+                              setSelectedAmbitoId(e.target.value);
+                              setSelectedDestrezaId("");
+                              setSelectedActividadId("");
+                              setCalificaciones({});
+                              setActividades([]);
+                              setAsistencias({});
+                            }}
+                            className="w-full sm:w-48 border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 truncate"
+                          >
+                            <option value="">Seleccionar Ámbito...</option>
+                            {ambitosDisponibles.map((ambito) => (
+                              <option key={ambito.id} value={ambito.id}>
+                                {ambito.nombre}
                               </option>
                             ))}
                           </select>
@@ -1035,7 +1081,7 @@ export default function Calificaciones() {
                               className="w-full sm:w-48 border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 truncate"
                             >
                               <option value="">Ámbito...</option>
-                              {ambitos.map((ambito) => (
+                              {ambitosDisponibles.map((ambito) => (
                                 <option key={ambito.id} value={ambito.id}>
                                   {ambito.nombre}
                                 </option>
@@ -1052,7 +1098,7 @@ export default function Calificaciones() {
                               className="w-full sm:w-48 border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 disabled:bg-slate-100 truncate"
                             >
                               <option value="">Destreza...</option>
-                              {destrezas.map((destreza) => (
+                              {destrezasDisponibles.map((destreza) => (
                                 <option key={destreza.id} value={destreza.id}>
                                   {destreza.nombre}
                                 </option>
@@ -1497,7 +1543,6 @@ export default function Calificaciones() {
                 </label>
                 <select
                   value={actividadForm.estrategiaNota}
-                  // ✅ CORREGIDO: casteo al tipo unión en lugar de 'any'
                   onChange={(e) =>
                     setActividadForm({
                       ...actividadForm,
