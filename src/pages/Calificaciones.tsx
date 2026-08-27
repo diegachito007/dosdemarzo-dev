@@ -10,6 +10,7 @@ import {
   getDocs,
   where,
   Timestamp,
+  deleteDoc,
 } from "firebase/firestore";
 import { db } from "../lib/firebase";
 import { useAuth } from "../context/AuthContext";
@@ -30,12 +31,18 @@ import {
   FaClock,
   FaSave,
   FaSpinner,
-  FaLock,
   FaGraduationCap,
   FaCheck,
   FaTimes,
   FaUndo,
+  FaBook,
+  FaPlus,
+  FaEdit,
+  FaTrash,
+  FaSyncAlt,
 } from "react-icons/fa";
+
+// ==================== INTERFACES ====================
 
 interface AsistenciaData {
   estudianteId: string;
@@ -43,6 +50,7 @@ interface AsistenciaData {
   anioLectivoId: string;
   periodoId: string;
   fecha: string;
+  ambitoId?: string;
   estado: "P" | "T" | "A" | "J";
   observacion?: string;
   registradoPor?: string;
@@ -50,21 +58,64 @@ interface AsistenciaData {
   updatedAt?: Timestamp | Date;
 }
 
-interface CalificacionData {
-  estudianteId: string;
+// ✅ NUEVA: Interfaz tipada para el refuerzo (reemplaza el tipo 'any')
+interface RefuerzoData {
+  nota: number;
+  detalle: string;
+  fecha: string;
+  aplicadoPor: string;
+}
+
+interface ActividadData {
+  id?: string;
+  tipo: string;
+  detalle: string;
+  fecha: string;
   destrezaId: string;
   ambitoId: string;
   gradoId: string;
   anioLectivoId: string;
   periodoId: string;
+  docenteId: string;
+  estrategiaNota: "reemplazar" | "promediar" | "maxima";
+  createdAt?: Timestamp | Date;
+  updatedAt?: Timestamp | Date;
+}
+
+interface CalificacionData {
+  id?: string;
+  estudianteId: string;
+  actividadId: string;
   nota: number;
   observacion?: string;
+  refuerzo?: RefuerzoData | null;
   docenteId?: string;
   createdAt?: Timestamp | Date;
   updatedAt?: Timestamp | Date;
 }
 
-// ✅ Función para convertir nota numérica a letra
+// ==================== CONSTANTES ====================
+
+const TIPOS_ACTIVIDAD = [
+  "Tarea",
+  "Lección",
+  "Prueba",
+  "Proyecto Individual",
+  "Proyecto Grupal",
+  "Exposición",
+  "Taller",
+  "Evaluación Trimestral",
+  "Proyecto Trimestral",
+];
+
+const ESTRATEGIAS_NOTA = [
+  { value: "promediar", label: "Promediar (Original + Refuerzo) / 2" },
+  { value: "reemplazar", label: "Reemplazar (Refuerzo reemplaza Original)" },
+  { value: "maxima", label: "Máxima (Mayor entre Original y Refuerzo)" },
+];
+
+// ==================== FUNCIONES AUXILIARES ====================
+
 const notaALetra = (nota: number): string => {
   if (nota >= 10) return "A+";
   if (nota === 9) return "A";
@@ -79,6 +130,37 @@ const notaALetra = (nota: number): string => {
   return "-";
 };
 
+const calcularNotaFinal = (
+  notaOriginal: number,
+  refuerzo?: RefuerzoData | null,
+  estrategia: string = "promediar"
+): number => {
+  if (!refuerzo) return notaOriginal;
+
+  switch (estrategia) {
+    case "reemplazar":
+      return refuerzo.nota;
+    case "maxima":
+      return Math.max(notaOriginal, refuerzo.nota);
+    case "promediar":
+    default:
+      return Math.round((notaOriginal + refuerzo.nota) / 2);
+  }
+};
+
+const esBachillerato = (gradoNombre: string): boolean => {
+  return (
+    gradoNombre.includes("8vo") ||
+    gradoNombre.includes("9no") ||
+    gradoNombre.includes("10mo") ||
+    gradoNombre.includes("1ro BGU") ||
+    gradoNombre.includes("2do BGU") ||
+    gradoNombre.includes("3ro BGU")
+  );
+};
+
+// ==================== COMPONENTE ====================
+
 export default function Calificaciones() {
   const { user, userData } = useAuth();
   const [aniosLectivos, setAniosLectivos] = useState<AnioLectivo[]>([]);
@@ -86,26 +168,48 @@ export default function Calificaciones() {
   const [estudiantes, setEstudiantes] = useState<Estudiante[]>([]);
   const [ambitos, setAmbitos] = useState<Ambito[]>([]);
   const [destrezas, setDestrezas] = useState<Destreza[]>([]);
+  const [actividades, setActividades] = useState<ActividadData[]>([]);
   const [periodos, setPeriodos] = useState<PeriodoEvaluacion[]>([]);
   const [loading, setLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
 
-  const [activeTab, setActiveTab] = useState<"asistencia" | "calificaciones">(
-    "asistencia"
-  );
+  const [activeTab, setActiveTab] = useState<"asistencia" | "calificaciones">("asistencia");
   const [selectedGradoId, setSelectedGradoId] = useState("");
+  const [selectedGradoNombre, setSelectedGradoNombre] = useState("");
+
+  const [selectedMateriaId, setSelectedMateriaId] = useState("");
   const [selectedAmbitoId, setSelectedAmbitoId] = useState("");
   const [selectedDestrezaId, setSelectedDestrezaId] = useState("");
+  const [selectedActividadId, setSelectedActividadId] = useState("");
 
-  const [fechaAsistencia, setFechaAsistencia] = useState(
-    new Date().toISOString().split("T")[0]
-  );
+  const [fechaAsistencia, setFechaAsistencia] = useState(new Date().toISOString().split("T")[0]);
   const [asistencias, setAsistencias] = useState<
     Record<string, { estado: "P" | "T" | "A" | "J"; observacion: string }>
   >({});
+
+  // ✅ CORREGIDO: Tipado con RefuerzoData en lugar de 'any'
   const [calificaciones, setCalificaciones] = useState<
-    Record<string, { nota: number; observacion: string }>
+    Record<string, { nota: number; observacion: string; refuerzo?: RefuerzoData | null }>
   >({});
+
+  // Modal de actividad
+  const [showActividadModal, setShowActividadModal] = useState(false);
+  const [editingActividadId, setEditingActividadId] = useState<string | null>(null);
+  const [actividadForm, setActividadForm] = useState({
+    tipo: "Tarea",
+    detalle: "",
+    fecha: new Date().toISOString().split("T")[0],
+    estrategiaNota: "promediar" as "reemplazar" | "promediar" | "maxima",
+  });
+
+  // Modal de refuerzo
+  const [showRefuerzoModal, setShowRefuerzoModal] = useState(false);
+  const [refuerzoEstudianteId, setRefuerzoEstudianteId] = useState<string | null>(null);
+  const [refuerzoForm, setRefuerzoForm] = useState({
+    nota: 7,
+    detalle: "",
+    fecha: new Date().toISOString().split("T")[0],
+  });
 
   const periodoActual = periodos.find((p) => {
     const hoy = new Date();
@@ -114,28 +218,26 @@ export default function Calificaciones() {
     return hoy >= inicio && hoy <= fin;
   });
 
-  const todosConAsistencia =
-    estudiantes.length > 0 &&
-    estudiantes.every((est) => asistencias[est.id]?.estado);
-
-  // ✅ Verificar si es docente sin grados asignados
   const docenteSinGrados =
     userData?.role === "docente" &&
     (!userData?.gradosAsignados || userData.gradosAsignados.length === 0);
-
-  // ✅ Obtener año lectivo activo
   const anioActivo = aniosLectivos.find((a) => a.activo);
+  const esGradoBachillerato = esBachillerato(selectedGradoNombre);
+
+  const materiaSeleccionada = esGradoBachillerato ? selectedMateriaId : selectedAmbitoId;
+
+  const todosConAsistencia =
+    estudiantes.length > 0 &&
+    materiaSeleccionada !== "" &&
+    estudiantes.every((est) => asistencias[est.id]?.estado);
+
+  // ==================== CARGA DE DATOS ====================
 
   const cargarDatos = useCallback(async () => {
     try {
-      const aniosQuery = query(
-        collection(db, "aniosLectivos"),
-        where("activo", "==", true)
-      );
+      const aniosQuery = query(collection(db, "aniosLectivos"), where("activo", "==", true));
       const aniosSnap = await getDocs(aniosQuery);
-      const aniosData = aniosSnap.docs.map(
-        (doc) => ({ id: doc.id, ...doc.data() }) as AnioLectivo
-      );
+      const aniosData = aniosSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() }) as AnioLectivo);
 
       let periodosData: PeriodoEvaluacion[] = [];
       if (aniosData.length > 0) {
@@ -145,18 +247,11 @@ export default function Calificaciones() {
           orderBy("orden", "asc")
         );
         const periodosSnap = await getDocs(periodosQuery);
-        periodosData = periodosSnap.docs.map(
-          (doc) => ({ id: doc.id, ...doc.data() }) as PeriodoEvaluacion
-        );
+        periodosData = periodosSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() }) as PeriodoEvaluacion);
       }
 
-      // ✅ FILTRAR GRADOS SEGÚN ROL
       let gradosQuery;
-      if (
-        userData?.role === "docente" &&
-        userData?.gradosAsignados &&
-        userData.gradosAsignados.length > 0
-      ) {
+      if (userData?.role === "docente" && userData?.gradosAsignados && userData.gradosAsignados.length > 0) {
         gradosQuery = query(
           collection(db, "grados"),
           where("__name__", "in", userData.gradosAsignados),
@@ -172,17 +267,11 @@ export default function Calificaciones() {
         });
         return;
       } else {
-        gradosQuery = query(
-          collection(db, "grados"),
-          where("activo", "==", true),
-          orderBy("orden", "asc")
-        );
+        gradosQuery = query(collection(db, "grados"), where("activo", "==", true), orderBy("orden", "asc"));
       }
 
       const gradosSnap = await getDocs(gradosQuery);
-      const gradosData = gradosSnap.docs.map(
-        (doc) => ({ id: doc.id, ...doc.data() }) as Grado
-      );
+      const gradosData = gradosSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() }) as Grado);
 
       startTransition(() => {
         setAniosLectivos(aniosData);
@@ -190,6 +279,7 @@ export default function Calificaciones() {
         setGrados(gradosData);
         if (gradosData.length > 0 && !selectedGradoId) {
           setSelectedGradoId(gradosData[0].id);
+          setSelectedGradoNombre(gradosData[0].nombre);
         }
         setLoading(false);
       });
@@ -208,9 +298,7 @@ export default function Calificaciones() {
         orderBy("apellidos", "asc")
       );
       const snap = await getDocs(q);
-      const data = snap.docs.map(
-        (doc) => ({ id: doc.id, ...doc.data() }) as Estudiante
-      );
+      const data = snap.docs.map((doc) => ({ id: doc.id, ...doc.data() }) as Estudiante);
 
       startTransition(() => {
         setEstudiantes(data);
@@ -231,10 +319,7 @@ export default function Calificaciones() {
         orderBy("orden", "asc")
       );
       const snap = await getDocs(q);
-      const data = snap.docs.map(
-        (doc) => ({ id: doc.id, ...doc.data() }) as Ambito
-      );
-
+      const data = snap.docs.map((doc) => ({ id: doc.id, ...doc.data() }) as Ambito);
       startTransition(() => setAmbitos(data));
     } catch (error) {
       console.error("Error cargando ámbitos:", error);
@@ -250,102 +335,104 @@ export default function Calificaciones() {
         orderBy("orden", "asc")
       );
       const snap = await getDocs(q);
-      const data = snap.docs.map(
-        (doc) => ({ id: doc.id, ...doc.data() }) as Destreza
-      );
-
+      const data = snap.docs.map((doc) => ({ id: doc.id, ...doc.data() }) as Destreza);
       startTransition(() => setDestrezas(data));
     } catch (error) {
       console.error("Error cargando destrezas:", error);
     }
   }, []);
 
-  const cargarAsistencias = useCallback(
-    async (gradoId: string, fecha: string) => {
-      try {
-        const estudiantesDelGrado = estudiantes.filter(
-          (e) => e.gradoId === gradoId
-        );
-        const estudianteIds = estudiantesDelGrado.map((e) => e.id);
+  const cargarTodasDestrezas = useCallback(async (gradoId: string) => {
+    try {
+      const q = query(
+        collection(db, "destrezas"),
+        where("gradoId", "==", gradoId),
+        where("activo", "==", true),
+        orderBy("orden", "asc")
+      );
+      const snap = await getDocs(q);
+      const data = snap.docs.map((doc) => ({ id: doc.id, ...doc.data() }) as Destreza);
+      startTransition(() => setDestrezas(data));
+    } catch (error) {
+      console.error("Error cargando destrezas:", error);
+    }
+  }, []);
 
-        if (estudianteIds.length === 0) return;
+  const cargarActividades = useCallback(async (destrezaId: string) => {
+    try {
+      const q = query(collection(db, "actividades"), where("destrezaId", "==", destrezaId), orderBy("fecha", "desc"));
+      const snap = await getDocs(q);
+      const data = snap.docs.map((doc) => ({ id: doc.id, ...doc.data() }) as ActividadData);
+      startTransition(() => setActividades(data));
+    } catch (error) {
+      console.error("Error cargando actividades:", error);
+    }
+  }, []);
 
-        const q = query(
-          collection(db, "asistencias"),
-          where("gradoId", "==", gradoId),
-          where("fecha", "==", fecha)
-        );
-        const snap = await getDocs(q);
+  const cargarAsistencias = useCallback(async () => {
+    const ambitoIdParaBuscar = esGradoBachillerato ? selectedMateriaId : selectedAmbitoId;
+    if (!selectedGradoId || !fechaAsistencia || !ambitoIdParaBuscar) {
+      setAsistencias({});
+      return;
+    }
 
-        const data = snap.docs.map(
-          (doc) =>
-            ({
-              id: doc.id,
-              ...doc.data(),
-            }) as unknown as AsistenciaData
-        );
+    try {
+      const q = query(
+        collection(db, "asistencias"),
+        where("gradoId", "==", selectedGradoId),
+        where("fecha", "==", fechaAsistencia),
+        where("ambitoId", "==", ambitoIdParaBuscar)
+      );
+      const snap = await getDocs(q);
+      const data = snap.docs.map((doc) => ({ id: doc.id, ...doc.data() }) as unknown as AsistenciaData);
 
-        const asistenciasMap: Record<
-          string,
-          { estado: "P" | "T" | "A" | "J"; observacion: string }
-        > = {};
-        data.forEach((asistencia) => {
-          asistenciasMap[asistencia.estudianteId] = {
-            estado: asistencia.estado,
-            observacion: asistencia.observacion || "",
-          };
-        });
+      const asistenciasMap: Record<string, { estado: "P" | "T" | "A" | "J"; observacion: string }> = {};
+      data.forEach((asistencia) => {
+        asistenciasMap[asistencia.estudianteId] = {
+          estado: asistencia.estado,
+          observacion: asistencia.observacion || "",
+        };
+      });
 
-        startTransition(() => setAsistencias(asistenciasMap));
-      } catch (error) {
-        console.error("Error cargando asistencias:", error);
-      }
-    },
-    [estudiantes]
-  );
+      startTransition(() => setAsistencias(asistenciasMap));
+    } catch (error) {
+      console.error("Error cargando asistencias:", error);
+    }
+  }, [selectedGradoId, fechaAsistencia, selectedMateriaId, selectedAmbitoId, esGradoBachillerato]);
 
-  const cargarCalificaciones = useCallback(
-    async (destrezaId: string, gradoId: string) => {
-      try {
-        const periodoId = periodoActual?.id || "";
-        if (!periodoId) return;
+  // ✅ CORREGIDO: Tipado con RefuerzoData en lugar de 'any'
+  const cargarCalificaciones = useCallback(async (actividadId: string) => {
+    try {
+      const q = query(collection(db, "calificaciones"), where("actividadId", "==", actividadId));
+      const snap = await getDocs(q);
+      const data = snap.docs.map((doc) => ({ id: doc.id, ...doc.data() }) as unknown as CalificacionData);
 
-        const q = query(
-          collection(db, "calificaciones"),
-          where("destrezaId", "==", destrezaId),
-          where("gradoId", "==", gradoId),
-          where("periodoId", "==", periodoId)
-        );
-        const snap = await getDocs(q);
+      const calificacionesMap: Record<
+        string,
+        { nota: number; observacion: string; refuerzo?: RefuerzoData | null }
+      > = {};
+      data.forEach((calificacion) => {
+        calificacionesMap[calificacion.estudianteId] = {
+          nota: calificacion.nota,
+          observacion: calificacion.observacion || "",
+          refuerzo: calificacion.refuerzo || null,
+        };
+      });
 
-        const data = snap.docs.map(
-          (doc) =>
-            ({
-              id: doc.id,
-              ...doc.data(),
-            }) as unknown as CalificacionData
-        );
+      startTransition(() => setCalificaciones(calificacionesMap));
+    } catch (error) {
+      console.error("Error cargando calificaciones:", error);
+    }
+  }, []);
 
-        const calificacionesMap: Record<
-          string,
-          { nota: number; observacion: string }
-        > = {};
-        data.forEach((calificacion) => {
-          calificacionesMap[calificacion.estudianteId] = {
-            nota: calificacion.nota,
-            observacion: calificacion.observacion || "",
-          };
-        });
-
-        startTransition(() => setCalificaciones(calificacionesMap));
-      } catch (error) {
-        console.error("Error cargando calificaciones:", error);
-      }
-    },
-    [periodoActual]
-  );
+  // ==================== GUARDADO ====================
 
   const guardarAsistencia = async () => {
+    if (!materiaSeleccionada) {
+      alert("⚠️ Debes seleccionar una materia/ámbito antes de guardar la asistencia.");
+      return;
+    }
+
     setIsSaving(true);
     try {
       const anioLectivoId = aniosLectivos[0]?.id || "";
@@ -358,7 +445,8 @@ export default function Calificaciones() {
         const q = query(
           collection(db, "asistencias"),
           where("estudianteId", "==", est.id),
-          where("fecha", "==", fechaAsistencia)
+          where("fecha", "==", fechaAsistencia),
+          where("ambitoId", "==", materiaSeleccionada)
         );
         const snap = await getDocs(q);
 
@@ -368,6 +456,7 @@ export default function Calificaciones() {
           anioLectivoId,
           periodoId,
           fecha: fechaAsistencia,
+          ambitoId: materiaSeleccionada,
           estado: asistencia.estado,
           observacion: asistencia.observacion || "",
           registradoPor: user?.uid || "",
@@ -375,10 +464,7 @@ export default function Calificaciones() {
         };
 
         if (snap.empty) {
-          await addDoc(collection(db, "asistencias"), {
-            ...datos,
-            createdAt: serverTimestamp(),
-          });
+          await addDoc(collection(db, "asistencias"), { ...datos, createdAt: serverTimestamp() });
         } else {
           await updateDoc(doc(db, "asistencias", snap.docs[0].id), datos);
         }
@@ -386,7 +472,7 @@ export default function Calificaciones() {
 
       await Promise.all(batch);
       alert("✅ Asistencia guardada correctamente");
-      setActiveTab("calificaciones");
+      await cargarAsistencias();
     } catch (error) {
       console.error("Error guardando asistencia:", error);
       alert("Error al guardar asistencia");
@@ -395,12 +481,92 @@ export default function Calificaciones() {
     }
   };
 
-  const guardarCalificaciones = async () => {
+  const guardarActividad = async () => {
+    if (!actividadForm.detalle.trim()) {
+      alert("⚠️ El detalle de la actividad es obligatorio");
+      return;
+    }
+
     setIsSaving(true);
     try {
       const anioLectivoId = aniosLectivos[0]?.id || "";
       const periodoId = periodoActual?.id || "";
 
+      const datos = {
+        tipo: actividadForm.tipo,
+        detalle: actividadForm.detalle.trim(),
+        fecha: actividadForm.fecha,
+        destrezaId: selectedDestrezaId,
+        ambitoId: selectedAmbitoId,
+        gradoId: selectedGradoId,
+        anioLectivoId,
+        periodoId,
+        docenteId: user?.uid || "",
+        estrategiaNota: actividadForm.estrategiaNota,
+        updatedAt: serverTimestamp(),
+      };
+
+      if (editingActividadId) {
+        await updateDoc(doc(db, "actividades", editingActividadId), datos);
+      } else {
+        await addDoc(collection(db, "actividades"), { ...datos, createdAt: serverTimestamp() });
+      }
+
+      alert(`✅ Actividad ${editingActividadId ? "actualizada" : "creada"} correctamente`);
+      setShowActividadModal(false);
+      setEditingActividadId(null);
+      setActividadForm({
+        tipo: "Tarea",
+        detalle: "",
+        fecha: new Date().toISOString().split("T")[0],
+        estrategiaNota: "promediar",
+      });
+      await cargarActividades(selectedDestrezaId);
+    } catch (error) {
+      console.error("Error guardando actividad:", error);
+      alert("Error al guardar actividad");
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const eliminarActividad = async (actividadId: string) => {
+    if (!confirm("¿Estás seguro de eliminar esta actividad? Se eliminarán todas las calificaciones asociadas.")) {
+      return;
+    }
+
+    setIsSaving(true);
+    try {
+      const qCalificaciones = query(collection(db, "calificaciones"), where("actividadId", "==", actividadId));
+      const snapCalificaciones = await getDocs(qCalificaciones);
+      const deleteCalificaciones = snapCalificaciones.docs.map((doc) => deleteDoc(doc.ref));
+      await Promise.all(deleteCalificaciones);
+
+      await deleteDoc(doc(db, "actividades", actividadId));
+
+      alert("✅ Actividad eliminada correctamente");
+      await cargarActividades(selectedDestrezaId);
+
+      if (selectedActividadId === actividadId) {
+        setSelectedActividadId("");
+        setCalificaciones({});
+      }
+    } catch (error) {
+      console.error("Error eliminando actividad:", error);
+      alert("Error al eliminar actividad");
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const guardarCalificaciones = async () => {
+    if (!selectedActividadId) {
+      alert("⚠️ Debes seleccionar una actividad antes de guardar calificaciones");
+      return;
+    }
+
+    setIsSaving(true);
+    try {
       const batch = estudiantes.map(async (est) => {
         const calificacion = calificaciones[est.id];
         if (!calificacion || calificacion.nota === undefined) return;
@@ -408,29 +574,22 @@ export default function Calificaciones() {
         const q = query(
           collection(db, "calificaciones"),
           where("estudianteId", "==", est.id),
-          where("destrezaId", "==", selectedDestrezaId),
-          where("periodoId", "==", periodoId)
+          where("actividadId", "==", selectedActividadId)
         );
         const snap = await getDocs(q);
 
         const datos = {
           estudianteId: est.id,
-          destrezaId: selectedDestrezaId,
-          ambitoId: selectedAmbitoId,
-          gradoId: selectedGradoId,
-          anioLectivoId,
-          periodoId,
+          actividadId: selectedActividadId,
           nota: Math.round(calificacion.nota),
           observacion: calificacion.observacion || "",
+          refuerzo: calificacion.refuerzo || null,
           docenteId: user?.uid || "",
           updatedAt: serverTimestamp(),
         };
 
         if (snap.empty) {
-          await addDoc(collection(db, "calificaciones"), {
-            ...datos,
-            createdAt: serverTimestamp(),
-          });
+          await addDoc(collection(db, "calificaciones"), { ...datos, createdAt: serverTimestamp() });
         } else {
           await updateDoc(doc(db, "calificaciones", snap.docs[0].id), datos);
         }
@@ -438,6 +597,7 @@ export default function Calificaciones() {
 
       await Promise.all(batch);
       alert("✅ Calificaciones guardadas correctamente");
+      await cargarCalificaciones(selectedActividadId);
     } catch (error) {
       console.error("Error guardando calificaciones:", error);
       alert("Error al guardar calificaciones");
@@ -446,10 +606,61 @@ export default function Calificaciones() {
     }
   };
 
-  const actualizarAsistencia = (
-    estudianteId: string,
-    estado: "P" | "T" | "A" | "J"
-  ) => {
+  const aplicarRefuerzo = async () => {
+    if (!refuerzoEstudianteId || !selectedActividadId) return;
+
+    if (!refuerzoForm.detalle.trim()) {
+      alert("⚠️ El detalle del refuerzo es obligatorio");
+      return;
+    }
+
+    setIsSaving(true);
+    try {
+      const q = query(
+        collection(db, "calificaciones"),
+        where("estudianteId", "==", refuerzoEstudianteId),
+        where("actividadId", "==", selectedActividadId)
+      );
+      const snap = await getDocs(q);
+
+      if (snap.empty) {
+        alert("❌ No se encontró la calificación original");
+        setIsSaving(false);
+        return;
+      }
+
+      const refuerzoData: RefuerzoData = {
+        nota: refuerzoForm.nota,
+        detalle: refuerzoForm.detalle.trim(),
+        fecha: refuerzoForm.fecha,
+        aplicadoPor: user?.uid || "",
+      };
+
+      await updateDoc(doc(db, "calificaciones", snap.docs[0].id), {
+        refuerzo: refuerzoData,
+        updatedAt: serverTimestamp(),
+      });
+
+      alert("✅ Refuerzo aplicado correctamente");
+      setShowRefuerzoModal(false);
+      setRefuerzoEstudianteId(null);
+      setRefuerzoForm({
+        nota: 7,
+        detalle: "",
+        fecha: new Date().toISOString().split("T")[0],
+      });
+      await cargarCalificaciones(selectedActividadId);
+    } catch (error) {
+      console.error("Error aplicando refuerzo:", error);
+      alert("Error al aplicar refuerzo");
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  // ==================== ACTUALIZADORES DE ESTADO ====================
+
+  const actualizarAsistencia = (estudianteId: string, estado: "P" | "T" | "A" | "J") => {
     setAsistencias((prev) => ({
       ...prev,
       [estudianteId]: {
@@ -459,61 +670,43 @@ export default function Calificaciones() {
     }));
   };
 
-  // ✅ NUEVA FUNCIÓN: Marcar a todos los estudiantes con un estado específico
   const marcarTodosAsistencia = (estado: "P" | "T" | "A" | "J") => {
-    const nuevasAsistencias: Record<
-      string,
-      { estado: "P" | "T" | "A" | "J"; observacion: string }
-    > = {};
+    const nuevasAsistencias: Record<string, { estado: "P" | "T" | "A" | "J"; observacion: string }> = {};
     estudiantes.forEach((est) => {
       nuevasAsistencias[est.id] = {
         estado,
-        observacion: asistencias[est.id]?.observacion || "", // Preservar observación si ya tenía
+        observacion: asistencias[est.id]?.observacion || "",
       };
     });
     setAsistencias(nuevasAsistencias);
   };
 
-  // ✅ NUEVA FUNCIÓN: Limpiar todas las asistencias
   const limpiarAsistencias = () => {
     setAsistencias({});
   };
 
-  const actualizarObservacionAsistencia = (
-    estudianteId: string,
-    observacion: string
-  ) => {
+  const actualizarObservacionAsistencia = (estudianteId: string, observacion: string) => {
     setAsistencias((prev) => ({
       ...prev,
-      [estudianteId]: {
-        ...prev[estudianteId],
-        observacion,
-      },
+      [estudianteId]: { ...prev[estudianteId], observacion },
     }));
   };
 
   const actualizarCalificacion = (estudianteId: string, nota: number) => {
     setCalificaciones((prev) => ({
       ...prev,
-      [estudianteId]: {
-        ...prev[estudianteId],
-        nota: Math.round(nota),
-      },
+      [estudianteId]: { ...prev[estudianteId], nota: Math.round(nota) },
     }));
   };
 
-  const actualizarObservacionCalificacion = (
-    estudianteId: string,
-    observacion: string
-  ) => {
+  const actualizarObservacionCalificacion = (estudianteId: string, observacion: string) => {
     setCalificaciones((prev) => ({
       ...prev,
-      [estudianteId]: {
-        ...prev[estudianteId],
-        observacion,
-      },
+      [estudianteId]: { ...prev[estudianteId], observacion },
     }));
   };
+
+  // ==================== EFFECTS ====================
 
   useEffect(() => {
     cargarDatos();
@@ -523,34 +716,86 @@ export default function Calificaciones() {
     if (selectedGradoId) {
       cargarEstudiantes(selectedGradoId);
       cargarAmbitos(selectedGradoId);
+
+      const grado = grados.find((g) => g.id === selectedGradoId);
+      if (grado && esBachillerato(grado.nombre)) {
+        cargarTodasDestrezas(selectedGradoId);
+      }
     }
-  }, [selectedGradoId, cargarEstudiantes, cargarAmbitos]);
+  }, [selectedGradoId, cargarEstudiantes, cargarAmbitos, cargarTodasDestrezas, grados]);
 
   useEffect(() => {
-    if (selectedAmbitoId) {
+    if (selectedAmbitoId && !esGradoBachillerato) {
       cargarDestrezas(selectedAmbitoId);
     }
-  }, [selectedAmbitoId, cargarDestrezas]);
+  }, [selectedAmbitoId, cargarDestrezas, esGradoBachillerato]);
 
   useEffect(() => {
-    if (selectedDestrezaId && selectedGradoId) {
-      cargarCalificaciones(selectedDestrezaId, selectedGradoId);
+    if (selectedDestrezaId) {
+      cargarActividades(selectedDestrezaId);
     }
-  }, [selectedDestrezaId, selectedGradoId, cargarCalificaciones]);
+  }, [selectedDestrezaId, cargarActividades]);
 
   useEffect(() => {
-    if (selectedGradoId && fechaAsistencia) {
-      cargarAsistencias(selectedGradoId, fechaAsistencia);
+    if (selectedActividadId) {
+      cargarCalificaciones(selectedActividadId);
     }
-  }, [selectedGradoId, fechaAsistencia, cargarAsistencias]);
+  }, [selectedActividadId, cargarCalificaciones]);
+
+  // ✅ Patrón isMounted para evitar el error de ESLint 'set-state-in-effect'
+  useEffect(() => {
+    let isMounted = true;
+
+    const fetchAsistencias = async () => {
+      if (activeTab !== "asistencia" || !selectedGradoId || !fechaAsistencia) {
+        if (isMounted) startTransition(() => setAsistencias({}));
+        return;
+      }
+
+      const ambitoIdParaBuscar = esGradoBachillerato ? selectedMateriaId : selectedAmbitoId;
+      if (!ambitoIdParaBuscar) {
+        if (isMounted) startTransition(() => setAsistencias({}));
+        return;
+      }
+
+      try {
+        const q = query(
+          collection(db, "asistencias"),
+          where("gradoId", "==", selectedGradoId),
+          where("fecha", "==", fechaAsistencia),
+          where("ambitoId", "==", ambitoIdParaBuscar)
+        );
+        const snap = await getDocs(q);
+        const data = snap.docs.map((doc) => ({ id: doc.id, ...doc.data() }) as unknown as AsistenciaData);
+
+        const asistenciasMap: Record<string, { estado: "P" | "T" | "A" | "J"; observacion: string }> = {};
+        data.forEach((asistencia) => {
+          asistenciasMap[asistencia.estudianteId] = {
+            estado: asistencia.estado,
+            observacion: asistencia.observacion || "",
+          };
+        });
+
+        if (isMounted) {
+          startTransition(() => setAsistencias(asistenciasMap));
+        }
+      } catch (error) {
+        console.error("Error cargando asistencias:", error);
+      }
+    };
+
+    fetchAsistencias();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [activeTab, selectedGradoId, fechaAsistencia, selectedMateriaId, selectedAmbitoId, esGradoBachillerato]);
+
+  // ==================== RENDER ====================
 
   if (loading) {
     return (
-      <Layout
-        title="Calificaciones"
-        subtitle="Registro de notas y asistencia"
-        showBack
-      >
+      <Layout title="Calificaciones" subtitle="Registro de notas y asistencia" showBack>
         <div className="flex items-center justify-center py-20">
           <div className="text-center">
             <div className="animate-spin rounded-full h-10 w-10 border-2 border-blue-600 border-t-transparent mx-auto mb-3"></div>
@@ -561,13 +806,10 @@ export default function Calificaciones() {
     );
   }
 
+  const actividadSeleccionada = actividades.find((a) => a.id === selectedActividadId);
+
   return (
-    <Layout
-      title="Calificaciones"
-      subtitle="Registro de notas y asistencia"
-      showBack
-    >
-      {/* ✅ Mensaje para docentes sin grados asignados */}
+    <Layout title="Calificaciones" subtitle="Registro de notas y asistencia" showBack>
       {docenteSinGrados && (
         <div className="bg-yellow-50 border-2 border-yellow-300 rounded-xl px-8 py-12 mb-6">
           <div className="flex items-start gap-4 max-w-3xl">
@@ -575,35 +817,24 @@ export default function Calificaciones() {
               <FaExclamationTriangle className="text-yellow-600 text-2xl" />
             </div>
             <div className="flex-1">
-              <h3 className="text-yellow-800 font-bold text-xl mb-3">
-                No tienes grados asignados
-              </h3>
+              <h3 className="text-yellow-800 font-bold text-xl mb-3">No tienes grados asignados</h3>
               <p className="text-yellow-700 mb-2">
-                Contacta al administrador del sistema para que te asigne los
-                grados que podrás gestionar.
-              </p>
-              <p className="text-yellow-600 text-sm">
-                Una vez que te asignen grados, podrás registrar asistencia y
-                calificaciones en esta sección.
+                Contacta al administrador del sistema para que te asigne los grados que podrás gestionar.
               </p>
             </div>
           </div>
         </div>
       )}
 
-      {/* ✅ Mostrar contenido solo si NO es docente sin grados */}
       {!docenteSinGrados && (
         <>
-          {/* ✅ Banner de Año Lectivo + Período Actual (Compacto) */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
             {anioActivo && (
               <div className="bg-blue-50 border border-blue-200 rounded-lg px-3 py-2">
                 <div className="flex items-center gap-2 text-blue-800">
                   <FaCalendarAlt className="text-sm shrink-0" />
                   <span className="text-xs font-medium">Año lectivo:</span>
-                  <span className="text-sm font-bold text-blue-900 truncate">
-                    {anioActivo.nombre}
-                  </span>
+                  <span className="text-sm font-bold text-blue-900 truncate">{anioActivo.nombre}</span>
                 </div>
               </div>
             )}
@@ -612,24 +843,19 @@ export default function Calificaciones() {
                 <div className="flex items-center gap-2 text-green-800">
                   <FaClock className="text-sm shrink-0" />
                   <span className="text-xs font-medium">Período actual:</span>
-                  <span className="text-sm font-bold text-green-900 truncate">
-                    {periodoActual.nombre}
-                  </span>
+                  <span className="text-sm font-bold text-green-900 truncate">{periodoActual.nombre}</span>
                 </div>
               </div>
             ) : (
               <div className="bg-yellow-50 border border-yellow-200 rounded-lg px-3 py-2">
                 <div className="flex items-center gap-2 text-yellow-800">
                   <FaExclamationTriangle className="text-sm shrink-0" />
-                  <span className="text-xs font-medium">
-                    No hay período activo en esta fecha
-                  </span>
+                  <span className="text-xs font-medium">No hay período activo en esta fecha</span>
                 </div>
               </div>
             )}
           </div>
 
-          {/* ✅ Selector de Grados - Tarjetas Compactas */}
           {grados.length > 0 ? (
             <div className="bg-white rounded-xl shadow-sm border border-slate-200 mb-4 p-4">
               <h3 className="text-base font-bold text-slate-800 mb-3 flex items-center gap-2">
@@ -644,9 +870,14 @@ export default function Calificaciones() {
                       key={grado.id}
                       onClick={() => {
                         setSelectedGradoId(grado.id);
+                        setSelectedGradoNombre(grado.nombre);
+                        setSelectedMateriaId("");
                         setSelectedAmbitoId("");
                         setSelectedDestrezaId("");
+                        setSelectedActividadId("");
                         setCalificaciones({});
+                        setAsistencias({});
+                        setActividades([]);
                       }}
                       className={`p-3 rounded-lg border-2 transition-all duration-200 text-left text-sm ${
                         isSelected
@@ -665,16 +896,10 @@ export default function Calificaciones() {
                           {grado.paralelo}
                         </div>
                         <div className="flex-1 min-w-0">
-                          <div className="font-semibold text-slate-900 truncate">
-                            {grado.nombre}
-                          </div>
-                          <div className="text-slate-500 text-xs">
-                            {grado.paralelo}
-                          </div>
+                          <div className="font-semibold text-slate-900 truncate">{grado.nombre}</div>
+                          <div className="text-slate-500 text-xs">{grado.paralelo}</div>
                         </div>
-                        {isSelected && (
-                          <FaUserCheck className="text-blue-600 text-xs shrink-0" />
-                        )}
+                        {isSelected && <FaUserCheck className="text-blue-600 text-xs shrink-0" />}
                       </div>
                     </button>
                   );
@@ -686,22 +911,15 @@ export default function Calificaciones() {
               <div className="bg-slate-100 rounded-full p-4 mb-4 inline-block">
                 <FaGraduationCap className="text-4xl text-slate-400" />
               </div>
-              <h3 className="text-lg font-semibold text-slate-800 mb-2">
-                No hay grados disponibles
-              </h3>
-              <p className="text-slate-600">
-                Contacta al administrador para que te asigne grados
-              </p>
+              <h3 className="text-lg font-semibold text-slate-800 mb-2">No hay grados disponibles</h3>
+              <p className="text-slate-600">Contacta al administrador para que te asigne grados</p>
             </div>
           )}
 
-          {/* ✅ Contenido Principal (Tabs + Contenido) */}
           {selectedGradoId && (
             <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-              {/* Barra superior compacta: Tabs + Fecha/Selectores + Botón Guardar */}
               <div className="border-b border-slate-200 p-3">
                 <div className="flex flex-col lg:flex-row gap-3 items-start lg:items-center justify-between">
-                  {/* Tabs */}
                   <div className="flex gap-2 w-full lg:w-auto">
                     <button
                       onClick={() => setActiveTab("asistencia")}
@@ -715,33 +933,50 @@ export default function Calificaciones() {
                       Asistencia
                     </button>
                     <button
-                      onClick={() =>
-                        todosConAsistencia && setActiveTab("calificaciones")
-                      }
-                      disabled={!todosConAsistencia}
+                      onClick={() => setActiveTab("calificaciones")}
                       className={`flex-1 lg:flex-none px-4 py-2 rounded-lg text-sm font-semibold transition-all flex items-center justify-center gap-2 ${
                         activeTab === "calificaciones"
                           ? "bg-blue-600 text-white shadow"
-                          : todosConAsistencia
-                          ? "bg-slate-100 text-slate-700 hover:bg-slate-200"
-                          : "bg-slate-50 text-slate-400 cursor-not-allowed"
+                          : "bg-slate-100 text-slate-700 hover:bg-slate-200"
                       }`}
-                      title={
-                        !todosConAsistencia
-                          ? "Primero registra la asistencia de todos los estudiantes"
-                          : ""
-                      }
                     >
                       <FaTasks className="text-sm" />
                       Calificaciones
-                      {!todosConAsistencia && <FaLock className="text-xs" />}
                     </button>
                   </div>
 
-                  {/* Controles específicos por tab */}
                   <div className="flex flex-col sm:flex-row gap-2 w-full lg:w-auto lg:justify-end items-stretch sm:items-center">
                     {activeTab === "asistencia" ? (
                       <>
+                        {esGradoBachillerato && (
+                          <select
+                            value={selectedMateriaId}
+                            onChange={(e) => {
+                              const materiaId = e.target.value;
+                              setSelectedMateriaId(materiaId);
+                              setAsistencias({});
+
+                              if (materiaId && esGradoBachillerato) {
+                                const materia = destrezas.find((d) => d.id === materiaId);
+                                if (materia) {
+                                  setSelectedAmbitoId(materia.ambitoId);
+                                  setSelectedDestrezaId(materia.id);
+                                }
+                              } else {
+                                setSelectedAmbitoId("");
+                                setSelectedDestrezaId("");
+                              }
+                            }}
+                            className="w-full sm:w-48 border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 truncate"
+                          >
+                            <option value="">Seleccionar Materia...</option>
+                            {destrezas.map((destreza) => (
+                              <option key={destreza.id} value={destreza.id}>
+                                {destreza.nombre}
+                              </option>
+                            ))}
+                          </select>
+                        )}
                         <input
                           type="date"
                           value={fechaAsistencia}
@@ -753,137 +988,352 @@ export default function Calificaciones() {
                           disabled={isSaving || !todosConAsistencia}
                           className="w-full sm:w-auto bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-all flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed shrink-0"
                         >
-                          {isSaving ? (
-                            <FaSpinner className="animate-spin" />
-                          ) : (
-                            <FaSave />
-                          )}
+                          {isSaving ? <FaSpinner className="animate-spin" /> : <FaSave />}
                           Guardar
                         </button>
                       </>
                     ) : (
                       <>
-                        {/* ✅ SELECTS CON ANCHO FIJO PARA EVITAR QUE SE ESTIREN */}
-                        <select
-                          value={selectedAmbitoId}
-                          onChange={(e) => {
-                            setSelectedAmbitoId(e.target.value);
-                            setSelectedDestrezaId("");
-                            setCalificaciones({});
-                          }}
-                          className="w-full sm:w-48 border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 truncate"
-                        >
-                          <option value="">Ámbito...</option>
-                          {ambitos.map((ambito) => (
-                            <option key={ambito.id} value={ambito.id}>
-                              {ambito.nombre}
-                            </option>
-                          ))}
-                        </select>
-                        <select
-                          value={selectedDestrezaId}
-                          onChange={(e) => setSelectedDestrezaId(e.target.value)}
-                          disabled={!selectedAmbitoId}
-                          className="w-full sm:w-48 border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 disabled:bg-slate-100 truncate"
-                        >
-                          <option value="">Destreza...</option>
-                          {destrezas.map((destreza) => (
-                            <option key={destreza.id} value={destreza.id}>
-                              {destreza.nombre}
-                            </option>
-                          ))}
-                        </select>
-
-                        {/* ✅ BOTÓN CON shrink-0 PARA QUE NO SE ENCOJA */}
-                        <button
-                          onClick={guardarCalificaciones}
-                          disabled={isSaving || !selectedDestrezaId}
-                          title={
-                            !selectedDestrezaId
-                              ? "⚠️ Primero debes seleccionar un ámbito y una destreza"
-                              : "Guardar calificaciones"
-                          }
-                          className={`w-full sm:w-auto px-4 py-2 rounded-lg text-sm font-semibold transition-all flex items-center justify-center gap-2 shrink-0 ${
-                            !selectedDestrezaId
-                              ? "bg-slate-300 text-slate-500 cursor-not-allowed"
-                              : "bg-blue-600 hover:bg-blue-700 text-white shadow-sm hover:shadow-md"
-                          }`}
-                        >
-                          {isSaving ? (
-                            <FaSpinner className="animate-spin" />
-                          ) : (
-                            <FaSave />
-                          )}
-                          Guardar Notas
-                        </button>
+                        {esGradoBachillerato ? (
+                          <>
+                            <select
+                              value={selectedAmbitoId}
+                              disabled
+                              className="w-full sm:w-48 border border-slate-200 rounded-lg px-3 py-2 text-sm bg-slate-50 text-slate-500 truncate"
+                            >
+                              <option value="">Ámbito (auto)</option>
+                              {ambitos.map((ambito) => (
+                                <option key={ambito.id} value={ambito.id}>
+                                  {ambito.nombre}
+                                </option>
+                              ))}
+                            </select>
+                            <select
+                              value={selectedDestrezaId}
+                              disabled
+                              className="w-full sm:w-48 border border-slate-200 rounded-lg px-3 py-2 text-sm bg-slate-50 text-slate-500 truncate"
+                            >
+                              <option value="">Destreza (auto)</option>
+                              {destrezas.map((destreza) => (
+                                <option key={destreza.id} value={destreza.id}>
+                                  {destreza.nombre}
+                                </option>
+                              ))}
+                            </select>
+                          </>
+                        ) : (
+                          <>
+                            <select
+                              value={selectedAmbitoId}
+                              onChange={(e) => {
+                                setSelectedAmbitoId(e.target.value);
+                                setSelectedDestrezaId("");
+                                setSelectedActividadId("");
+                                setCalificaciones({});
+                                setActividades([]);
+                              }}
+                              className="w-full sm:w-48 border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 truncate"
+                            >
+                              <option value="">Ámbito...</option>
+                              {ambitos.map((ambito) => (
+                                <option key={ambito.id} value={ambito.id}>
+                                  {ambito.nombre}
+                                </option>
+                              ))}
+                            </select>
+                            <select
+                              value={selectedDestrezaId}
+                              onChange={(e) => {
+                                setSelectedDestrezaId(e.target.value);
+                                setSelectedActividadId("");
+                                setCalificaciones({});
+                              }}
+                              disabled={!selectedAmbitoId}
+                              className="w-full sm:w-48 border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 disabled:bg-slate-100 truncate"
+                            >
+                              <option value="">Destreza...</option>
+                              {destrezas.map((destreza) => (
+                                <option key={destreza.id} value={destreza.id}>
+                                  {destreza.nombre}
+                                </option>
+                              ))}
+                            </select>
+                          </>
+                        )}
                       </>
                     )}
                   </div>
                 </div>
               </div>
 
-              {/* Contenido */}
               <div className="p-4">
-                {/* Alerta de asistencia incompleta */}
-                {activeTab === "asistencia" &&
-                  !todosConAsistencia &&
-                  estudiantes.length > 0 && (
-                    <div className="mb-4 bg-yellow-50 border border-yellow-200 rounded-lg px-3 py-2">
-                      <div className="flex items-center gap-2 text-yellow-800">
-                        <FaExclamationTriangle className="text-sm shrink-0" />
-                        <span className="text-xs font-medium">
-                          Debes registrar la asistencia de todos los estudiantes
-                          antes de guardar
-                        </span>
-                      </div>
-                    </div>
-                  )}
-
-                {/* Destreza seleccionada */}
-                {activeTab === "calificaciones" && selectedDestrezaId && (
-                  <div className="bg-purple-50 border border-purple-200 rounded-lg p-3 mb-4">
-                    <div className="flex items-start gap-2">
-                      <FaTasks className="text-purple-600 mt-0.5 shrink-0" />
-                      <div className="min-w-0 flex-1">
-                        <h4 className="font-semibold text-purple-900 text-xs mb-0.5">
-                          Destreza seleccionada:
-                        </h4>
-                        <p className="text-purple-800 text-xs line-clamp-2">
-                          {destrezas.find((d) => d.id === selectedDestrezaId)
-                            ?.descripcion ||
-                            destrezas.find((d) => d.id === selectedDestrezaId)
-                              ?.nombre}
-                        </p>
-                      </div>
+                {activeTab === "asistencia" && !todosConAsistencia && estudiantes.length > 0 && materiaSeleccionada && (
+                  <div className="mb-4 bg-yellow-50 border border-yellow-200 rounded-lg px-3 py-2">
+                    <div className="flex items-center gap-2 text-yellow-800">
+                      <FaExclamationTriangle className="text-sm shrink-0" />
+                      <span className="text-xs font-medium">
+                        Debes registrar la asistencia de todos los estudiantes antes de guardar
+                      </span>
                     </div>
                   </div>
                 )}
 
-                {/* Lista de Estudiantes */}
                 {estudiantes.length === 0 ? (
                   <div className="text-center py-12 text-slate-500">
                     <FaUserCheck className="text-4xl mx-auto mb-3 text-slate-300" />
-                    <p className="font-medium mb-1">
-                      No hay estudiantes en este grado
-                    </p>
+                    <p className="font-medium mb-1">No hay estudiantes en este grado</p>
                     <p className="text-sm">Agrega estudiantes primero</p>
                   </div>
                 ) : activeTab === "calificaciones" && !selectedDestrezaId ? (
                   <div className="text-center py-12 text-slate-500">
                     <FaTasks className="text-4xl mx-auto mb-3 text-slate-300" />
-                    <p className="font-medium mb-1">
-                      Selecciona un ámbito y destreza
-                    </p>
+                    <p className="font-medium mb-1">Selecciona un ámbito y destreza</p>
                     <p className="text-sm">para comenzar a calificar</p>
                   </div>
+                ) : activeTab === "asistencia" && esGradoBachillerato && !selectedMateriaId ? (
+                  <div className="text-center py-12 text-slate-500">
+                    <FaBook className="text-4xl mx-auto mb-3 text-slate-300" />
+                    <p className="font-medium mb-1">Selecciona una materia</p>
+                    <p className="text-sm">para comenzar a tomar asistencia</p>
+                  </div>
+                ) : activeTab === "calificaciones" && selectedDestrezaId ? (
+                  <>
+                    {/* ===== LISTA DE ACTIVIDADES ===== */}
+                    <div className="mb-4">
+                      <div className="flex items-center justify-between mb-3">
+                        <h4 className="text-sm font-bold text-slate-800">Actividades de Evaluación</h4>
+                        <button
+                          onClick={() => {
+                            setShowActividadModal(true);
+                            setEditingActividadId(null);
+                            setActividadForm({
+                              tipo: "Tarea",
+                              detalle: "",
+                              fecha: new Date().toISOString().split("T")[0],
+                              estrategiaNota: "promediar",
+                            });
+                          }}
+                          className="inline-flex items-center gap-2 bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded-lg text-xs font-semibold transition-all"
+                        >
+                          <FaPlus className="text-xs" />
+                          Nueva Actividad
+                        </button>
+                      </div>
+
+                      {actividades.length === 0 ? (
+                        <div className="text-center py-8 text-slate-400 border-2 border-dashed border-slate-300 rounded-lg">
+                          <FaTasks className="text-3xl mx-auto mb-2" />
+                          <p className="text-sm">No hay actividades creadas</p>
+                          <p className="text-xs mt-1">Crea una actividad para comenzar a calificar</p>
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                          {actividades.map((actividad) => {
+                            const isSelected = selectedActividadId === actividad.id;
+                            return (
+                              <div
+                                key={actividad.id}
+                                onClick={() => setSelectedActividadId(actividad.id || "")}
+                                className={`p-3 rounded-lg border-2 cursor-pointer transition-all ${
+                                  isSelected
+                                    ? "border-blue-500 bg-blue-50 shadow-md"
+                                    : "border-slate-200 hover:border-blue-300 hover:bg-slate-50"
+                                }`}
+                              >
+                                <div className="flex items-start justify-between mb-2">
+                                  <div className="flex-1">
+                                    <div className="flex items-center gap-2 mb-1">
+                                      <span className="px-2 py-0.5 bg-purple-100 text-purple-700 rounded text-xs font-semibold">
+                                        {actividad.tipo}
+                                      </span>
+                                      <span className="text-xs text-slate-500">{actividad.fecha}</span>
+                                    </div>
+                                    <p className="text-sm font-semibold text-slate-800 line-clamp-2">
+                                      {actividad.detalle}
+                                    </p>
+                                  </div>
+                                </div>
+                                <div className="flex items-center justify-between mt-2 pt-2 border-t border-slate-200">
+                                  <span className="text-xs text-slate-500">
+                                    Estrategia:{" "}
+                                    {ESTRATEGIAS_NOTA.find((e) => e.value === actividad.estrategiaNota)?.label.split(" ")[0]}
+                                  </span>
+                                  <div className="flex gap-1">
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setEditingActividadId(actividad.id || null);
+                                        setActividadForm({
+                                          tipo: actividad.tipo,
+                                          detalle: actividad.detalle,
+                                          fecha: actividad.fecha,
+                                          estrategiaNota: actividad.estrategiaNota,
+                                        });
+                                        setShowActividadModal(true);
+                                      }}
+                                      className="p-1.5 text-blue-600 hover:bg-blue-50 rounded transition-all"
+                                      title="Editar"
+                                    >
+                                      <FaEdit className="text-xs" />
+                                    </button>
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        eliminarActividad(actividad.id || "");
+                                      }}
+                                      className="p-1.5 text-red-600 hover:bg-red-50 rounded transition-all"
+                                      title="Eliminar"
+                                    >
+                                      <FaTrash className="text-xs" />
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* ===== CALIFICACIONES DE LA ACTIVIDAD ===== */}
+                    {selectedActividadId && actividadSeleccionada && (
+                      <>
+                        <div className="mb-4 bg-purple-50 border border-purple-200 rounded-lg p-3">
+                          <div className="flex items-start gap-2">
+                            <FaTasks className="text-purple-600 mt-0.5 shrink-0" />
+                            <div className="min-w-0 flex-1">
+                              <h4 className="font-semibold text-purple-900 text-sm mb-0.5">
+                                {actividadSeleccionada.tipo}: {actividadSeleccionada.detalle}
+                              </h4>
+                              <p className="text-purple-700 text-xs">
+                                Fecha: {actividadSeleccionada.fecha} | Estrategia:{" "}
+                                {ESTRATEGIAS_NOTA.find((e) => e.value === actividadSeleccionada.estrategiaNota)?.label}
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex justify-end mb-4">
+                          <button
+                            onClick={guardarCalificaciones}
+                            disabled={isSaving}
+                            className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-all disabled:opacity-70 disabled:cursor-not-allowed"
+                          >
+                            {isSaving ? <FaSpinner className="animate-spin" /> : <FaSave />}
+                            Guardar Calificaciones
+                          </button>
+                        </div>
+
+                        <div className="space-y-2">
+                          {estudiantes.map((est) => {
+                            const calificacion = calificaciones[est.id];
+                            const notaOriginal = calificacion?.nota;
+                            const notaFinal = calcularNotaFinal(
+                              notaOriginal || 0,
+                              calificacion?.refuerzo,
+                              actividadSeleccionada.estrategiaNota
+                            );
+                            const letra = notaOriginal !== undefined ? notaALetra(notaFinal) : "";
+                            const necesitaRefuerzo =
+                              notaOriginal !== undefined && notaOriginal < 7 && !calificacion?.refuerzo;
+
+                            return (
+                              <div
+                                key={est.id}
+                                className="border border-slate-200 rounded-lg p-3 hover:border-blue-300 transition-colors"
+                              >
+                                <div className="flex items-center justify-between gap-3">
+                                  <div className="flex-1 min-w-0">
+                                    <div className="font-semibold text-slate-900 text-sm truncate">
+                                      {est.apellidos} {est.nombres}
+                                    </div>
+                                    {est.cedula && <div className="text-slate-500 text-xs mt-0.5">CI: {est.cedula}</div>}
+                                  </div>
+                                  <div className="flex items-center gap-2 shrink-0">
+                                    {letra && (
+                                      <div
+                                        className={`px-2 py-1 rounded text-xs font-bold ${
+                                          notaFinal >= 7
+                                            ? "bg-green-100 border border-green-300 text-green-800"
+                                            : "bg-red-100 border border-red-300 text-red-800"
+                                        }`}
+                                      >
+                                        {letra}
+                                      </div>
+                                    )}
+                                    <input
+                                      type="number"
+                                      min="1"
+                                      max="10"
+                                      step="1"
+                                      value={notaOriginal !== undefined ? notaOriginal : ""}
+                                      onChange={(e) => {
+                                        const valor = parseInt(e.target.value);
+                                        if (!isNaN(valor) && valor >= 1 && valor <= 10) {
+                                          actualizarCalificacion(est.id, valor);
+                                        }
+                                      }}
+                                      placeholder="1-10"
+                                      className={`w-16 border-2 rounded px-2 py-1 text-center text-sm font-bold focus:ring-2 focus:ring-blue-500 ${
+                                        notaOriginal !== undefined
+                                          ? notaOriginal >= 7
+                                            ? "border-green-500 text-green-700"
+                                            : "border-red-500 text-red-700"
+                                          : "border-slate-300"
+                                      }`}
+                                    />
+                                    {necesitaRefuerzo && (
+                                      <button
+                                        onClick={() => {
+                                          setRefuerzoEstudianteId(est.id);
+                                          setRefuerzoForm({
+                                            nota: 7,
+                                            detalle: "",
+                                            fecha: new Date().toISOString().split("T")[0],
+                                          });
+                                          setShowRefuerzoModal(true);
+                                        }}
+                                        className="inline-flex items-center gap-1 bg-orange-100 hover:bg-orange-200 text-orange-700 px-2 py-1 rounded text-xs font-semibold transition-all"
+                                        title="Aplicar refuerzo"
+                                      >
+                                        <FaSyncAlt className="text-xs" />
+                                        Refuerzo
+                                      </button>
+                                    )}
+                                  </div>
+                                </div>
+                                {calificacion?.refuerzo && (
+                                  <div className="mt-2 p-2 bg-orange-50 border border-orange-200 rounded text-xs">
+                                    <div className="font-semibold text-orange-800 mb-1">
+                                      Refuerzo aplicado ({calificacion.refuerzo.fecha}):
+                                    </div>
+                                    <div className="text-orange-700">
+                                      Nota de refuerzo: {calificacion.refuerzo.nota} | Nota final: {notaFinal}
+                                    </div>
+                                    <div className="text-orange-600 mt-1">{calificacion.refuerzo.detalle}</div>
+                                  </div>
+                                )}
+                                <div className="mt-2">
+                                  <input
+                                    type="text"
+                                    value={calificacion?.observacion || ""}
+                                    onChange={(e) => actualizarObservacionCalificacion(est.id, e.target.value)}
+                                    placeholder="Observación (opcional)..."
+                                    className="w-full border border-slate-300 rounded px-2 py-1 text-xs focus:ring-2 focus:ring-blue-500"
+                                  />
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </>
+                    )}
+                  </>
                 ) : (
                   <div className="space-y-2">
-                    {/* ✅ BARRA DE ACCIONES RÁPIDAS PARA ASISTENCIA */}
                     {activeTab === "asistencia" && (
                       <div className="flex flex-wrap items-center gap-2 mb-4 p-3 bg-slate-50 rounded-lg border border-slate-200">
-                        <span className="text-xs font-semibold text-slate-700 mr-1">
-                          Acción rápida:
-                        </span>
+                        <span className="text-xs font-semibold text-slate-700 mr-1">Acción rápida:</span>
                         <button
                           onClick={() => marcarTodosAsistencia("P")}
                           className="px-3 py-1.5 bg-green-100 text-green-700 hover:bg-green-200 rounded-md text-xs font-bold transition-colors flex items-center gap-1.5"
@@ -909,166 +1359,73 @@ export default function Calificaciones() {
                     )}
 
                     {estudiantes.map((est) => {
-                      if (activeTab === "asistencia") {
-                        const asistencia = asistencias[est.id];
-                        const estado = asistencia?.estado || "";
-                        return (
-                          <div
-                            key={est.id}
-                            className="border border-slate-200 rounded-lg p-3 hover:border-blue-300 transition-colors"
-                          >
-                            <div className="flex items-center justify-between gap-3">
-                              <div className="flex-1 min-w-0">
-                                <div className="font-semibold text-slate-900 text-sm truncate">
-                                  {est.apellidos} {est.nombres}
-                                </div>
-                                {est.cedula && (
-                                  <div className="text-slate-500 text-xs mt-0.5">
-                                    CI: {est.cedula}
-                                  </div>
-                                )}
+                      const asistencia = asistencias[est.id];
+                      const estado = asistencia?.estado || "";
+                      return (
+                        <div
+                          key={est.id}
+                          className="border border-slate-200 rounded-lg p-3 hover:border-blue-300 transition-colors"
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="flex-1 min-w-0">
+                              <div className="font-semibold text-slate-900 text-sm truncate">
+                                {est.apellidos} {est.nombres}
                               </div>
-                              <div className="flex gap-1.5 shrink-0">
-                                {(["P", "T", "A", "J"] as const).map(
-                                  (estadoBtn) => (
-                                    <button
-                                      key={estadoBtn}
-                                      onClick={() =>
-                                        actualizarAsistencia(est.id, estadoBtn)
-                                      }
-                                      className={`w-9 h-9 rounded-lg text-xs font-bold transition-all ${
-                                        estado === estadoBtn
-                                          ? estadoBtn === "P"
-                                            ? "bg-green-600 text-white shadow-md"
-                                            : estadoBtn === "T"
-                                            ? "bg-yellow-600 text-white shadow-md"
-                                            : estadoBtn === "A"
-                                            ? "bg-red-600 text-white shadow-md"
-                                            : "bg-blue-600 text-white shadow-md"
-                                          : "bg-slate-100 text-slate-700 hover:bg-slate-200"
-                                      }`}
-                                      title={
-                                        estadoBtn === "P"
-                                          ? "Presente"
-                                          : estadoBtn === "T"
-                                          ? "Tardanza"
-                                          : estadoBtn === "A"
-                                          ? "Ausente"
-                                          : "Justificado"
-                                      }
-                                    >
-                                      {estadoBtn}
-                                    </button>
-                                  )
-                                )}
-                              </div>
+                              {est.cedula && <div className="text-slate-500 text-xs mt-0.5">CI: {est.cedula}</div>}
                             </div>
-                            {estado && (
-                              <div className="mt-2">
-                                <input
-                                  type="text"
-                                  value={asistencia?.observacion || ""}
-                                  onChange={(e) =>
-                                    actualizarObservacionAsistencia(
-                                      est.id,
-                                      e.target.value
-                                    )
-                                  }
-                                  placeholder="Observación (opcional)..."
-                                  className="w-full border border-slate-300 rounded px-2 py-1 text-xs focus:ring-2 focus:ring-blue-500"
-                                />
-                              </div>
-                            )}
-                          </div>
-                        );
-                      } else {
-                        const calificacion = calificaciones[est.id];
-                        const nota = calificacion?.nota;
-                        const letra =
-                          nota !== undefined ? notaALetra(nota) : "";
-                        return (
-                          <div
-                            key={est.id}
-                            className="border border-slate-200 rounded-lg p-3 hover:border-blue-300 transition-colors"
-                          >
-                            <div className="flex items-center justify-between gap-3">
-                              <div className="flex-1 min-w-0">
-                                <div className="font-semibold text-slate-900 text-sm truncate">
-                                  {est.apellidos} {est.nombres}
-                                </div>
-                                {est.cedula && (
-                                  <div className="text-slate-500 text-xs mt-0.5">
-                                    CI: {est.cedula}
-                                  </div>
-                                )}
-                              </div>
-                              <div className="flex items-center gap-2 shrink-0">
-                                {letra && (
-                                  <div className="bg-blue-100 border border-blue-300 text-blue-800 px-2 py-1 rounded text-xs font-bold">
-                                    {letra}
-                                  </div>
-                                )}
-                                <input
-                                  type="number"
-                                  min="1"
-                                  max="10"
-                                  step="1"
-                                  value={nota !== undefined ? nota : ""}
-                                  onChange={(e) => {
-                                    const valor = parseInt(e.target.value);
-                                    if (
-                                      !isNaN(valor) &&
-                                      valor >= 1 &&
-                                      valor <= 10
-                                    ) {
-                                      actualizarCalificacion(est.id, valor);
-                                    }
-                                  }}
-                                  placeholder="1-10"
-                                  className={`w-16 border-2 rounded px-2 py-1 text-center text-sm font-bold focus:ring-2 focus:ring-blue-500 ${
-                                    nota !== undefined
-                                      ? nota >= 7
-                                        ? "border-green-500 text-green-700"
-                                        : nota >= 5
-                                        ? "border-yellow-500 text-yellow-700"
-                                        : "border-red-500 text-red-700"
-                                      : "border-slate-300"
+                            <div className="flex gap-1.5 shrink-0">
+                              {(["P", "T", "A", "J"] as const).map((estadoBtn) => (
+                                <button
+                                  key={estadoBtn}
+                                  onClick={() => actualizarAsistencia(est.id, estadoBtn)}
+                                  className={`w-9 h-9 rounded-lg text-xs font-bold transition-all ${
+                                    estado === estadoBtn
+                                      ? estadoBtn === "P"
+                                        ? "bg-green-600 text-white shadow-md"
+                                        : estadoBtn === "T"
+                                        ? "bg-yellow-600 text-white shadow-md"
+                                        : estadoBtn === "A"
+                                        ? "bg-red-600 text-white shadow-md"
+                                        : "bg-blue-600 text-white shadow-md"
+                                      : "bg-slate-100 text-slate-700 hover:bg-slate-200"
                                   }`}
-                                />
-                              </div>
+                                  title={
+                                    estadoBtn === "P"
+                                      ? "Presente"
+                                      : estadoBtn === "T"
+                                      ? "Tardanza"
+                                      : estadoBtn === "A"
+                                      ? "Ausente"
+                                      : "Justificado"
+                                  }
+                                >
+                                  {estadoBtn}
+                                </button>
+                              ))}
                             </div>
+                          </div>
+                          {estado && (
                             <div className="mt-2">
                               <input
                                 type="text"
-                                value={calificacion?.observacion || ""}
-                                onChange={(e) =>
-                                  actualizarObservacionCalificacion(
-                                    est.id,
-                                    e.target.value
-                                  )
-                                }
+                                value={asistencia?.observacion || ""}
+                                onChange={(e) => actualizarObservacionAsistencia(est.id, e.target.value)}
                                 placeholder="Observación (opcional)..."
                                 className="w-full border border-slate-300 rounded px-2 py-1 text-xs focus:ring-2 focus:ring-blue-500"
                               />
                             </div>
-                          </div>
-                        );
-                      }
+                          )}
+                        </div>
+                      );
                     })}
                   </div>
                 )}
 
-                {/* Contador de asistencia */}
-                {activeTab === "asistencia" && estudiantes.length > 0 && (
+                {activeTab === "asistencia" && estudiantes.length > 0 && materiaSeleccionada && (
                   <div className="mt-4 pt-3 border-t border-slate-200">
                     <div className="text-xs text-slate-600">
-                      {
-                        Object.keys(asistencias).filter(
-                          (key) => asistencias[key].estado
-                        ).length
-                      }{" "}
-                      de {estudiantes.length} estudiantes con asistencia
-                      registrada
+                      {Object.keys(asistencias).filter((key) => asistencias[key].estado).length} de{" "}
+                      {estudiantes.length} estudiantes con asistencia registrada
                     </div>
                   </div>
                 )}
@@ -1076,6 +1433,214 @@ export default function Calificaciones() {
             </div>
           )}
         </>
+      )}
+
+      {/* ===== MODAL DE ACTIVIDAD ===== */}
+      {showActividadModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-bold text-slate-900">
+                {editingActividadId ? "Editar Actividad" : "Nueva Actividad"}
+              </h3>
+              <button
+                onClick={() => {
+                  setShowActividadModal(false);
+                  setEditingActividadId(null);
+                }}
+                className="text-slate-400 hover:text-slate-600"
+              >
+                <FaTimes />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-2">Tipo de Actividad *</label>
+                <select
+                  value={actividadForm.tipo}
+                  onChange={(e) => setActividadForm({ ...actividadForm, tipo: e.target.value })}
+                  className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500"
+                >
+                  {TIPOS_ACTIVIDAD.map((tipo) => (
+                    <option key={tipo} value={tipo}>
+                      {tipo}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-2">Detalle *</label>
+                <input
+                  type="text"
+                  value={actividadForm.detalle}
+                  onChange={(e) => setActividadForm({ ...actividadForm, detalle: e.target.value })}
+                  placeholder="Ej: Suma y resta de enteros"
+                  className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-2">Fecha *</label>
+                <input
+                  type="date"
+                  value={actividadForm.fecha}
+                  onChange={(e) => setActividadForm({ ...actividadForm, fecha: e.target.value })}
+                  className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-2">
+                  Estrategia de Cálculo con Refuerzo
+                </label>
+                <select
+                  value={actividadForm.estrategiaNota}
+                  // ✅ CORREGIDO: casteo al tipo unión en lugar de 'any'
+                  onChange={(e) =>
+                    setActividadForm({
+                      ...actividadForm,
+                      estrategiaNota: e.target.value as "reemplazar" | "promediar" | "maxima",
+                    })
+                  }
+                  className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500"
+                >
+                  {ESTRATEGIAS_NOTA.map((estrategia) => (
+                    <option key={estrategia.value} value={estrategia.value}>
+                      {estrategia.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div className="flex gap-2 mt-6">
+              <button
+                onClick={guardarActividad}
+                disabled={isSaving}
+                className="flex-1 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-all flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed"
+              >
+                {isSaving ? <FaSpinner className="animate-spin" /> : <FaSave />}
+                {editingActividadId ? "Actualizar" : "Crear"}
+              </button>
+              <button
+                onClick={() => {
+                  setShowActividadModal(false);
+                  setEditingActividadId(null);
+                }}
+                className="flex-1 bg-slate-200 hover:bg-slate-300 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold transition-all"
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ===== MODAL DE REFUERZO ===== */}
+      {showRefuerzoModal && refuerzoEstudianteId && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-bold text-slate-900">Aplicar Refuerzo</h3>
+              <button
+                onClick={() => {
+                  setShowRefuerzoModal(false);
+                  setRefuerzoEstudianteId(null);
+                }}
+                className="text-slate-400 hover:text-slate-600"
+              >
+                <FaTimes />
+              </button>
+            </div>
+
+            <div className="mb-4 p-3 bg-orange-50 border border-orange-200 rounded-lg">
+              <p className="text-sm text-orange-800 font-semibold mb-1">
+                {estudiantes.find((e) => e.id === refuerzoEstudianteId)?.apellidos}{" "}
+                {estudiantes.find((e) => e.id === refuerzoEstudianteId)?.nombres}
+              </p>
+              <p className="text-xs text-orange-700">
+                Nota original: {calificaciones[refuerzoEstudianteId]?.nota}
+              </p>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-2">Nota de Refuerzo *</label>
+                <input
+                  type="number"
+                  min="1"
+                  max="10"
+                  step="1"
+                  value={refuerzoForm.nota}
+                  onChange={(e) => setRefuerzoForm({ ...refuerzoForm, nota: parseInt(e.target.value) || 1 })}
+                  className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-2">Detalle del Refuerzo *</label>
+                <input
+                  type="text"
+                  value={refuerzoForm.detalle}
+                  onChange={(e) => setRefuerzoForm({ ...refuerzoForm, detalle: e.target.value })}
+                  placeholder="Ej: Ejercicios adicionales de práctica"
+                  className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-2">Fecha del Refuerzo *</label>
+                <input
+                  type="date"
+                  value={refuerzoForm.fecha}
+                  onChange={(e) => setRefuerzoForm({ ...refuerzoForm, fecha: e.target.value })}
+                  className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+
+              {actividadSeleccionada && (
+                <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg text-xs text-blue-800">
+                  <p className="font-semibold mb-1">Estrategia de cálculo:</p>
+                  <p>
+                    {ESTRATEGIAS_NOTA.find((e) => e.value === actividadSeleccionada.estrategiaNota)?.label}
+                  </p>
+                  <p className="mt-2">
+                    Nota final estimada:{" "}
+                    <span className="font-bold">
+                      {calcularNotaFinal(
+                        calificaciones[refuerzoEstudianteId]?.nota || 0,
+                        { nota: refuerzoForm.nota, detalle: "", fecha: "", aplicadoPor: "" },
+                        actividadSeleccionada.estrategiaNota
+                      )}
+                    </span>
+                  </p>
+                </div>
+              )}
+            </div>
+
+            <div className="flex gap-2 mt-6">
+              <button
+                onClick={aplicarRefuerzo}
+                disabled={isSaving}
+                className="flex-1 bg-orange-600 hover:bg-orange-700 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-all flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed"
+              >
+                {isSaving ? <FaSpinner className="animate-spin" /> : <FaCheck />}
+                Aplicar Refuerzo
+              </button>
+              <button
+                onClick={() => {
+                  setShowRefuerzoModal(false);
+                  setRefuerzoEstudianteId(null);
+                }}
+                className="flex-1 bg-slate-200 hover:bg-slate-300 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold transition-all"
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </Layout>
   );
