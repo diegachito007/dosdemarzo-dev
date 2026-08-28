@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import {
   collection,
   query,
@@ -7,10 +7,11 @@ import {
   updateDoc,
   doc,
   serverTimestamp,
+  getDocs,
 } from "firebase/firestore";
 import { db } from "../lib/firebase";
 import { useAuth } from "../context/AuthContext";
-import type { Grado, Estudiante, Destreza, Ambito } from "../types";
+import type { Grado, Estudiante, Destreza, Ambito, PeriodoEvaluacion } from "../types";
 import Layout from "../components/Layout";
 import {
   FaUserCheck,
@@ -19,6 +20,7 @@ import {
   FaCheckCircle,
   FaExclamationTriangle,
   FaCalendarWeek,
+  FaCalendarAlt,
   FaChevronLeft,
   FaChevronRight,
   FaChalkboardTeacher,
@@ -41,6 +43,8 @@ interface AsistenciaData {
   registradoPor?: string;
 }
 
+type TipoReporte = "semanal" | "mensual" | "trimestral";
+
 // ==================== HELPERS ====================
 
 const getLunesSemana = (fecha: Date): Date => {
@@ -60,8 +64,18 @@ const generarDiasSemana = (lunes: Date): Date[] => {
   });
 };
 
+// ✅ CORREGIDO: construye el ISO desde componentes LOCALES (sin desfase UTC)
 const formatFechaISO = (fecha: Date): string => {
-  return fecha.toISOString().split("T")[0];
+  const year = fecha.getFullYear();
+  const month = String(fecha.getMonth() + 1).padStart(2, "0");
+  const day = String(fecha.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+};
+
+// ✅ NUEVO: parsea "YYYY-MM-DD" como fecha LOCAL (evita el día de desfase)
+const parseFechaLocal = (fechaISO: string): Date => {
+  const [year, month, day] = fechaISO.split("-").map(Number);
+  return new Date(year, month - 1, day);
 };
 
 const formatFechaCorta = (fecha: Date): string => {
@@ -79,7 +93,40 @@ const formatFechaCompleta = (fecha: Date): string => {
   });
 };
 
+const getDiasDelMes = (year: number, month: number): Date[] => {
+  const dias: Date[] = [];
+  const primerDia = new Date(year, month, 1);
+  const ultimoDia = new Date(year, month + 1, 0);
+
+  for (let d = new Date(primerDia); d <= ultimoDia; d.setDate(d.getDate() + 1)) {
+    const diaSemana = d.getDay();
+    if (diaSemana >= 1 && diaSemana <= 5) {
+      dias.push(new Date(d));
+    }
+  }
+  return dias;
+};
+
+// ✅ CORREGIDO: usa parseFechaLocal para evitar el desfase de zona horaria
+const getDiasDelPeriodo = (fechaInicio: string, fechaFin: string): Date[] => {
+  const dias: Date[] = [];
+  const inicio = parseFechaLocal(fechaInicio);
+  const fin = parseFechaLocal(fechaFin);
+
+  for (let d = new Date(inicio); d <= fin; d.setDate(d.getDate() + 1)) {
+    const diaSemana = d.getDay();
+    if (diaSemana >= 1 && diaSemana <= 5) {
+      dias.push(new Date(d));
+    }
+  }
+  return dias;
+};
+
 const NOMBRES_DIAS = ["Lun", "Mar", "Mié", "Jue", "Vie"];
+const NOMBRES_MESES = [
+  "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
+  "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre",
+];
 
 const ESTADO_CONFIG = {
   P: { label: "Presente", color: "bg-green-500", textColor: "text-green-700", bgColor: "bg-green-100", icon: FaCheckCircle },
@@ -97,19 +144,29 @@ export default function ReporteAsistencias() {
   const [ambitos, setAmbitos] = useState<Ambito[]>([]);
   const [destrezas, setDestrezas] = useState<Destreza[]>([]);
   const [asistencias, setAsistencias] = useState<AsistenciaData[]>([]);
+  const [periodos, setPeriodos] = useState<PeriodoEvaluacion[]>([]);
   const [loading, setLoading] = useState(true);
 
+  // Estados de navegación
+  const [tipoReporte, setTipoReporte] = useState<TipoReporte>("semanal");
   const [semanaActual, setSemanaActual] = useState<Date>(getLunesSemana(new Date()));
+  const [mesActual, setMesActual] = useState<number>(new Date().getMonth());
+  const [anioActual, setAnioActual] = useState<number>(new Date().getFullYear());
+  const [periodoSeleccionado, setPeriodoSeleccionado] = useState<string>("");
+
   const [vistaActiva, setVistaActiva] = useState<"tutor" | "docente">("tutor");
   const [gradoTutorSel, setGradoTutorSel] = useState<string>("");
   const [gradoDocenteSel, setGradoDocenteSel] = useState<string>("");
 
-  // ✅ NUEVO: Estados para el modal de justificación
+  // Estados para el modal de justificación
   const [showJustificarModal, setShowJustificarModal] = useState(false);
   const [estudianteJustificarId, setEstudianteJustificarId] = useState<string | null>(null);
   const [diasJustificar, setDiasJustificar] = useState<Set<string>>(new Set());
   const [motivoJustificacion, setMotivoJustificacion] = useState("");
   const [isJustificando, setIsJustificando] = useState(false);
+
+  // ✅ Ref para evitar loop al inicializar período seleccionado (fix exhaustive-deps)
+  const periodoInicializado = useRef(false);
 
   const esTutor = (userData?.tutorDe?.length ?? 0) > 0;
   const gradosTutor = useMemo(() => {
@@ -149,60 +206,128 @@ export default function ReporteAsistencias() {
     const qGrados = query(collection(db, "grados"), where("activo", "==", true));
     unsubs.push(
       onSnapshot(qGrados, (snap) => {
-        const data = snap.docs.map((d) => ({ id: d.id, ...d.data() } as Grado));
-        setGrados(data);
+        setGrados(snap.docs.map((d) => ({ id: d.id, ...d.data() } as Grado)));
       })
     );
 
     const qEst = query(collection(db, "estudiantes"), where("activo", "==", true));
     unsubs.push(
       onSnapshot(qEst, (snap) => {
-        const data = snap.docs.map((d) => ({ id: d.id, ...d.data() } as Estudiante));
-        setEstudiantes(data);
+        setEstudiantes(snap.docs.map((d) => ({ id: d.id, ...d.data() } as Estudiante)));
       })
     );
 
     const qAmb = query(collection(db, "ambitos"), where("activo", "==", true));
     unsubs.push(
       onSnapshot(qAmb, (snap) => {
-        const data = snap.docs.map((d) => ({ id: d.id, ...d.data() } as Ambito));
-        setAmbitos(data);
+        setAmbitos(snap.docs.map((d) => ({ id: d.id, ...d.data() } as Ambito)));
       })
     );
 
     const qDes = query(collection(db, "destrezas"), where("activo", "==", true));
     unsubs.push(
       onSnapshot(qDes, (snap) => {
-        const data = snap.docs.map((d) => ({ id: d.id, ...d.data() } as Destreza));
-        setDestrezas(data);
-        setLoading(false);
+        setDestrezas(snap.docs.map((d) => ({ id: d.id, ...d.data() } as Destreza)));
       })
     );
 
     return () => unsubs.forEach((u) => u());
   }, []);
 
+  // ✅ CORREGIDO: carga períodos SIN orderBy (evita índice) y con useRef (evita loop)
   useEffect(() => {
-    const diasSemana = generarDiasSemana(semanaActual);
-    const fechasSemana = diasSemana.map(formatFechaISO);
+    let isMounted = true;
 
-    const q = query(
-      collection(db, "asistencias"),
-      where("fecha", "in", fechasSemana)
-    );
+    const cargarPeriodos = async () => {
+      try {
+        const q = query(
+          collection(db, "periodosEvaluacion"),
+          where("activo", "==", true)
+        );
+        const snap = await getDocs(q);
+        const data = snap.docs
+          .map((d) => ({ id: d.id, ...d.data() } as PeriodoEvaluacion))
+          .sort((a, b) => (a.orden || 0) - (b.orden || 0));
 
-    const unsub = onSnapshot(q, (snap) => {
-      const data = snap.docs.map((d) => ({
-        id: d.id,
-        ...d.data(),
-      } as AsistenciaData));
-      setAsistencias(data);
-    });
+        if (isMounted) {
+          setPeriodos(data);
+          if (data.length > 0 && !periodoInicializado.current) {
+            setPeriodoSeleccionado(data[0].id);
+            periodoInicializado.current = true;
+          }
+          setLoading(false);
+        }
+      } catch (error) {
+        console.error("Error cargando períodos:", error);
+        if (isMounted) setLoading(false);
+      }
+    };
 
-    return () => unsub();
-  }, [semanaActual]);
+    cargarPeriodos();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
-  // ==================== NAVEGACIÓN SEMANA ====================
+  // ✅ CORREGIDO: carga asistencias según tipo de reporte (sin setState síncrono)
+  useEffect(() => {
+    let isMounted = true;
+    let fechasAFiltrar: string[] = [];
+
+    if (tipoReporte === "semanal") {
+      fechasAFiltrar = generarDiasSemana(semanaActual).map(formatFechaISO);
+    } else if (tipoReporte === "mensual") {
+      fechasAFiltrar = getDiasDelMes(anioActual, mesActual).map(formatFechaISO);
+    } else if (tipoReporte === "trimestral" && periodoSeleccionado) {
+      const periodo = periodos.find((p) => p.id === periodoSeleccionado);
+      if (periodo) {
+        fechasAFiltrar = getDiasDelPeriodo(periodo.fechaInicio, periodo.fechaFin).map(formatFechaISO);
+      }
+    }
+
+    if (fechasAFiltrar.length === 0) {
+      return;
+    }
+
+    // Hasta 30 fechas: tiempo real con onSnapshot
+    if (fechasAFiltrar.length <= 30) {
+      const q = query(
+        collection(db, "asistencias"),
+        where("fecha", "in", fechasAFiltrar)
+      );
+
+      const unsub = onSnapshot(q, (snap) => {
+        if (!isMounted) return;
+        setAsistencias(
+          snap.docs.map((d) => ({ id: d.id, ...d.data() } as AsistenciaData))
+        );
+      });
+
+      return () => {
+        isMounted = false;
+        unsub();
+      };
+    }
+
+    // Más de 30 fechas: consultas por chunks (Firestore limita 'in' a 30)
+    const cargarChunks = async () => {
+      const todas: AsistenciaData[] = [];
+      for (let i = 0; i < fechasAFiltrar.length; i += 30) {
+        const chunk = fechasAFiltrar.slice(i, i + 30);
+        const q = query(collection(db, "asistencias"), where("fecha", "in", chunk));
+        const snap = await getDocs(q);
+        todas.push(...snap.docs.map((d) => ({ id: d.id, ...d.data() } as AsistenciaData)));
+      }
+      if (isMounted) setAsistencias(todas);
+    };
+
+    cargarChunks();
+    return () => {
+      isMounted = false;
+    };
+  }, [tipoReporte, semanaActual, mesActual, anioActual, periodoSeleccionado, periodos]);
+
+  // ==================== NAVEGACIÓN ====================
 
   const cambiarSemana = (offset: number) => {
     const nueva = new Date(semanaActual);
@@ -210,10 +335,40 @@ export default function ReporteAsistencias() {
     setSemanaActual(nueva);
   };
 
-  const irAHoy = () => setSemanaActual(getLunesSemana(new Date()));
+  const cambiarMes = (offset: number) => {
+    let nuevoMes = mesActual + offset;
+    let nuevoAnio = anioActual;
+
+    if (nuevoMes < 0) {
+      nuevoMes = 11;
+      nuevoAnio--;
+    } else if (nuevoMes > 11) {
+      nuevoMes = 0;
+      nuevoAnio++;
+    }
+
+    setMesActual(nuevoMes);
+    setAnioActual(nuevoAnio);
+  };
+
+  const irAHoy = () => {
+    setSemanaActual(getLunesSemana(new Date()));
+    setMesActual(new Date().getMonth());
+    setAnioActual(new Date().getFullYear());
+  };
 
   const diasSemana = useMemo(() => generarDiasSemana(semanaActual), [semanaActual]);
+  const diasMes = useMemo(() => getDiasDelMes(anioActual, mesActual), [anioActual, mesActual]);
+  const diasPeriodo = useMemo(() => {
+    if (!periodoSeleccionado) return [];
+    const periodo = periodos.find((p) => p.id === periodoSeleccionado);
+    return periodo ? getDiasDelPeriodo(periodo.fechaInicio, periodo.fechaFin) : [];
+  }, [periodoSeleccionado, periodos]);
+
   const hoyISO = formatFechaISO(new Date());
+  const diasAMostrar =
+    tipoReporte === "semanal" ? diasSemana : tipoReporte === "mensual" ? diasMes : diasPeriodo;
+  const diasVisibles = tipoReporte === "semanal" ? diasAMostrar : diasAMostrar.slice(0, 10);
 
   // ==================== VISTA TUTOR ====================
 
@@ -233,20 +388,15 @@ export default function ReporteAsistencias() {
     return Array.from(ambitosIds).map((id) => {
       const ambito = ambitos.find((a) => a.id === id);
       const destreza = destrezas.find((d) => d.id === id);
-      return {
-        id,
-        nombre: ambito?.nombre || destreza?.nombre || "Sin nombre",
-      };
+      return { id, nombre: ambito?.nombre || destreza?.nombre || "Sin nombre" };
     });
   }, [asistencias, gradoTutorEfectivo, ambitos, destrezas]);
 
-  // ✅ MODIFICADO: matrizTutor ahora también guarda el ID del documento de asistencia
   const matrizTutor = useMemo(() => {
-    const mapa: Record<string, Record<string, Record<string, { 
-      estado: "P" | "T" | "A" | "J"; 
-      observacion?: string;
-      asistenciaId: string;
-    }>>> = {};
+    const mapa: Record<
+      string,
+      Record<string, Record<string, { estado: "P" | "T" | "A" | "J"; observacion?: string; asistenciaId: string }>>
+    > = {};
     asistencias
       .filter((a) => a.gradoId === gradoTutorEfectivo)
       .forEach((a) => {
@@ -276,7 +426,6 @@ export default function ReporteAsistencias() {
     return conteo;
   }, [matrizTutor]);
 
-  // ✅ NUEVO: Contar ausencias por estudiante POR DÍA (para el modal)
   const ausenciasPorEstudiantePorDia = useMemo(() => {
     const conteo: Record<string, Record<string, number>> = {};
     Object.entries(matrizTutor).forEach(([estId, fechas]) => {
@@ -286,9 +435,7 @@ export default function ReporteAsistencias() {
         Object.values(materias).forEach((reg) => {
           if (reg.estado === "A") ausencias++;
         });
-        if (ausencias > 0) {
-          conteo[estId][fecha] = ausencias;
-        }
+        if (ausencias > 0) conteo[estId][fecha] = ausencias;
       });
     });
     return conteo;
@@ -309,10 +456,7 @@ export default function ReporteAsistencias() {
     return Array.from(ambitosIds).map((id) => {
       const ambito = ambitos.find((a) => a.id === id);
       const destreza = destrezas.find((d) => d.id === id);
-      return {
-        id,
-        nombre: ambito?.nombre || destreza?.nombre || "Sin nombre",
-      };
+      return { id, nombre: ambito?.nombre || destreza?.nombre || "Sin nombre" };
     });
   }, [asistenciasDocente, ambitos, destrezas]);
 
@@ -356,6 +500,10 @@ export default function ReporteAsistencias() {
     );
   };
 
+  const nombreDia = (dia: Date): string => {
+    return NOMBRES_DIAS[dia.getDay() - 1] || "";
+  };
+
   // ==================== JUSTIFICAR ASISTENCIAS ====================
 
   const abrirModalJustificar = (estudianteId: string) => {
@@ -381,13 +529,8 @@ export default function ReporteAsistencias() {
     if (!estudianteJustificarId) return;
     const ausencias = ausenciasPorEstudiantePorDia[estudianteJustificarId] || {};
     const diasConAusencia = Object.keys(ausencias);
-    // Si todos están seleccionados, deseleccionar todos; sino, seleccionar todos
     const todosSeleccionados = diasConAusencia.every((d) => diasJustificar.has(d));
-    if (todosSeleccionados) {
-      setDiasJustificar(new Set());
-    } else {
-      setDiasJustificar(new Set(diasConAusencia));
-    }
+    setDiasJustificar(todosSeleccionados ? new Set() : new Set(diasConAusencia));
   };
 
   const justificarDiasSeleccionados = async () => {
@@ -398,17 +541,13 @@ export default function ReporteAsistencias() {
 
     setIsJustificando(true);
     try {
-      // Recolectar todos los IDs de asistencias a actualizar
       const asistenciasAActualizar: string[] = [];
       const regsEstudiante = matrizTutor[estudianteJustificarId] || {};
 
       diasJustificar.forEach((fechaISO) => {
         const regsDelDia = regsEstudiante[fechaISO] || {};
         Object.values(regsDelDia).forEach((reg) => {
-          // Solo justificamos si está Ausente (no tocamos las que ya están J, P o T)
-          if (reg.estado === "A") {
-            asistenciasAActualizar.push(reg.asistenciaId);
-          }
+          if (reg.estado === "A") asistenciasAActualizar.push(reg.asistenciaId);
         });
       });
 
@@ -422,7 +561,6 @@ export default function ReporteAsistencias() {
         ? `Justificado por tutor: ${motivoJustificacion.trim()}`
         : "Justificado por tutor";
 
-      // Actualizar todas las asistencias
       const batch = asistenciasAActualizar.map((asistenciaId) =>
         updateDoc(doc(db, "asistencias", asistenciaId), {
           estado: "J",
@@ -434,9 +572,7 @@ export default function ReporteAsistencias() {
 
       await Promise.all(batch);
 
-      alert(
-        `✅ Se justificaron ${asistenciasAActualizar.length} ausencia(s) correctamente`
-      );
+      alert(`✅ Se justificaron ${asistenciasAActualizar.length} ausencia(s) correctamente`);
       setShowJustificarModal(false);
       setEstudianteJustificarId(null);
       setDiasJustificar(new Set());
@@ -453,7 +589,7 @@ export default function ReporteAsistencias() {
 
   if (loading) {
     return (
-      <Layout title="Reporte de Asistencias" subtitle="Estadísticas semanales" showBack>
+      <Layout title="Reporte de Asistencias" subtitle="Estadísticas de asistencia" showBack>
         <div className="flex items-center justify-center py-20">
           <FaSpinner className="animate-spin text-4xl text-blue-600" />
         </div>
@@ -468,42 +604,138 @@ export default function ReporteAsistencias() {
   return (
     <Layout
       title="Reporte de Asistencias"
-      subtitle="Control semanal de asistencia por grado y materia"
+      subtitle="Control de asistencia por grado y materia"
       showBack
     >
-      {/* Navegador de semana */}
+      {/* Selector de tipo de reporte */}
       <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4 mb-6">
-        <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <FaCalendarWeek className="text-blue-600 text-lg" />
-            <span className="text-sm font-semibold text-slate-700">Semana:</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => cambiarSemana(-1)}
-              className="p-2 hover:bg-slate-100 rounded-lg transition-colors"
-              title="Semana anterior"
-            >
-              <FaChevronLeft className="text-slate-600" />
-            </button>
-            <div className="px-4 py-2 bg-blue-50 border border-blue-200 rounded-lg text-sm font-semibold text-blue-900 min-w-55 text-center">
-              {formatFechaCorta(diasSemana[0])} — {formatFechaCorta(diasSemana[4])}
-            </div>
-            <button
-              onClick={() => cambiarSemana(1)}
-              className="p-2 hover:bg-slate-100 rounded-lg transition-colors"
-              title="Semana siguiente"
-            >
-              <FaChevronRight className="text-slate-600" />
-            </button>
-            <button
-              onClick={irAHoy}
-              className="ml-2 px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold transition-colors"
-            >
-              Hoy
-            </button>
-          </div>
+        <div className="flex flex-wrap gap-2">
+          <button
+            onClick={() => setTipoReporte("semanal")}
+            className={`flex-1 min-w-32 px-4 py-2.5 rounded-lg text-sm font-semibold transition-all flex items-center justify-center gap-2 ${
+              tipoReporte === "semanal"
+                ? "bg-blue-600 text-white shadow"
+                : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+            }`}
+          >
+            <FaCalendarWeek className="text-sm" />
+            Semanal
+          </button>
+          <button
+            onClick={() => setTipoReporte("mensual")}
+            className={`flex-1 min-w-32 px-4 py-2.5 rounded-lg text-sm font-semibold transition-all flex items-center justify-center gap-2 ${
+              tipoReporte === "mensual"
+                ? "bg-blue-600 text-white shadow"
+                : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+            }`}
+          >
+            <FaCalendarAlt className="text-sm" />
+            Mensual
+          </button>
+          <button
+            onClick={() => setTipoReporte("trimestral")}
+            className={`flex-1 min-w-32 px-4 py-2.5 rounded-lg text-sm font-semibold transition-all flex items-center justify-center gap-2 ${
+              tipoReporte === "trimestral"
+                ? "bg-blue-600 text-white shadow"
+                : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+            }`}
+          >
+            <FaCalendarAlt className="text-sm" />
+            Trimestral/Quimestral
+          </button>
         </div>
+      </div>
+
+      {/* Navegador según tipo de reporte */}
+      <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4 mb-6">
+        {tipoReporte === "semanal" && (
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <FaCalendarWeek className="text-blue-600 text-lg" />
+              <span className="text-sm font-semibold text-slate-700">Semana:</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => cambiarSemana(-1)}
+                className="p-2 hover:bg-slate-100 rounded-lg transition-colors"
+                title="Semana anterior"
+              >
+                <FaChevronLeft className="text-slate-600" />
+              </button>
+              <div className="px-4 py-2 bg-blue-50 border border-blue-200 rounded-lg text-sm font-semibold text-blue-900 min-w-55 text-center">
+                {formatFechaCorta(diasSemana[0])} — {formatFechaCorta(diasSemana[4])}
+              </div>
+              <button
+                onClick={() => cambiarSemana(1)}
+                className="p-2 hover:bg-slate-100 rounded-lg transition-colors"
+                title="Semana siguiente"
+              >
+                <FaChevronRight className="text-slate-600" />
+              </button>
+              <button
+                onClick={irAHoy}
+                className="ml-2 px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold transition-colors"
+              >
+                Hoy
+              </button>
+            </div>
+          </div>
+        )}
+
+        {tipoReporte === "mensual" && (
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <FaCalendarAlt className="text-blue-600 text-lg" />
+              <span className="text-sm font-semibold text-slate-700">Mes:</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => cambiarMes(-1)}
+                className="p-2 hover:bg-slate-100 rounded-lg transition-colors"
+                title="Mes anterior"
+              >
+                <FaChevronLeft className="text-slate-600" />
+              </button>
+              <div className="px-4 py-2 bg-blue-50 border border-blue-200 rounded-lg text-sm font-semibold text-blue-900 min-w-55 text-center">
+                {NOMBRES_MESES[mesActual]} {anioActual}
+              </div>
+              <button
+                onClick={() => cambiarMes(1)}
+                className="p-2 hover:bg-slate-100 rounded-lg transition-colors"
+                title="Mes siguiente"
+              >
+                <FaChevronRight className="text-slate-600" />
+              </button>
+              <button
+                onClick={irAHoy}
+                className="ml-2 px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold transition-colors"
+              >
+                Hoy
+              </button>
+            </div>
+          </div>
+        )}
+
+        {tipoReporte === "trimestral" && (
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <FaCalendarAlt className="text-blue-600 text-lg" />
+              <span className="text-sm font-semibold text-slate-700">Período:</span>
+            </div>
+            <select
+              value={periodoSeleccionado}
+              onChange={(e) => setPeriodoSeleccionado(e.target.value)}
+              className="px-4 py-2 bg-blue-50 border border-blue-200 rounded-lg text-sm font-semibold text-blue-900 focus:ring-2 focus:ring-blue-500"
+            >
+              {periodos.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.nombre} ({formatFechaCorta(parseFechaLocal(p.fechaInicio))} -{" "}
+                  {formatFechaCorta(parseFechaLocal(p.fechaFin))})
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
       </div>
 
       {/* Leyenda de estados */}
@@ -602,9 +834,7 @@ export default function ReporteAsistencias() {
           {estudiantesGradoTutor.length === 0 ? (
             <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-8 text-center">
               <FaExclamationTriangle className="text-yellow-600 text-4xl mx-auto mb-3" />
-              <p className="text-yellow-800 font-medium">
-                No hay estudiantes en este grado
-              </p>
+              <p className="text-yellow-800 font-medium">No hay estudiantes en este grado</p>
             </div>
           ) : (
             <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
@@ -616,8 +846,7 @@ export default function ReporteAsistencias() {
                       {gradoTutorActual?.nombre} - {gradoTutorActual?.paralelo}
                     </h3>
                     <p className="text-white/80 text-xs">
-                      {estudiantesGradoTutor.length} estudiantes •{" "}
-                      {materiasGradoTutor.length} materia(s) con registros
+                      {estudiantesGradoTutor.length} estudiantes • {materiasGradoTutor.length} materia(s) con registros
                     </p>
                   </div>
                 </div>
@@ -630,7 +859,7 @@ export default function ReporteAsistencias() {
                       <th className="text-left px-4 py-3 font-semibold text-slate-700 min-w-45 sticky left-0 bg-slate-50">
                         Estudiante
                       </th>
-                      {diasSemana.map((dia, i) => {
+                      {diasVisibles.map((dia, i) => {
                         const esHoy = formatFechaISO(dia) === hoyISO;
                         return (
                           <th
@@ -639,39 +868,32 @@ export default function ReporteAsistencias() {
                               esHoy ? "bg-blue-50 text-blue-700" : "text-slate-700"
                             }`}
                           >
-                            <div>{NOMBRES_DIAS[i]}</div>
+                            <div>{nombreDia(dia)}</div>
                             <div className={`text-xs font-normal ${esHoy ? "text-blue-600" : "text-slate-500"}`}>
                               {formatFechaCorta(dia)}
                             </div>
                           </th>
                         );
                       })}
-                      <th className="text-center px-3 py-3 font-semibold text-slate-700 min-w-17.5">
-                        Aus.
-                      </th>
-                      {/* ✅ NUEVA: Columna de acción */}
-                      <th className="text-center px-3 py-3 font-semibold text-slate-700 min-w-20">
-                        Acción
-                      </th>
+                      {diasAMostrar.length > diasVisibles.length && (
+                        <th className="text-center px-2 py-3 font-semibold text-slate-500 text-xs">
+                          +{diasAMostrar.length - diasVisibles.length} días
+                        </th>
+                      )}
+                      <th className="text-center px-3 py-3 font-semibold text-slate-700 min-w-17.5">Aus.</th>
+                      <th className="text-center px-3 py-3 font-semibold text-slate-700 min-w-20">Acción</th>
                     </tr>
                   </thead>
                   <tbody>
                     {estudiantesGradoTutor.map((est) => {
                       const tieneAusencias = (ausenciasPorEstudiante[est.id] ?? 0) > 0;
                       return (
-                        <tr
-                          key={est.id}
-                          className="border-b border-slate-100 hover:bg-slate-50"
-                        >
+                        <tr key={est.id} className="border-b border-slate-100 hover:bg-slate-50">
                           <td className="px-4 py-2 sticky left-0 bg-white">
-                            <div className="font-medium text-slate-900 text-xs truncate">
-                              {est.apellidos}
-                            </div>
-                            <div className="text-slate-500 text-xs truncate">
-                              {est.nombres}
-                            </div>
+                            <div className="font-medium text-slate-900 text-xs truncate">{est.apellidos}</div>
+                            <div className="text-slate-500 text-xs truncate">{est.nombres}</div>
                           </td>
-                          {diasSemana.map((dia, i) => {
+                          {diasVisibles.map((dia, i) => {
                             const fechaISO = formatFechaISO(dia);
                             const regsDelDia = matrizTutor[est.id]?.[fechaISO] || {};
                             const registrosMaterias = Object.entries(regsDelDia);
@@ -709,6 +931,9 @@ export default function ReporteAsistencias() {
                               </td>
                             );
                           })}
+                          {diasAMostrar.length > diasVisibles.length && (
+                            <td className="px-2 py-2 text-center text-slate-400 text-xs">...</td>
+                          )}
                           <td className="px-3 py-2 text-center">
                             {tieneAusencias ? (
                               <span className="inline-flex items-center justify-center w-7 h-7 bg-red-100 text-red-700 rounded-full text-xs font-bold">
@@ -718,9 +943,8 @@ export default function ReporteAsistencias() {
                               <span className="text-slate-400 text-xs">0</span>
                             )}
                           </td>
-                          {/* ✅ NUEVA: Celda de acción (botón Justificar) */}
                           <td className="px-3 py-2 text-center">
-                            {tieneAusencias ? (
+                            {tieneAusencias && tipoReporte === "semanal" ? (
                               <button
                                 onClick={() => abrirModalJustificar(est.id)}
                                 className="inline-flex items-center gap-1 px-2 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold transition-all shadow-sm"
@@ -742,11 +966,11 @@ export default function ReporteAsistencias() {
 
               <div className="p-4 bg-slate-50 border-t border-slate-200 text-xs text-slate-600">
                 <FaInfoCircle className="inline mr-1" />
-                <strong>Tip:</strong> Cuando un estudiante tiene ausencias, aparece el botón{" "}
-                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded font-semibold">
-                  <FaFileSignature className="text-[9px]" /> Justificar
-                </span>{" "}
-                para justificar días completos de una sola vez.
+                <strong>Nota:</strong>{" "}
+                {tipoReporte === "semanal"
+                  ? "Vista detallada de la semana."
+                  : `Mostrando primeros ${diasVisibles.length} días de ${diasAMostrar.length} días hábiles del período.`}{" "}
+                {tipoReporte !== "semanal" && "La justificación solo está disponible en vista semanal."}
               </div>
             </div>
           )}
@@ -759,12 +983,8 @@ export default function ReporteAsistencias() {
           {gradosDocente.length === 0 ? (
             <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-8 text-center">
               <FaChalkboardTeacher className="text-yellow-600 text-4xl mx-auto mb-3" />
-              <p className="text-yellow-800 font-medium mb-1">
-                No has registrado asistencias esta semana
-              </p>
-              <p className="text-yellow-700 text-sm">
-                Ve al módulo de Calificaciones para tomar asistencia en tus grados
-              </p>
+              <p className="text-yellow-800 font-medium mb-1">No has registrado asistencias en este período</p>
+              <p className="text-yellow-700 text-sm">Ve al módulo de Calificaciones para tomar asistencia en tus grados</p>
             </div>
           ) : (
             <>
@@ -787,12 +1007,8 @@ export default function ReporteAsistencias() {
               {materiasDocenteGrado.length === 0 ? (
                 <div className="bg-slate-50 border border-slate-200 rounded-xl p-8 text-center">
                   <FaBook className="text-slate-400 text-4xl mx-auto mb-3" />
-                  <p className="text-slate-700 font-medium mb-1">
-                    No has registrado asistencias en este grado esta semana
-                  </p>
-                  <p className="text-slate-600 text-sm">
-                    Selecciona otro grado o registra asistencia en Calificaciones
-                  </p>
+                  <p className="text-slate-700 font-medium mb-1">No has registrado asistencias en este grado en este período</p>
+                  <p className="text-slate-600 text-sm">Selecciona otro grado o registra asistencia en Calificaciones</p>
                 </div>
               ) : (
                 <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
@@ -801,12 +1017,10 @@ export default function ReporteAsistencias() {
                       <FaChalkboardTeacher className="text-white text-xl" />
                       <div>
                         <h3 className="text-white font-semibold">
-                          Mis Registros en {gradoDocenteActual?.nombre} -{" "}
-                          {gradoDocenteActual?.paralelo}
+                          Mis Registros en {gradoDocenteActual?.nombre} - {gradoDocenteActual?.paralelo}
                         </h3>
                         <p className="text-white/80 text-xs">
-                          {materiasDocenteGrado.length} materia(s) con asistencia
-                          registrada por ti
+                          {materiasDocenteGrado.length} materia(s) con asistencia registrada por ti
                         </p>
                       </div>
                     </div>
@@ -816,10 +1030,8 @@ export default function ReporteAsistencias() {
                     <table className="w-full text-sm">
                       <thead className="bg-slate-50 border-b border-slate-200">
                         <tr>
-                          <th className="text-left px-4 py-3 font-semibold text-slate-700 min-w-50">
-                            Materia
-                          </th>
-                          {diasSemana.map((dia, i) => {
+                          <th className="text-left px-4 py-3 font-semibold text-slate-700 min-w-50">Materia</th>
+                          {diasVisibles.map((dia, i) => {
                             const esHoy = formatFechaISO(dia) === hoyISO;
                             return (
                               <th
@@ -828,37 +1040,32 @@ export default function ReporteAsistencias() {
                                   esHoy ? "bg-blue-50 text-blue-700" : "text-slate-700"
                                 }`}
                               >
-                                <div>{NOMBRES_DIAS[i]}</div>
+                                <div>{nombreDia(dia)}</div>
                                 <div className={`text-xs font-normal ${esHoy ? "text-blue-600" : "text-slate-500"}`}>
                                   {formatFechaCorta(dia)}
                                 </div>
                               </th>
                             );
                           })}
+                          {diasAMostrar.length > diasVisibles.length && (
+                            <th className="text-center px-2 py-3 font-semibold text-slate-500 text-xs">
+                              +{diasAMostrar.length - diasVisibles.length} días
+                            </th>
+                          )}
                         </tr>
                       </thead>
                       <tbody>
                         {materiasDocenteGrado.map((materia) => (
-                          <tr
-                            key={materia.id}
-                            className="border-b border-slate-100 hover:bg-slate-50"
-                          >
+                          <tr key={materia.id} className="border-b border-slate-100 hover:bg-slate-50">
                             <td className="px-4 py-3">
-                              <div className="font-semibold text-slate-900 text-sm">
-                                {materia.nombre}
-                              </div>
+                              <div className="font-semibold text-slate-900 text-sm">{materia.nombre}</div>
                             </td>
-                            {diasSemana.map((dia, i) => {
+                            {diasVisibles.map((dia, i) => {
                               const fechaISO = formatFechaISO(dia);
                               const datos = matrizDocente[materia.id]?.[fechaISO];
                               if (!datos || datos.total === 0) {
                                 return (
-                                  <td
-                                    key={i}
-                                    className="px-2 py-3 text-center text-slate-300 text-xs"
-                                  >
-                                    —
-                                  </td>
+                                  <td key={i} className="px-2 py-3 text-center text-slate-300 text-xs">—</td>
                                 );
                               }
                               return (
@@ -892,6 +1099,9 @@ export default function ReporteAsistencias() {
                                 </td>
                               );
                             })}
+                            {diasAMostrar.length > diasVisibles.length && (
+                              <td className="px-2 py-3 text-center text-slate-400 text-xs">...</td>
+                            )}
                           </tr>
                         ))}
                       </tbody>
@@ -900,7 +1110,9 @@ export default function ReporteAsistencias() {
 
                   <div className="p-4 bg-slate-50 border-t border-slate-200 text-xs text-slate-600">
                     <FaInfoCircle className="inline mr-1" />
-                    Los números muestran cuántos estudiantes tuvieron cada estado en esa materia y día.
+                    Los números muestran cuántos estudiantes tuvieron cada estado en esa materia y día.{" "}
+                    {tipoReporte !== "semanal" &&
+                      `Mostrando primeros ${diasVisibles.length} días de ${diasAMostrar.length} días hábiles en total.`}
                   </div>
                 </div>
               )}
@@ -913,16 +1125,12 @@ export default function ReporteAsistencias() {
       {!esTutor && gradosDocente.length === 0 && (
         <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-8 text-center">
           <FaExclamationTriangle className="text-yellow-600 text-4xl mx-auto mb-3" />
-          <p className="text-yellow-800 font-medium mb-1">
-            No tienes acceso a reportes de asistencia
-          </p>
-          <p className="text-yellow-700 text-sm">
-            Contacta al administrador para que te asigne grados o tutorías
-          </p>
+          <p className="text-yellow-800 font-medium mb-1">No tienes acceso a reportes de asistencia</p>
+          <p className="text-yellow-700 text-sm">Contacta al administrador para que te asigne grados o tutorías</p>
         </div>
       )}
 
-      {/* ✅ NUEVO: MODAL DE JUSTIFICACIÓN */}
+      {/* Modal de Justificación */}
       {showJustificarModal && estudianteJustificar && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full p-6 max-h-[90vh] overflow-y-auto">
@@ -932,12 +1140,9 @@ export default function ReporteAsistencias() {
                   <FaFileSignature className="text-blue-600 text-xl" />
                 </div>
                 <div>
-                  <h3 className="text-lg font-bold text-slate-900">
-                    Justificar Ausencias
-                  </h3>
+                  <h3 className="text-lg font-bold text-slate-900">Justificar Ausencias</h3>
                   <p className="text-xs text-slate-500">
-                    Semana del {formatFechaCorta(diasSemana[0])} al{" "}
-                    {formatFechaCorta(diasSemana[4])}
+                    Semana del {formatFechaCorta(diasSemana[0])} al {formatFechaCorta(diasSemana[4])}
                   </p>
                 </div>
               </div>
@@ -953,7 +1158,6 @@ export default function ReporteAsistencias() {
               </button>
             </div>
 
-            {/* Info del estudiante */}
             <div className="mb-4 p-3 bg-purple-50 border border-purple-200 rounded-lg">
               <p className="text-sm text-purple-800 font-semibold">
                 {estudianteJustificar.apellidos} {estudianteJustificar.nombres}
@@ -964,12 +1168,9 @@ export default function ReporteAsistencias() {
               </p>
             </div>
 
-            {/* Selector de días */}
             <div className="mb-4">
               <div className="flex items-center justify-between mb-2">
-                <label className="text-sm font-semibold text-slate-700">
-                  Selecciona los días a justificar *
-                </label>
+                <label className="text-sm font-semibold text-slate-700">Selecciona los días a justificar *</label>
                 <button
                   onClick={seleccionarTodosDiasConAusencia}
                   className="text-xs text-blue-600 hover:text-blue-700 font-medium"
@@ -1008,9 +1209,7 @@ export default function ReporteAsistencias() {
                           <div className="font-semibold text-slate-900 text-sm capitalize">
                             {formatFechaCompleta(dia)}
                           </div>
-                          <div className="text-xs text-slate-500">
-                            {NOMBRES_DIAS[i]}
-                          </div>
+                          <div className="text-xs text-slate-500">{NOMBRES_DIAS[i]}</div>
                         </div>
                       </div>
                       {tieneAusencias ? (
@@ -1019,9 +1218,7 @@ export default function ReporteAsistencias() {
                           {ausenciasDia} ausencia{ausenciasDia !== 1 ? "s" : ""}
                         </span>
                       ) : (
-                        <span className="text-xs text-slate-400 italic">
-                          Sin ausencias
-                        </span>
+                        <span className="text-xs text-slate-400 italic">Sin ausencias</span>
                       )}
                     </label>
                   );
@@ -1029,7 +1226,6 @@ export default function ReporteAsistencias() {
               </div>
             </div>
 
-            {/* Motivo */}
             <div className="mb-5">
               <label className="block text-sm font-semibold text-slate-700 mb-2">
                 Motivo de la justificación <span className="text-slate-400 font-normal">(opcional)</span>
@@ -1044,17 +1240,14 @@ export default function ReporteAsistencias() {
               />
             </div>
 
-            {/* Preview */}
             {diasJustificar.size > 0 && (
               <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg text-xs text-blue-800">
                 <FaInfoCircle className="inline mr-1" />
-                Se justificarán todas las ausencias de{" "}
-                <strong>{diasJustificar.size} día(s)</strong> en{" "}
+                Se justificarán todas las ausencias de <strong>{diasJustificar.size} día(s)</strong> en{" "}
                 <strong>todas las materias</strong> registradas.
               </div>
             )}
 
-            {/* Botones */}
             <div className="flex gap-2">
               <button
                 onClick={justificarDiasSeleccionados}
