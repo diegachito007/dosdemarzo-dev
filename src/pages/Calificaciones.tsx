@@ -97,7 +97,6 @@ interface CalificacionData {
   updatedAt?: Timestamp | Date;
 }
 
-// ✅ NUEVO: Asignaturas del docente desde Mi Horario
 interface AsignaturaDocente {
   id: string;
   docenteId: string;
@@ -186,7 +185,6 @@ export default function Calificaciones() {
   const [loading, setLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
 
-  // ✅ NUEVO: Asignaturas del docente desde Mi Horario (tiempo real)
   const [asignaturasDocente, setAsignaturasDocente] = useState<AsignaturaDocente[]>([]);
 
   const [activeTab, setActiveTab] = useState<"asistencia" | "calificaciones">("asistencia");
@@ -237,7 +235,6 @@ export default function Calificaciones() {
   const anioActivo = aniosLectivos.find((a) => a.activo);
   const esGradoBachillerato = esBachillerato(selectedGradoNombre);
 
-  // ✅ NUEVO: Materias del docente para el grado seleccionado
   const materiasDelGradoDocente = useMemo(() => {
     if (!selectedGradoId) return [];
     const destrezasIds = asignaturasDocente
@@ -246,21 +243,18 @@ export default function Calificaciones() {
     return destrezas.filter((d) => destrezasIds.includes(d.id));
   }, [selectedGradoId, asignaturasDocente, destrezas]);
 
-  // ✅ NUEVO: Ámbitos disponibles (solo los que tienen materias asignadas al docente)
   const ambitosDisponibles = useMemo(() => {
     if (!selectedGradoId) return [];
     const ambitosIds = new Set(materiasDelGradoDocente.map((d) => d.ambitoId));
     return ambitos.filter((a) => ambitosIds.has(a.id));
   }, [selectedGradoId, materiasDelGradoDocente, ambitos]);
 
-  // ✅ NUEVO: Destrezas disponibles del ámbito seleccionado (filtradas por asignaciones)
   const destrezasDisponibles = useMemo(() => {
     if (!selectedAmbitoId) return [];
     const destrezasIds = new Set(materiasDelGradoDocente.map((d) => d.id));
     return destrezas.filter((d) => d.ambitoId === selectedAmbitoId && destrezasIds.has(d.id));
   }, [selectedAmbitoId, materiasDelGradoDocente, destrezas]);
 
-  // ✅ NUEVO: Verificar si el grado tiene materias configuradas
   const gradoTieneMateriasConfiguradas = materiasDelGradoDocente.length > 0;
 
   const materiaSeleccionada = esGradoBachillerato ? selectedMateriaId : selectedAmbitoId;
@@ -349,7 +343,6 @@ export default function Calificaciones() {
     }
   }, []);
 
-  // ✅ Listeners en tiempo real para ámbitos y destrezas
   useEffect(() => {
     const qAmbitos = query(collection(db, "ambitos"), where("activo", "==", true));
     const unsubAmbitos = onSnapshot(qAmbitos, (snapshot) => {
@@ -370,7 +363,6 @@ export default function Calificaciones() {
     return () => unsubDestrezas();
   }, []);
 
-  // ✅ LISTENER EN TIEMPO REAL: Asignaturas del docente (Mi Horario)
   useEffect(() => {
     if (!user?.uid || !anioActivo?.id) return;
 
@@ -728,53 +720,39 @@ export default function Calificaciones() {
     }
   }, [selectedActividadId, cargarCalificaciones]);
 
-  // Patrón isMounted para cargar asistencias
+  // ✅ CORREGIDO: Listener en tiempo real para asistencias (onSnapshot en lugar de getDocs)
   useEffect(() => {
-    let isMounted = true;
+    if (activeTab !== "asistencia" || !selectedGradoId || !fechaAsistencia) {
+      return;
+    }
 
-    const fetchAsistencias = async () => {
-      if (activeTab !== "asistencia" || !selectedGradoId || !fechaAsistencia) {
-        if (isMounted) startTransition(() => setAsistencias({}));
-        return;
-      }
+    const ambitoIdParaBuscar = esGradoBachillerato ? selectedMateriaId : selectedAmbitoId;
+    if (!ambitoIdParaBuscar) {
+      return;
+    }
 
-      const ambitoIdParaBuscar = esGradoBachillerato ? selectedMateriaId : selectedAmbitoId;
-      if (!ambitoIdParaBuscar) {
-        if (isMounted) startTransition(() => setAsistencias({}));
-        return;
-      }
+    const q = query(
+      collection(db, "asistencias"),
+      where("gradoId", "==", selectedGradoId),
+      where("fecha", "==", fechaAsistencia),
+      where("ambitoId", "==", ambitoIdParaBuscar)
+    );
 
-      try {
-        const q = query(
-          collection(db, "asistencias"),
-          where("gradoId", "==", selectedGradoId),
-          where("fecha", "==", fechaAsistencia),
-          where("ambitoId", "==", ambitoIdParaBuscar)
-        );
-        const snap = await getDocs(q);
-        const data = snap.docs.map((doc) => ({ id: doc.id, ...doc.data() }) as unknown as AsistenciaData);
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const asistenciasMap: Record<string, { estado: "P" | "T" | "A" | "J"; observacion: string }> = {};
+      snapshot.docs.forEach((doc) => {
+        const data = doc.data() as AsistenciaData;
+        asistenciasMap[data.estudianteId] = {
+          estado: data.estado,
+          observacion: data.observacion || "",
+        };
+      });
+      setAsistencias(asistenciasMap);
+    }, (error) => {
+      console.error("Error escuchando asistencias:", error);
+    });
 
-        const asistenciasMap: Record<string, { estado: "P" | "T" | "A" | "J"; observacion: string }> = {};
-        data.forEach((asistencia) => {
-          asistenciasMap[asistencia.estudianteId] = {
-            estado: asistencia.estado,
-            observacion: asistencia.observacion || "",
-          };
-        });
-
-        if (isMounted) {
-          startTransition(() => setAsistencias(asistenciasMap));
-        }
-      } catch (error) {
-        console.error("Error cargando asistencias:", error);
-      }
-    };
-
-    fetchAsistencias();
-
-    return () => {
-      isMounted = false;
-    };
+    return () => unsubscribe();
   }, [activeTab, selectedGradoId, fechaAsistencia, selectedMateriaId, selectedAmbitoId, esGradoBachillerato]);
 
   // ==================== RENDER ====================
@@ -910,7 +888,6 @@ export default function Calificaciones() {
             </div>
           )}
 
-          {/* ✅ NUEVO: BLOQUEO cuando no hay materias configuradas en el grado */}
           {selectedGradoId && !gradoTieneMateriasConfiguradas && (
             <div className="bg-orange-50 border-2 border-orange-300 rounded-xl p-6 mb-4">
               <div className="flex items-start gap-4">
@@ -939,7 +916,6 @@ export default function Calificaciones() {
             </div>
           )}
 
-          {/* ✅ Contenido principal (solo si hay materias configuradas) */}
           {selectedGradoId && gradoTieneMateriasConfiguradas && (
             <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
               <div className="border-b border-slate-200 p-3">
@@ -972,7 +948,6 @@ export default function Calificaciones() {
                   <div className="flex flex-col sm:flex-row gap-2 w-full lg:w-auto lg:justify-end items-stretch sm:items-center">
                     {activeTab === "asistencia" ? (
                       <>
-                        {/* ✅ SELECTOR DE MATERIA (solo materias asignadas al docente) */}
                         {esGradoBachillerato ? (
                           <select
                             value={selectedMateriaId}
@@ -1002,7 +977,6 @@ export default function Calificaciones() {
                             ))}
                           </select>
                         ) : (
-                          // Para no bachillerato: selector de ámbito (solo los asignados)
                           <select
                             value={selectedAmbitoId}
                             onChange={(e) => {
@@ -1026,7 +1000,10 @@ export default function Calificaciones() {
                         <input
                           type="date"
                           value={fechaAsistencia}
-                          onChange={(e) => setFechaAsistencia(e.target.value)}
+                          onChange={(e) => {
+                            setFechaAsistencia(e.target.value);
+                            setAsistencias({}); // ✅ Reset en el handler (permitido)
+                          }}
                           className="w-full sm:w-auto border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500"
                         />
                         <button
@@ -1144,7 +1121,6 @@ export default function Calificaciones() {
                   </div>
                 ) : activeTab === "calificaciones" && selectedDestrezaId ? (
                   <>
-                    {/* ===== LISTA DE ACTIVIDADES ===== */}
                     <div className="mb-4">
                       <div className="flex items-center justify-between mb-3">
                         <h4 className="text-sm font-bold text-slate-800">Actividades de Evaluación</h4>
@@ -1241,7 +1217,6 @@ export default function Calificaciones() {
                       )}
                     </div>
 
-                    {/* ===== CALIFICACIONES DE LA ACTIVIDAD ===== */}
                     {selectedActividadId && actividadSeleccionada && (
                       <>
                         <div className="mb-4 bg-purple-50 border border-purple-200 rounded-lg p-3">
@@ -1481,7 +1456,6 @@ export default function Calificaciones() {
         </>
       )}
 
-      {/* ===== MODAL DE ACTIVIDAD ===== */}
       {showActividadModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6">
@@ -1583,7 +1557,6 @@ export default function Calificaciones() {
         </div>
       )}
 
-      {/* ===== MODAL DE REFUERZO ===== */}
       {showRefuerzoModal && refuerzoEstudianteId && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6">

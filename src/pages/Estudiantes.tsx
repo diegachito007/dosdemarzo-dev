@@ -744,7 +744,7 @@ export default function Estudiantes() {
               <textarea
                 value={massiveData}
                 onChange={(e) => setMassiveData(e.target.value)}
-                placeholder="Ejemplo:&#10;1712345678, PEREZ GARCIA, JUAN CARLOS&#10;1723456789, LOPEZ MARTINEZ, MARIA ELENA"
+                placeholder="Ejemplo:&#10;1712345678, PEREZ GARCIA JUAN CARLOS&#10;1723456789, LOPEZ MARTINEZ MARIA ELENA"
                 rows={8}
                 className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-green-500 focus:border-green-500 transition-all"
               />

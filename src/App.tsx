@@ -15,7 +15,8 @@ import ConfiguracionInstitucional from './pages/ConfiguracionInstitucional';
 import GestionUsuarios from './pages/GestionUsuarios';
 import Configuracion from './pages/Configuracion';
 import PendingApproval from './pages/PendingApproval';
-import MiHorario from './pages/MiHorario'; // ✅ NUEVO: Mi Horario
+import MiHorario from './pages/MiHorario';
+import ReporteAsistencias from './pages/ReporteAsistencias'; // ✅ NUEVO: Reporte de Asistencias
 
 // ✅ NUEVOS: Formulario público y Panel de administración
 import Matricula from './pages/Matricula';       // Formulario público (sin login)
@@ -77,69 +78,70 @@ function PrivateRoute({ children }: { children: ReactNode }) {
 // ✅ Componente para rutas protegidas exclusivamente por rol (Super Admin)
 function AdminRoute({ children }: { children: ReactNode }) {
   const { userData } = useAuth();
-  
+
   if (!userData || userData.role !== 'super_admin') {
     return <Navigate to="/" replace />;
   }
-  
+
   return <>{children}</>;
 }
 
 function AppRoutes() {
   const { user } = useAuth();
-  
+
   return (
     <Routes>
       {/* Ruta de Login */}
       <Route path="/login" element={user ? <Navigate to="/" replace /> : <Login />} />
-      
+
       {/* ✅ 1. RUTA PÚBLICA: Formulario de Matrícula (NO requiere PrivateRoute) */}
       <Route path="/matricula" element={<Matricula />} />
-      
+
       {/* Rutas protegidas (requieren login + estado 'active') */}
       <Route path="/" element={<PrivateRoute><Dashboard /></PrivateRoute>} />
       <Route path="/anios-lectivos" element={<PrivateRoute><AniosLectivos /></PrivateRoute>} />
       <Route path="/grados" element={<PrivateRoute><Grados /></PrivateRoute>} />
       <Route path="/estudiantes" element={<PrivateRoute><Estudiantes /></PrivateRoute>} />
       <Route path="/ambitos-destrezas" element={<PrivateRoute><AmbitosDestrezas /></PrivateRoute>} />
-      <Route path="/mi-horario" element={<PrivateRoute><MiHorario /></PrivateRoute>} /> {/* ✅ NUEVA RUTA */}
+      <Route path="/mi-horario" element={<PrivateRoute><MiHorario /></PrivateRoute>} />
       <Route path="/calificaciones" element={<PrivateRoute><Calificaciones /></PrivateRoute>} />
+      <Route path="/reporte-asistencias" element={<PrivateRoute><ReporteAsistencias /></PrivateRoute>} /> {/* ✅ NUEVA RUTA */}
       <Route path="/reportes" element={<PrivateRoute><Reportes /></PrivateRoute>} />
-      
+
       {/* Perfil personal */}
       <Route path="/configuracion" element={<PrivateRoute><Configuracion /></PrivateRoute>} />
-      
+
       {/* ✅ 2. RUTA ADMIN: Panel de Gestión de Matrículas (Solo super_admin) */}
-      <Route 
-        path="/matriculas" 
+      <Route
+        path="/matriculas"
         element={
           <PrivateRoute>
             <AdminRoute><Matriculas /></AdminRoute>
           </PrivateRoute>
-        } 
+        }
       />
-      
+
       {/* Otras rutas solo para super_admin */}
-      <Route 
-        path="/configuracion-institucional" 
+      <Route
+        path="/configuracion-institucional"
         element={
           <PrivateRoute>
             <AdminRoute><ConfiguracionInstitucional /></AdminRoute>
           </PrivateRoute>
-        } 
+        }
       />
-      <Route 
-        path="/gestion-usuarios" 
+      <Route
+        path="/gestion-usuarios"
         element={
           <PrivateRoute>
             <AdminRoute><GestionUsuarios /></AdminRoute>
           </PrivateRoute>
-        } 
+        }
       />
-      
+
       {/* Ruta de espera para pendientes/rechazados */}
       <Route path="/pending-approval" element={<PendingApproval />} />
-      
+
       {/* Catch-all */}
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

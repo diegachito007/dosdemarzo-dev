@@ -20,7 +20,8 @@ import {
   FaUserCog,
   FaChevronDown,
   FaUserGraduate,
-  FaChalkboardTeacher, // ✅ Nuevo ícono para Mi Horario
+  FaChalkboardTeacher,
+  FaClipboardCheck, // ✅ NUEVO: Ícono para Reporte de Asistencias
 } from "react-icons/fa";
 
 interface InstitutionData {
@@ -80,7 +81,7 @@ export default function Dashboard() {
         if (aniosData.length > 0) {
           const anioActivo = aniosData[0];
           let qGrados;
-          
+
           if (userData?.role === 'docente' && userData?.gradosAsignados && userData.gradosAsignados.length > 0) {
             qGrados = query(
               collection(db, 'grados'),
@@ -95,7 +96,7 @@ export default function Dashboard() {
               where('activo', '==', true)
             );
           }
-          
+
           const snapGrados = await getDocs(qGrados);
           const gradosData = snapGrados.docs.map(doc => ({ id: doc.id, ...doc.data() } as Grado));
           setGrados(gradosData);
@@ -270,6 +271,17 @@ export default function Dashboard() {
       badge: "NIVEL 4",
       roles: ["super_admin", "docente"],
     },
+    // ✅ NUEVO: Reporte de Asistencias
+    {
+      path: "/reporte-asistencias",
+      name: "Reporte Asistencias",
+      icon: FaClipboardCheck,
+      color: "from-rose-500 to-rose-600",
+      desc: "Control semanal de asistencia por grado y materia",
+      stats: "Semanal",
+      badge: "TUTOR/DOCENTE",
+      roles: ["super_admin", "docente"],
+    },
     {
       path: "/reportes",
       name: "Reportes",
@@ -284,7 +296,7 @@ export default function Dashboard() {
 
   const userRole = userData?.role || "docente";
   const filteredModules = modules.filter((mod) => mod.roles.includes(userRole));
-  
+
   // ✅ CORRECCIÓN: Usar tutorDeAnioActivo en lugar de userData.tutorDe
   const esTutor = tutorDeAnioActivo.length > 0;
   const gradosTutor = tutorDeAnioActivo;
