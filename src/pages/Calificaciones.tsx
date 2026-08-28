@@ -44,6 +44,7 @@ import {
   FaSyncAlt,
   FaChalkboardTeacher,
   FaArrowRight,
+  FaUserEdit,
 } from "react-icons/fa";
 
 // ==================== INTERFACES ====================
@@ -58,6 +59,10 @@ interface AsistenciaData {
   estado: "P" | "T" | "A" | "J";
   observacion?: string;
   registradoPor?: string;
+  // ✅ NUEVO: Auditoría
+  editadoPor?: string;
+  editadoEl?: Timestamp | Date;
+  estadoOriginal?: string;
   createdAt?: Timestamp | Date;
   updatedAt?: Timestamp | Date;
 }
@@ -93,6 +98,10 @@ interface CalificacionData {
   observacion?: string;
   refuerzo?: RefuerzoData | null;
   docenteId?: string;
+  // ✅ NUEVO: Auditoría
+  editadoPor?: string;
+  editadoEl?: Timestamp | Date;
+  notaOriginal?: number;
   createdAt?: Timestamp | Date;
   updatedAt?: Timestamp | Date;
 }
@@ -187,6 +196,9 @@ export default function Calificaciones() {
 
   const [asignaturasDocente, setAsignaturasDocente] = useState<AsignaturaDocente[]>([]);
 
+  // ✅ NUEVO: Mapa uid -> nombre para trazabilidad
+  const [nombresDocentes, setNombresDocentes] = useState<Record<string, string>>({});
+
   const [activeTab, setActiveTab] = useState<"asistencia" | "calificaciones">("asistencia");
   const [selectedGradoId, setSelectedGradoId] = useState("");
   const [selectedGradoNombre, setSelectedGradoNombre] = useState("");
@@ -197,12 +209,15 @@ export default function Calificaciones() {
   const [selectedActividadId, setSelectedActividadId] = useState("");
 
   const [fechaAsistencia, setFechaAsistencia] = useState(new Date().toISOString().split("T")[0]);
+
+  // ✅ EXTENDIDO: incluye registradoPor/editadoPor para mostrar trazabilidad
   const [asistencias, setAsistencias] = useState<
-    Record<string, { estado: "P" | "T" | "A" | "J"; observacion: string }>
+    Record<string, { estado: "P" | "T" | "A" | "J"; observacion: string; registradoPor?: string; editadoPor?: string }>
   >({});
 
+  // ✅ EXTENDIDO: incluye docenteId/editadoPor para mostrar trazabilidad
   const [calificaciones, setCalificaciones] = useState<
-    Record<string, { nota: number; observacion: string; refuerzo?: RefuerzoData | null }>
+    Record<string, { nota: number; observacion: string; refuerzo?: RefuerzoData | null; docenteId?: string; editadoPor?: string }>
   >({});
 
   const [showActividadModal, setShowActividadModal] = useState(false);
@@ -234,6 +249,9 @@ export default function Calificaciones() {
     (!userData?.gradosAsignados || userData.gradosAsignados.length === 0);
   const anioActivo = aniosLectivos.find((a) => a.activo);
   const esGradoBachillerato = esBachillerato(selectedGradoNombre);
+
+  // ✅ Helper para mostrar nombre del docente
+  const nombreDocente = (uid?: string) => (uid ? nombresDocentes[uid] || "Docente" : "");
 
   const materiasDelGradoDocente = useMemo(() => {
     if (!selectedGradoId) return [];
@@ -283,6 +301,14 @@ export default function Calificaciones() {
         periodosData = periodosSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() }) as PeriodoEvaluacion);
       }
 
+      // ✅ NUEVO: Cargar nombres de todos los usuarios para trazabilidad
+      const usuariosSnap = await getDocs(collection(db, "usuarios"));
+      const nombres: Record<string, string> = {};
+      usuariosSnap.docs.forEach((d) => {
+        const data = d.data() as { nombreDocumento?: string; displayName?: string; email?: string };
+        nombres[d.id] = data.nombreDocumento || data.displayName || data.email || "Docente";
+      });
+
       let gradosQuery;
       if (userData?.role === "docente" && userData?.gradosAsignados && userData.gradosAsignados.length > 0) {
         gradosQuery = query(
@@ -295,6 +321,7 @@ export default function Calificaciones() {
         startTransition(() => {
           setAniosLectivos(aniosData);
           setPeriodos(periodosData);
+          setNombresDocentes(nombres);
           setGrados([]);
           setLoading(false);
         });
@@ -309,6 +336,7 @@ export default function Calificaciones() {
       startTransition(() => {
         setAniosLectivos(aniosData);
         setPeriodos(periodosData);
+        setNombresDocentes(nombres);
         setGrados(gradosData);
         if (gradosData.length > 0 && !selectedGradoId) {
           setSelectedGradoId(gradosData[0].id);
@@ -392,6 +420,7 @@ export default function Calificaciones() {
     }
   }, []);
 
+  // ✅ ACTUALIZADO: incluye docenteId y editadoPor en el mapa
   const cargarCalificaciones = useCallback(async (actividadId: string) => {
     try {
       const q = query(collection(db, "calificaciones"), where("actividadId", "==", actividadId));
@@ -400,13 +429,15 @@ export default function Calificaciones() {
 
       const calificacionesMap: Record<
         string,
-        { nota: number; observacion: string; refuerzo?: RefuerzoData | null }
+        { nota: number; observacion: string; refuerzo?: RefuerzoData | null; docenteId?: string; editadoPor?: string }
       > = {};
       data.forEach((calificacion) => {
         calificacionesMap[calificacion.estudianteId] = {
           nota: calificacion.nota,
           observacion: calificacion.observacion || "",
           refuerzo: calificacion.refuerzo || null,
+          docenteId: calificacion.docenteId,
+          editadoPor: calificacion.editadoPor,
         };
       });
 
@@ -418,6 +449,7 @@ export default function Calificaciones() {
 
   // ==================== GUARDADO ====================
 
+  // ✅ ACTUALIZADO: preserva autor original y registra auditoría al editar
   const guardarAsistencia = async () => {
     if (!materiaSeleccionada) {
       alert("⚠️ Debes seleccionar una materia/ámbito antes de guardar la asistencia.");
@@ -450,14 +482,25 @@ export default function Calificaciones() {
           ambitoId: materiaSeleccionada,
           estado: asistencia.estado,
           observacion: asistencia.observacion || "",
-          registradoPor: user?.uid || "",
           updatedAt: serverTimestamp(),
         };
 
         if (snap.empty) {
-          await addDoc(collection(db, "asistencias"), { ...datos, createdAt: serverTimestamp() });
+          await addDoc(collection(db, "asistencias"), {
+            ...datos,
+            registradoPor: user?.uid || "",
+            createdAt: serverTimestamp(),
+          });
         } else {
-          await updateDoc(doc(db, "asistencias", snap.docs[0].id), datos);
+          const existente = snap.docs[0].data() as AsistenciaData;
+          const auditoria: Record<string, unknown> = {};
+          // ✅ Si el registro es de OTRO docente, preservar autor y dejar rastro de la edición
+          if (existente.registradoPor && existente.registradoPor !== user?.uid) {
+            auditoria.editadoPor = user?.uid || "";
+            auditoria.editadoEl = serverTimestamp();
+            if (!existente.estadoOriginal) auditoria.estadoOriginal = existente.estado;
+          }
+          await updateDoc(doc(db, "asistencias", snap.docs[0].id), { ...datos, ...auditoria });
         }
       });
 
@@ -549,6 +592,7 @@ export default function Calificaciones() {
     }
   };
 
+  // ✅ ACTUALIZADO: preserva docenteId original y registra auditoría al editar
   const guardarCalificaciones = async () => {
     if (!selectedActividadId) {
       alert("⚠️ Debes seleccionar una actividad antes de guardar calificaciones");
@@ -574,14 +618,25 @@ export default function Calificaciones() {
           nota: Math.round(calificacion.nota),
           observacion: calificacion.observacion || "",
           refuerzo: calificacion.refuerzo || null,
-          docenteId: user?.uid || "",
           updatedAt: serverTimestamp(),
         };
 
         if (snap.empty) {
-          await addDoc(collection(db, "calificaciones"), { ...datos, createdAt: serverTimestamp() });
+          await addDoc(collection(db, "calificaciones"), {
+            ...datos,
+            docenteId: user?.uid || "",
+            createdAt: serverTimestamp(),
+          });
         } else {
-          await updateDoc(doc(db, "calificaciones", snap.docs[0].id), datos);
+          const existente = snap.docs[0].data() as CalificacionData;
+          const auditoria: Record<string, unknown> = {};
+          // ✅ Si la nota la registró OTRO docente, preservar autor y dejar rastro
+          if (existente.docenteId && existente.docenteId !== user?.uid) {
+            auditoria.editadoPor = user?.uid || "";
+            auditoria.editadoEl = serverTimestamp();
+            if (existente.notaOriginal === undefined) auditoria.notaOriginal = existente.nota;
+          }
+          await updateDoc(doc(db, "calificaciones", snap.docs[0].id), { ...datos, ...auditoria });
         }
       });
 
@@ -650,10 +705,12 @@ export default function Calificaciones() {
 
   // ==================== ACTUALIZADORES DE ESTADO ====================
 
+  // ✅ ACTUALIZADO: preserva metadatos de trazabilidad
   const actualizarAsistencia = (estudianteId: string, estado: "P" | "T" | "A" | "J") => {
     setAsistencias((prev) => ({
       ...prev,
       [estudianteId]: {
+        ...prev[estudianteId],
         estado,
         observacion: prev[estudianteId]?.observacion || "",
       },
@@ -661,14 +718,17 @@ export default function Calificaciones() {
   };
 
   const marcarTodosAsistencia = (estado: "P" | "T" | "A" | "J") => {
-    const nuevasAsistencias: Record<string, { estado: "P" | "T" | "A" | "J"; observacion: string }> = {};
-    estudiantes.forEach((est) => {
-      nuevasAsistencias[est.id] = {
-        estado,
-        observacion: asistencias[est.id]?.observacion || "",
-      };
+    setAsistencias((prev) => {
+      const nuevas: typeof prev = {};
+      estudiantes.forEach((est) => {
+        nuevas[est.id] = {
+          ...prev[est.id],
+          estado,
+          observacion: prev[est.id]?.observacion || "",
+        };
+      });
+      return nuevas;
     });
-    setAsistencias(nuevasAsistencias);
   };
 
   const limpiarAsistencias = () => {
@@ -720,7 +780,7 @@ export default function Calificaciones() {
     }
   }, [selectedActividadId, cargarCalificaciones]);
 
-  // ✅ CORREGIDO: Listener en tiempo real para asistencias (onSnapshot en lugar de getDocs)
+  // ✅ Listener en tiempo real para asistencias (incluye trazabilidad)
   useEffect(() => {
     if (activeTab !== "asistencia" || !selectedGradoId || !fechaAsistencia) {
       return;
@@ -739,12 +799,14 @@ export default function Calificaciones() {
     );
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      const asistenciasMap: Record<string, { estado: "P" | "T" | "A" | "J"; observacion: string }> = {};
-      snapshot.docs.forEach((doc) => {
-        const data = doc.data() as AsistenciaData;
+      const asistenciasMap: Record<string, { estado: "P" | "T" | "A" | "J"; observacion: string; registradoPor?: string; editadoPor?: string }> = {};
+      snapshot.docs.forEach((docSnap) => {
+        const data = docSnap.data() as AsistenciaData;
         asistenciasMap[data.estudianteId] = {
           estado: data.estado,
           observacion: data.observacion || "",
+          registradoPor: data.registradoPor,
+          editadoPor: data.editadoPor,
         };
       });
       setAsistencias(asistenciasMap);
@@ -1002,7 +1064,7 @@ export default function Calificaciones() {
                           value={fechaAsistencia}
                           onChange={(e) => {
                             setFechaAsistencia(e.target.value);
-                            setAsistencias({}); // ✅ Reset en el handler (permitido)
+                            setAsistencias({});
                           }}
                           className="w-full sm:w-auto border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500"
                         />
@@ -1257,6 +1319,8 @@ export default function Calificaciones() {
                             const letra = notaOriginal !== undefined ? notaALetra(notaFinal) : "";
                             const necesitaRefuerzo =
                               notaOriginal !== undefined && notaOriginal < 7 && !calificacion?.refuerzo;
+                            // ✅ Trazabilidad: mostrar si la nota es de otro docente o fue editada
+                            const esDeOtroDocente = calificacion?.docenteId && calificacion.docenteId !== user?.uid;
 
                             return (
                               <div
@@ -1269,6 +1333,16 @@ export default function Calificaciones() {
                                       {est.apellidos} {est.nombres}
                                     </div>
                                     {est.cedula && <div className="text-slate-500 text-xs mt-0.5">CI: {est.cedula}</div>}
+                                    {/* ✅ Línea de trazabilidad */}
+                                    {(esDeOtroDocente || calificacion?.editadoPor) && (
+                                      <div className="text-[10px] text-slate-400 mt-0.5 flex items-center gap-1">
+                                        <FaUserEdit className="text-[9px]" />
+                                        {esDeOtroDocente && <span>Registró: {nombreDocente(calificacion?.docenteId)}</span>}
+                                        {calificacion?.editadoPor && calificacion.editadoPor !== calificacion.docenteId && (
+                                          <span> | Editó: {nombreDocente(calificacion.editadoPor)}</span>
+                                        )}
+                                      </div>
+                                    )}
                                   </div>
                                   <div className="flex items-center gap-2 shrink-0">
                                     {letra && (
@@ -1382,6 +1456,8 @@ export default function Calificaciones() {
                     {estudiantes.map((est) => {
                       const asistencia = asistencias[est.id];
                       const estado = asistencia?.estado || "";
+                      const esDeOtroDocente = asistencia?.registradoPor && asistencia.registradoPor !== user?.uid;
+
                       return (
                         <div
                           key={est.id}
@@ -1393,6 +1469,16 @@ export default function Calificaciones() {
                                 {est.apellidos} {est.nombres}
                               </div>
                               {est.cedula && <div className="text-slate-500 text-xs mt-0.5">CI: {est.cedula}</div>}
+                              {/* ✅ Línea de trazabilidad */}
+                              {estado && (esDeOtroDocente || asistencia?.editadoPor) && (
+                                <div className="text-[10px] text-slate-400 mt-0.5 flex items-center gap-1">
+                                  <FaUserEdit className="text-[9px]" />
+                                  {esDeOtroDocente && <span>Registró: {nombreDocente(asistencia?.registradoPor)}</span>}
+                                  {asistencia?.editadoPor && asistencia.editadoPor !== asistencia.registradoPor && (
+                                    <span> | Editó: {nombreDocente(asistencia.editadoPor)}</span>
+                                  )}
+                                </div>
+                              )}
                             </div>
                             <div className="flex gap-1.5 shrink-0">
                               {(["P", "T", "A", "J"] as const).map((estadoBtn) => (

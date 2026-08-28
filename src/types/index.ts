@@ -154,13 +154,14 @@ export interface SolicitudMatricula {
   whatsappEnviado: boolean;
 }
 
+// ✅ AppUser con status 'deleted' para usuarios archivados
 export interface AppUser {
   uid: string;
   email: string;
   displayName: string;
   photoURL?: string | null;
   role: "super_admin" | "docente";
-  status: "active" | "pending" | "rejected" | "blocked";
+  status: "active" | "pending" | "rejected" | "blocked" | "deleted"; // ✅ AGREGADO: 'deleted' para archivados
   gradosAsignados?: string[];
   tutorDe?: string[];
   nombreDocumento?: string;

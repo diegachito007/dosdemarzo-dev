@@ -16,11 +16,12 @@ import GestionUsuarios from './pages/GestionUsuarios';
 import Configuracion from './pages/Configuracion';
 import PendingApproval from './pages/PendingApproval';
 import MiHorario from './pages/MiHorario';
-import ReporteAsistencias from './pages/ReporteAsistencias'; // ✅ NUEVO: Reporte de Asistencias
+import ReporteAsistencias from './pages/ReporteAsistencias';
+import ArchivedAccount from './pages/ArchivedAccount'; // ✅ NUEVO: Pantalla para archivados
 
-// ✅ NUEVOS: Formulario público y Panel de administración
-import Matricula from './pages/Matricula';       // Formulario público (sin login)
-import Matriculas from './pages/Matriculas';     // Panel de administración (solo super_admin)
+// Formulario público y Panel de administración
+import Matricula from './pages/Matricula';
+import Matriculas from './pages/Matriculas';
 
 // ✅ RUTA PRIVADA CORREGIDA (Fail-Closed)
 function PrivateRoute({ children }: { children: ReactNode }) {
@@ -61,6 +62,11 @@ function PrivateRoute({ children }: { children: ReactNode }) {
     return <Navigate to="/login" replace />;
   }
 
+  // ✅ NUEVO: Manejo de cuentas archivadas
+  if (userData.status === 'deleted') {
+    return <ArchivedAccount />;
+  }
+
   if (userData.status === 'active') {
     return <>{children}</>;
   }
@@ -94,7 +100,7 @@ function AppRoutes() {
       {/* Ruta de Login */}
       <Route path="/login" element={user ? <Navigate to="/" replace /> : <Login />} />
 
-      {/* ✅ 1. RUTA PÚBLICA: Formulario de Matrícula (NO requiere PrivateRoute) */}
+      {/* RUTA PÚBLICA: Formulario de Matrícula (NO requiere PrivateRoute) */}
       <Route path="/matricula" element={<Matricula />} />
 
       {/* Rutas protegidas (requieren login + estado 'active') */}
@@ -105,13 +111,13 @@ function AppRoutes() {
       <Route path="/ambitos-destrezas" element={<PrivateRoute><AmbitosDestrezas /></PrivateRoute>} />
       <Route path="/mi-horario" element={<PrivateRoute><MiHorario /></PrivateRoute>} />
       <Route path="/calificaciones" element={<PrivateRoute><Calificaciones /></PrivateRoute>} />
-      <Route path="/reporte-asistencias" element={<PrivateRoute><ReporteAsistencias /></PrivateRoute>} /> {/* ✅ NUEVA RUTA */}
+      <Route path="/reporte-asistencias" element={<PrivateRoute><ReporteAsistencias /></PrivateRoute>} />
       <Route path="/reportes" element={<PrivateRoute><Reportes /></PrivateRoute>} />
 
       {/* Perfil personal */}
       <Route path="/configuracion" element={<PrivateRoute><Configuracion /></PrivateRoute>} />
 
-      {/* ✅ 2. RUTA ADMIN: Panel de Gestión de Matrículas (Solo super_admin) */}
+      {/* RUTA ADMIN: Panel de Gestión de Matrículas (Solo super_admin) */}
       <Route
         path="/matriculas"
         element={
