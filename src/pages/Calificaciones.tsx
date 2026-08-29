@@ -47,6 +47,7 @@ import {
   FaUserEdit,
   FaChevronLeft,
   FaChevronRight,
+  FaQuestionCircle,
 } from "react-icons/fa";
 
 // ==================== INTERFACES ====================
@@ -113,6 +114,19 @@ interface AsignaturaDocente {
   destrezaId: string;
   anioLectivoId: string;
   activo: boolean;
+}
+
+// ✅ NUEVO: Interfaz para el modal de confirmación personalizado
+interface ConfirmModalState {
+  isOpen: boolean;
+  title: string;
+  message: string;
+  confirmText?: string;
+  cancelText?: string;
+  confirmColor?: string;
+  icon?: React.ComponentType<{ className?: string }>;
+  onConfirm: () => void;
+  onCancel: () => void;
 }
 
 // ==================== CONSTANTES ====================
@@ -241,6 +255,15 @@ export default function Calificaciones() {
   const [carruselIndex, setCarruselIndex] = useState(0);
   const notaInputRefs = useRef<(HTMLInputElement | null)[]>([]);
 
+  // ✅ NUEVO: Estado para modal de confirmación personalizado
+  const [confirmModal, setConfirmModal] = useState<ConfirmModalState>({
+    isOpen: false,
+    title: "",
+    message: "",
+    onConfirm: () => {},
+    onCancel: () => {},
+  });
+
   const periodoActual = periodos.find((p) => {
     const hoy = new Date();
     const inicio = new Date(p.fechaInicio);
@@ -285,6 +308,38 @@ export default function Calificaciones() {
     estudiantes.length > 0 &&
     (esGradoInicialActual || materiaSeleccionada !== "") &&
     estudiantes.every((est) => asistencias[est.id]?.estado);
+
+  // ✅ NUEVO: Función de confirmación personalizada (reemplaza el `confirm()` del navegador)
+  const confirmar = useCallback((
+    title: string,
+    message: string,
+    options?: {
+      confirmText?: string;
+      cancelText?: string;
+      confirmColor?: string;
+      icon?: React.ComponentType<{ className?: string }>;
+    }
+  ): Promise<boolean> => {
+    return new Promise((resolve) => {
+      setConfirmModal({
+        isOpen: true,
+        title,
+        message,
+        confirmText: options?.confirmText || "Confirmar",
+        cancelText: options?.cancelText || "Cancelar",
+        confirmColor: options?.confirmColor || "bg-red-600 hover:bg-red-700",
+        icon: options?.icon || FaQuestionCircle,
+        onConfirm: () => {
+          setConfirmModal((prev) => ({ ...prev, isOpen: false }));
+          resolve(true);
+        },
+        onCancel: () => {
+          setConfirmModal((prev) => ({ ...prev, isOpen: false }));
+          resolve(false);
+        },
+      });
+    });
+  }, []);
 
   // ==================== CARGA DE DATOS ====================
 
@@ -567,10 +622,19 @@ export default function Calificaciones() {
     }
   };
 
+  // ✅ MODIFICADO: Usa el modal de confirmación personalizado en lugar de `confirm()`
   const eliminarActividad = async (actividadId: string) => {
-    if (!confirm("¿Estás seguro de eliminar esta actividad? Se eliminarán todas las calificaciones asociadas.")) {
-      return;
-    }
+    const confirmado = await confirmar(
+      "Eliminar actividad",
+      "¿Estás seguro de eliminar esta actividad? Se eliminarán también todas las calificaciones asociadas a ella. Esta acción no se puede deshacer.",
+      {
+        confirmText: "Sí, eliminar",
+        cancelText: "Cancelar",
+        confirmColor: "bg-red-600 hover:bg-red-700",
+        icon: FaTrash,
+      }
+    );
+    if (!confirmado) return;
 
     setIsSaving(true);
     try {
@@ -786,10 +850,8 @@ export default function Calificaciones() {
     });
   };
 
-  // ✅ NUEVO: Enfoca la caja de nota y la centra en la zona visible (compensa el teclado)
   const enfocarYCentrarInput = (index: number) => {
     setCarruselIndex(index);
-    // 1er intento: cuando el input ya se renderizó
     setTimeout(() => {
       const el = notaInputRefs.current[index];
       if (el) {
@@ -798,14 +860,12 @@ export default function Calificaciones() {
         el.scrollIntoView({ block: "center", behavior: "smooth" });
       }
     }, 80);
-    // 2do intento: cuando el teclado virtual ya terminó de abrirse
     setTimeout(() => {
       const el = notaInputRefs.current[index];
       if (el) el.scrollIntoView({ block: "center", behavior: "smooth" });
     }, 400);
   };
 
-  // ✅ MODIFICADO: Usa enfocarYCentrarInput para saltar al siguiente
   const handleNotaKeyDown = (e: React.KeyboardEvent<HTMLInputElement>, index: number) => {
     if (e.key === "Enter" || e.key === "Tab") {
       e.preventDefault();
@@ -882,7 +942,7 @@ export default function Calificaciones() {
     return () => unsubscribe();
   }, [activeTab, selectedGradoId, fechaAsistencia, selectedMateriaId, selectedAmbitoId, esGradoBachillerato, esGradoInicialActual]);
 
-  // ✅ NUEVO: Si el teclado virtual tapa la caja de nota, la re-centra automáticamente (móvil/tablet)
+  // Detector del teclado virtual
   useEffect(() => {
     const vv = window.visualViewport;
     if (!vv) return;
@@ -919,6 +979,7 @@ export default function Calificaciones() {
 
   const actividadSeleccionada = actividades.find((a) => a.id === selectedActividadId);
   const gradoActual = grados.find((g) => g.id === selectedGradoId);
+  const ConfirmIcon = confirmModal.icon || FaQuestionCircle;
 
   return (
     <Layout title="Calificaciones" subtitle="Registro de notas y asistencia" showBack>
@@ -1525,7 +1586,6 @@ export default function Calificaciones() {
                                       onKeyDown={(e) => handleNotaKeyDown(e, index)}
                                       onFocus={(e) => {
                                         e.target.select();
-                                        // Cuando el teclado termine de abrir, centra la caja en la zona visible
                                         setTimeout(() => {
                                           e.target.scrollIntoView({ block: "center", behavior: "smooth" });
                                         }, 300);
@@ -1904,6 +1964,47 @@ export default function Calificaciones() {
                 className="flex-1 bg-slate-200 hover:bg-slate-300 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold transition-all"
               >
                 Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ✅ NUEVO: Modal de confirmación personalizado (reemplaza el `confirm()` feo del navegador) */}
+      {confirmModal.isOpen && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-60 p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden animate-in zoom-in-95 duration-200">
+            {/* Encabezado con ícono */}
+            <div className="bg-linear-to-r from-slate-50 to-slate-100 px-6 pt-6 pb-4 border-b border-slate-200">
+              <div className="flex items-start gap-4">
+                <div className="w-12 h-12 rounded-full bg-red-100 flex items-center justify-center shrink-0">
+                  <ConfirmIcon className="text-red-600 text-xl" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <h3 className="text-lg font-bold text-slate-900 mb-1">
+                    {confirmModal.title}
+                  </h3>
+                  <p className="text-sm text-slate-600 leading-relaxed">
+                    {confirmModal.message}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Botones de acción */}
+            <div className="px-6 py-4 bg-slate-50 flex gap-3 justify-end">
+              <button
+                onClick={confirmModal.onCancel}
+                className="px-4 py-2 bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 rounded-lg text-sm font-semibold transition-all"
+              >
+                {confirmModal.cancelText || "Cancelar"}
+              </button>
+              <button
+                onClick={confirmModal.onConfirm}
+                className={`px-4 py-2 ${confirmModal.confirmColor || "bg-red-600 hover:bg-red-700"} text-white rounded-lg text-sm font-semibold transition-all flex items-center gap-2`}
+              >
+                <ConfirmIcon className="text-xs" />
+                {confirmModal.confirmText || "Confirmar"}
               </button>
             </div>
           </div>
