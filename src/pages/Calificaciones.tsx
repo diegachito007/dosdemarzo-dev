@@ -59,7 +59,6 @@ interface AsistenciaData {
   estado: "P" | "T" | "A" | "J";
   observacion?: string;
   registradoPor?: string;
-  // ✅ NUEVO: Auditoría
   editadoPor?: string;
   editadoEl?: Timestamp | Date;
   estadoOriginal?: string;
@@ -98,7 +97,6 @@ interface CalificacionData {
   observacion?: string;
   refuerzo?: RefuerzoData | null;
   docenteId?: string;
-  // ✅ NUEVO: Auditoría
   editadoPor?: string;
   editadoEl?: Timestamp | Date;
   notaOriginal?: number;
@@ -180,6 +178,12 @@ const esBachillerato = (gradoNombre: string): boolean => {
   );
 };
 
+// ✅ NUEVO: Detectar si es grado Inicial o Preparatoria
+const esGradoInicial = (gradoNombre: string): boolean => {
+  const n = gradoNombre.toLowerCase();
+  return n.includes('inicial 1') || n.includes('inicial 2') || n.includes('preparatoria');
+};
+
 // ==================== COMPONENTE ====================
 
 export default function Calificaciones() {
@@ -195,8 +199,6 @@ export default function Calificaciones() {
   const [isSaving, setIsSaving] = useState(false);
 
   const [asignaturasDocente, setAsignaturasDocente] = useState<AsignaturaDocente[]>([]);
-
-  // ✅ NUEVO: Mapa uid -> nombre para trazabilidad
   const [nombresDocentes, setNombresDocentes] = useState<Record<string, string>>({});
 
   const [activeTab, setActiveTab] = useState<"asistencia" | "calificaciones">("asistencia");
@@ -210,12 +212,10 @@ export default function Calificaciones() {
 
   const [fechaAsistencia, setFechaAsistencia] = useState(new Date().toISOString().split("T")[0]);
 
-  // ✅ EXTENDIDO: incluye registradoPor/editadoPor para mostrar trazabilidad
   const [asistencias, setAsistencias] = useState<
     Record<string, { estado: "P" | "T" | "A" | "J"; observacion: string; registradoPor?: string; editadoPor?: string }>
   >({});
 
-  // ✅ EXTENDIDO: incluye docenteId/editadoPor para mostrar trazabilidad
   const [calificaciones, setCalificaciones] = useState<
     Record<string, { nota: number; observacion: string; refuerzo?: RefuerzoData | null; docenteId?: string; editadoPor?: string }>
   >({});
@@ -249,8 +249,8 @@ export default function Calificaciones() {
     (!userData?.gradosAsignados || userData.gradosAsignados.length === 0);
   const anioActivo = aniosLectivos.find((a) => a.activo);
   const esGradoBachillerato = esBachillerato(selectedGradoNombre);
+  const esGradoInicialActual = esGradoInicial(selectedGradoNombre); // ✅ NUEVO
 
-  // ✅ Helper para mostrar nombre del docente
   const nombreDocente = (uid?: string) => (uid ? nombresDocentes[uid] || "Docente" : "");
 
   const materiasDelGradoDocente = useMemo(() => {
@@ -277,9 +277,10 @@ export default function Calificaciones() {
 
   const materiaSeleccionada = esGradoBachillerato ? selectedMateriaId : selectedAmbitoId;
 
+  // ✅ MODIFICADO: En iniciales no requiere materia seleccionada
   const todosConAsistencia =
     estudiantes.length > 0 &&
-    materiaSeleccionada !== "" &&
+    (esGradoInicialActual || materiaSeleccionada !== "") &&
     estudiantes.every((est) => asistencias[est.id]?.estado);
 
   // ==================== CARGA DE DATOS ====================
@@ -301,7 +302,6 @@ export default function Calificaciones() {
         periodosData = periodosSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() }) as PeriodoEvaluacion);
       }
 
-      // ✅ NUEVO: Cargar nombres de todos los usuarios para trazabilidad
       const usuariosSnap = await getDocs(collection(db, "usuarios"));
       const nombres: Record<string, string> = {};
       usuariosSnap.docs.forEach((d) => {
@@ -420,7 +420,6 @@ export default function Calificaciones() {
     }
   }, []);
 
-  // ✅ ACTUALIZADO: incluye docenteId y editadoPor en el mapa
   const cargarCalificaciones = useCallback(async (actividadId: string) => {
     try {
       const q = query(collection(db, "calificaciones"), where("actividadId", "==", actividadId));
@@ -449,9 +448,9 @@ export default function Calificaciones() {
 
   // ==================== GUARDADO ====================
 
-  // ✅ ACTUALIZADO: preserva autor original y registra auditoría al editar
+  // ✅ MODIFICADO: En iniciales usa "general" como ambitoId
   const guardarAsistencia = async () => {
-    if (!materiaSeleccionada) {
+    if (!esGradoInicialActual && !materiaSeleccionada) {
       alert("⚠️ Debes seleccionar una materia/ámbito antes de guardar la asistencia.");
       return;
     }
@@ -460,6 +459,7 @@ export default function Calificaciones() {
     try {
       const anioLectivoId = aniosLectivos[0]?.id || "";
       const periodoId = periodoActual?.id || "";
+      const ambitoIdParaGuardar = esGradoInicialActual ? "general" : materiaSeleccionada;
 
       const batch = estudiantes.map(async (est) => {
         const asistencia = asistencias[est.id];
@@ -469,7 +469,7 @@ export default function Calificaciones() {
           collection(db, "asistencias"),
           where("estudianteId", "==", est.id),
           where("fecha", "==", fechaAsistencia),
-          where("ambitoId", "==", materiaSeleccionada)
+          where("ambitoId", "==", ambitoIdParaGuardar)
         );
         const snap = await getDocs(q);
 
@@ -479,7 +479,7 @@ export default function Calificaciones() {
           anioLectivoId,
           periodoId,
           fecha: fechaAsistencia,
-          ambitoId: materiaSeleccionada,
+          ambitoId: ambitoIdParaGuardar,
           estado: asistencia.estado,
           observacion: asistencia.observacion || "",
           updatedAt: serverTimestamp(),
@@ -494,7 +494,6 @@ export default function Calificaciones() {
         } else {
           const existente = snap.docs[0].data() as AsistenciaData;
           const auditoria: Record<string, unknown> = {};
-          // ✅ Si el registro es de OTRO docente, preservar autor y dejar rastro de la edición
           if (existente.registradoPor && existente.registradoPor !== user?.uid) {
             auditoria.editadoPor = user?.uid || "";
             auditoria.editadoEl = serverTimestamp();
@@ -592,7 +591,6 @@ export default function Calificaciones() {
     }
   };
 
-  // ✅ ACTUALIZADO: preserva docenteId original y registra auditoría al editar
   const guardarCalificaciones = async () => {
     if (!selectedActividadId) {
       alert("⚠️ Debes seleccionar una actividad antes de guardar calificaciones");
@@ -630,7 +628,6 @@ export default function Calificaciones() {
         } else {
           const existente = snap.docs[0].data() as CalificacionData;
           const auditoria: Record<string, unknown> = {};
-          // ✅ Si la nota la registró OTRO docente, preservar autor y dejar rastro
           if (existente.docenteId && existente.docenteId !== user?.uid) {
             auditoria.editadoPor = user?.uid || "";
             auditoria.editadoEl = serverTimestamp();
@@ -705,7 +702,6 @@ export default function Calificaciones() {
 
   // ==================== ACTUALIZADORES DE ESTADO ====================
 
-  // ✅ ACTUALIZADO: preserva metadatos de trazabilidad
   const actualizarAsistencia = (estudianteId: string, estado: "P" | "T" | "A" | "J") => {
     setAsistencias((prev) => ({
       ...prev,
@@ -780,15 +776,21 @@ export default function Calificaciones() {
     }
   }, [selectedActividadId, cargarCalificaciones]);
 
-  // ✅ Listener en tiempo real para asistencias (incluye trazabilidad)
+  // ✅ MODIFICADO: Listener ajusta query para grados iniciales (ambitoId = "general")
   useEffect(() => {
     if (activeTab !== "asistencia" || !selectedGradoId || !fechaAsistencia) {
       return;
     }
 
-    const ambitoIdParaBuscar = esGradoBachillerato ? selectedMateriaId : selectedAmbitoId;
-    if (!ambitoIdParaBuscar) {
-      return;
+    let ambitoIdParaBuscar: string;
+    if (esGradoInicialActual) {
+      ambitoIdParaBuscar = "general";
+    } else if (esGradoBachillerato) {
+      if (!selectedMateriaId) return;
+      ambitoIdParaBuscar = selectedMateriaId;
+    } else {
+      if (!selectedAmbitoId) return;
+      ambitoIdParaBuscar = selectedAmbitoId;
     }
 
     const q = query(
@@ -815,7 +817,7 @@ export default function Calificaciones() {
     });
 
     return () => unsubscribe();
-  }, [activeTab, selectedGradoId, fechaAsistencia, selectedMateriaId, selectedAmbitoId, esGradoBachillerato]);
+  }, [activeTab, selectedGradoId, fechaAsistencia, selectedMateriaId, selectedAmbitoId, esGradoBachillerato, esGradoInicialActual]);
 
   // ==================== RENDER ====================
 
@@ -893,6 +895,7 @@ export default function Calificaciones() {
                 {grados.map((grado) => {
                   const isSelected = selectedGradoId === grado.id;
                   const materiasCount = asignaturasDocente.filter(a => a.gradoId === grado.id).length;
+                  const esInicial = esGradoInicial(grado.nombre);
                   return (
                     <button
                       key={grado.id}
@@ -925,7 +928,10 @@ export default function Calificaciones() {
                         </div>
                         <div className="flex-1 min-w-0">
                           <div className="font-semibold text-slate-900 truncate">{grado.nombre}</div>
-                          <div className="text-slate-500 text-xs flex items-center gap-1">
+                          <div className="text-slate-500 text-xs flex items-center gap-1 flex-wrap">
+                            {esInicial && (
+                              <span className="text-purple-600 font-bold">Inicial</span>
+                            )}
                             {materiasCount > 0 ? (
                               <span className="text-green-600 font-medium">{materiasCount} materia{materiasCount !== 1 ? 's' : ''}</span>
                             ) : (
@@ -1010,7 +1016,13 @@ export default function Calificaciones() {
                   <div className="flex flex-col sm:flex-row gap-2 w-full lg:w-auto lg:justify-end items-stretch sm:items-center">
                     {activeTab === "asistencia" ? (
                       <>
-                        {esGradoBachillerato ? (
+                        {/* ✅ MODIFICADO: En iniciales NO se muestra selector de materia */}
+                        {esGradoInicialActual ? (
+                          <div className="bg-purple-50 border border-purple-200 rounded-lg px-3 py-2 text-xs text-purple-800 flex items-center gap-2">
+                            <FaUserCheck className="text-sm" />
+                            <span className="font-semibold">Asistencia General</span>
+                          </div>
+                        ) : esGradoBachillerato ? (
                           <select
                             value={selectedMateriaId}
                             onChange={(e) => {
@@ -1152,7 +1164,7 @@ export default function Calificaciones() {
               </div>
 
               <div className="p-4">
-                {activeTab === "asistencia" && !todosConAsistencia && estudiantes.length > 0 && materiaSeleccionada && (
+                {activeTab === "asistencia" && !todosConAsistencia && estudiantes.length > 0 && (esGradoInicialActual || materiaSeleccionada) && (
                   <div className="mb-4 bg-yellow-50 border border-yellow-200 rounded-lg px-3 py-2">
                     <div className="flex items-center gap-2 text-yellow-800">
                       <FaExclamationTriangle className="text-sm shrink-0" />
@@ -1238,9 +1250,14 @@ export default function Calificaciones() {
                                   </div>
                                 </div>
                                 <div className="flex items-center justify-between mt-2 pt-2 border-t border-slate-200">
+                                  {/* ✅ MODIFICADO: En iniciales no se muestra estrategia */}
                                   <span className="text-xs text-slate-500">
-                                    Estrategia:{" "}
-                                    {ESTRATEGIAS_NOTA.find((e) => e.value === actividad.estrategiaNota)?.label.split(" ")[0]}
+                                    {esGradoInicialActual ? "Calificación directa" : (
+                                      <>
+                                        Estrategia:{" "}
+                                        {ESTRATEGIAS_NOTA.find((e) => e.value === actividad.estrategiaNota)?.label.split(" ")[0]}
+                                      </>
+                                    )}
                                   </span>
                                   <div className="flex gap-1">
                                     <button
@@ -1289,8 +1306,12 @@ export default function Calificaciones() {
                                 {actividadSeleccionada.tipo}: {actividadSeleccionada.detalle}
                               </h4>
                               <p className="text-purple-700 text-xs">
-                                Fecha: {actividadSeleccionada.fecha} | Estrategia:{" "}
-                                {ESTRATEGIAS_NOTA.find((e) => e.value === actividadSeleccionada.estrategiaNota)?.label}
+                                Fecha: {actividadSeleccionada.fecha}
+                                {!esGradoInicialActual && (
+                                  <> | Estrategia:{" "}
+                                    {ESTRATEGIAS_NOTA.find((e) => e.value === actividadSeleccionada.estrategiaNota)?.label}
+                                  </>
+                                )}
                               </p>
                             </div>
                           </div>
@@ -1317,9 +1338,9 @@ export default function Calificaciones() {
                               actividadSeleccionada.estrategiaNota
                             );
                             const letra = notaOriginal !== undefined ? notaALetra(notaFinal) : "";
-                            const necesitaRefuerzo =
+                            // ✅ MODIFICADO: En iniciales no se muestra botón de refuerzo
+                            const necesitaRefuerzo = !esGradoInicialActual &&
                               notaOriginal !== undefined && notaOriginal < 7 && !calificacion?.refuerzo;
-                            // ✅ Trazabilidad: mostrar si la nota es de otro docente o fue editada
                             const esDeOtroDocente = calificacion?.docenteId && calificacion.docenteId !== user?.uid;
 
                             return (
@@ -1333,7 +1354,6 @@ export default function Calificaciones() {
                                       {est.apellidos} {est.nombres}
                                     </div>
                                     {est.cedula && <div className="text-slate-500 text-xs mt-0.5">CI: {est.cedula}</div>}
-                                    {/* ✅ Línea de trazabilidad */}
                                     {(esDeOtroDocente || calificacion?.editadoPor) && (
                                       <div className="text-[10px] text-slate-400 mt-0.5 flex items-center gap-1">
                                         <FaUserEdit className="text-[9px]" />
@@ -1469,7 +1489,6 @@ export default function Calificaciones() {
                                 {est.apellidos} {est.nombres}
                               </div>
                               {est.cedula && <div className="text-slate-500 text-xs mt-0.5">CI: {est.cedula}</div>}
-                              {/* ✅ Línea de trazabilidad */}
                               {estado && (esDeOtroDocente || asistencia?.editadoPor) && (
                                 <div className="text-[10px] text-slate-400 mt-0.5 flex items-center gap-1">
                                   <FaUserEdit className="text-[9px]" />
@@ -1528,7 +1547,7 @@ export default function Calificaciones() {
                   </div>
                 )}
 
-                {activeTab === "asistencia" && estudiantes.length > 0 && materiaSeleccionada && (
+                {activeTab === "asistencia" && estudiantes.length > 0 && (esGradoInicialActual || materiaSeleccionada) && (
                   <div className="mt-4 pt-3 border-t border-slate-200">
                     <div className="text-xs text-slate-600">
                       {Object.keys(asistencias).filter((key) => asistencias[key].estado).length} de{" "}
@@ -1597,27 +1616,30 @@ export default function Calificaciones() {
                 />
               </div>
 
-              <div>
-                <label className="block text-sm font-semibold text-slate-700 mb-2">
-                  Estrategia de Cálculo con Refuerzo
-                </label>
-                <select
-                  value={actividadForm.estrategiaNota}
-                  onChange={(e) =>
-                    setActividadForm({
-                      ...actividadForm,
-                      estrategiaNota: e.target.value as "reemplazar" | "promediar" | "maxima",
-                    })
-                  }
-                  className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500"
-                >
-                  {ESTRATEGIAS_NOTA.map((estrategia) => (
-                    <option key={estrategia.value} value={estrategia.value}>
-                      {estrategia.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              {/* ✅ MODIFICADO: En iniciales NO se muestra estrategia de refuerzo */}
+              {!esGradoInicialActual && (
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 mb-2">
+                    Estrategia de Cálculo con Refuerzo
+                  </label>
+                  <select
+                    value={actividadForm.estrategiaNota}
+                    onChange={(e) =>
+                      setActividadForm({
+                        ...actividadForm,
+                        estrategiaNota: e.target.value as "reemplazar" | "promediar" | "maxima",
+                      })
+                    }
+                    className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500"
+                  >
+                    {ESTRATEGIAS_NOTA.map((estrategia) => (
+                      <option key={estrategia.value} value={estrategia.value}>
+                        {estrategia.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
             </div>
 
             <div className="flex gap-2 mt-6">

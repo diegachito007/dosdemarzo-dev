@@ -907,14 +907,13 @@ export default function Estudiantes() {
                                         >
                                           <FaEdit /> Editar
                                         </button>
-                                        {esAdmin && (
-                                          <button
-                                            onClick={() => handleDelete(est.id)}
-                                            className="flex-1 inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-red-50 text-red-600 hover:bg-red-100 text-sm font-medium transition-all"
-                                          >
-                                            <FaTrash /> Eliminar
-                                          </button>
-                                        )}
+                                        {/* ✅ CORREGIDO: Ahora visible para tutores (ya está dentro de puedeEditar) */}
+                                        <button
+                                          onClick={() => handleDelete(est.id)}
+                                          className="flex-1 inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-red-50 text-red-600 hover:bg-red-100 text-sm font-medium transition-all"
+                                        >
+                                          <FaTrash /> Eliminar
+                                        </button>
                                       </div>
                                     </div>
                                   )}
@@ -968,14 +967,13 @@ export default function Estudiantes() {
                                     >
                                       <FaEdit /> Editar
                                     </button>
-                                    {esAdmin && (
-                                      <button
-                                        onClick={() => handleDelete(est.id)}
-                                        className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg transition-all bg-red-50 text-red-600 hover:bg-red-100 text-xs font-medium"
-                                      >
-                                        <FaTrash /> Eliminar
-                                      </button>
-                                    )}
+                                    {/* ✅ CORREGIDO: Ahora visible para tutores (ya está dentro de puedeEditar) */}
+                                    <button
+                                      onClick={() => handleDelete(est.id)}
+                                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg transition-all bg-red-50 text-red-600 hover:bg-red-100 text-xs font-medium"
+                                    >
+                                      <FaTrash /> Eliminar
+                                    </button>
                                   </div>
                                 </td>
                               )}
