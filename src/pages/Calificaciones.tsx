@@ -1,4 +1,4 @@
-import { useState, useEffect, startTransition, useCallback, useMemo } from "react";
+import { useState, useEffect, startTransition, useCallback, useMemo, useRef } from "react";
 import {
   collection,
   query,
@@ -45,6 +45,8 @@ import {
   FaChalkboardTeacher,
   FaArrowRight,
   FaUserEdit,
+  FaChevronLeft,
+  FaChevronRight,
 } from "react-icons/fa";
 
 // ==================== INTERFACES ====================
@@ -178,7 +180,6 @@ const esBachillerato = (gradoNombre: string): boolean => {
   );
 };
 
-// ✅ NUEVO: Detectar si es grado Inicial o Preparatoria
 const esGradoInicial = (gradoNombre: string): boolean => {
   const n = gradoNombre.toLowerCase();
   return n.includes('inicial 1') || n.includes('inicial 2') || n.includes('preparatoria');
@@ -216,8 +217,9 @@ export default function Calificaciones() {
     Record<string, { estado: "P" | "T" | "A" | "J"; observacion: string; registradoPor?: string; editadoPor?: string }>
   >({});
 
+  // ✅ MODIFICADO: Ahora el valor de nota es string para permitir borrar
   const [calificaciones, setCalificaciones] = useState<
-    Record<string, { nota: number; observacion: string; refuerzo?: RefuerzoData | null; docenteId?: string; editadoPor?: string }>
+    Record<string, { nota: string; observacion: string; refuerzo?: RefuerzoData | null; docenteId?: string; editadoPor?: string }>
   >({});
 
   const [showActividadModal, setShowActividadModal] = useState(false);
@@ -237,6 +239,11 @@ export default function Calificaciones() {
     fecha: new Date().toISOString().split("T")[0],
   });
 
+  // ✅ NUEVO: Estado para carrusel en móvil
+  const [carruselIndex, setCarruselIndex] = useState(0);
+  // ✅ NUEVO: Refs para los inputs de nota (permite saltar con Enter/Tab)
+  const notaInputRefs = useRef<(HTMLInputElement | null)[]>([]);
+
   const periodoActual = periodos.find((p) => {
     const hoy = new Date();
     const inicio = new Date(p.fechaInicio);
@@ -249,7 +256,7 @@ export default function Calificaciones() {
     (!userData?.gradosAsignados || userData.gradosAsignados.length === 0);
   const anioActivo = aniosLectivos.find((a) => a.activo);
   const esGradoBachillerato = esBachillerato(selectedGradoNombre);
-  const esGradoInicialActual = esGradoInicial(selectedGradoNombre); // ✅ NUEVO
+  const esGradoInicialActual = esGradoInicial(selectedGradoNombre);
 
   const nombreDocente = (uid?: string) => (uid ? nombresDocentes[uid] || "Docente" : "");
 
@@ -277,7 +284,6 @@ export default function Calificaciones() {
 
   const materiaSeleccionada = esGradoBachillerato ? selectedMateriaId : selectedAmbitoId;
 
-  // ✅ MODIFICADO: En iniciales no requiere materia seleccionada
   const todosConAsistencia =
     estudiantes.length > 0 &&
     (esGradoInicialActual || materiaSeleccionada !== "") &&
@@ -420,6 +426,7 @@ export default function Calificaciones() {
     }
   }, []);
 
+  // ✅ MODIFICADO: convierte nota number a string para el input de texto
   const cargarCalificaciones = useCallback(async (actividadId: string) => {
     try {
       const q = query(collection(db, "calificaciones"), where("actividadId", "==", actividadId));
@@ -428,11 +435,11 @@ export default function Calificaciones() {
 
       const calificacionesMap: Record<
         string,
-        { nota: number; observacion: string; refuerzo?: RefuerzoData | null; docenteId?: string; editadoPor?: string }
+        { nota: string; observacion: string; refuerzo?: RefuerzoData | null; docenteId?: string; editadoPor?: string }
       > = {};
       data.forEach((calificacion) => {
         calificacionesMap[calificacion.estudianteId] = {
-          nota: calificacion.nota,
+          nota: String(calificacion.nota),
           observacion: calificacion.observacion || "",
           refuerzo: calificacion.refuerzo || null,
           docenteId: calificacion.docenteId,
@@ -440,7 +447,10 @@ export default function Calificaciones() {
         };
       });
 
-      startTransition(() => setCalificaciones(calificacionesMap));
+      startTransition(() => {
+        setCalificaciones(calificacionesMap);
+        setCarruselIndex(0);
+      });
     } catch (error) {
       console.error("Error cargando calificaciones:", error);
     }
@@ -448,7 +458,6 @@ export default function Calificaciones() {
 
   // ==================== GUARDADO ====================
 
-  // ✅ MODIFICADO: En iniciales usa "general" como ambitoId
   const guardarAsistencia = async () => {
     if (!esGradoInicialActual && !materiaSeleccionada) {
       alert("⚠️ Debes seleccionar una materia/ámbito antes de guardar la asistencia.");
@@ -591,6 +600,7 @@ export default function Calificaciones() {
     }
   };
 
+  // ✅ MODIFICADO: convierte el string de nota a number para guardar
   const guardarCalificaciones = async () => {
     if (!selectedActividadId) {
       alert("⚠️ Debes seleccionar una actividad antes de guardar calificaciones");
@@ -601,7 +611,10 @@ export default function Calificaciones() {
     try {
       const batch = estudiantes.map(async (est) => {
         const calificacion = calificaciones[est.id];
-        if (!calificacion || calificacion.nota === undefined) return;
+        if (!calificacion || !calificacion.nota || calificacion.nota.trim() === "") return;
+
+        const notaNum = parseInt(calificacion.nota);
+        if (isNaN(notaNum) || notaNum < 1 || notaNum > 10) return;
 
         const q = query(
           collection(db, "calificaciones"),
@@ -613,7 +626,7 @@ export default function Calificaciones() {
         const datos = {
           estudianteId: est.id,
           actividadId: selectedActividadId,
-          nota: Math.round(calificacion.nota),
+          nota: Math.round(notaNum),
           observacion: calificacion.observacion || "",
           refuerzo: calificacion.refuerzo || null,
           updatedAt: serverTimestamp(),
@@ -738,10 +751,27 @@ export default function Calificaciones() {
     }));
   };
 
-  const actualizarCalificacion = (estudianteId: string, nota: number) => {
+  // ✅ MODIFICADO: acepta string y valida que sea número 1-10 o vacío
+  const actualizarCalificacion = (estudianteId: string, valor: string) => {
+    // Permitir vacío (para borrar)
+    if (valor === "") {
+      setCalificaciones((prev) => ({
+        ...prev,
+        [estudianteId]: { ...prev[estudianteId], nota: "" },
+      }));
+      return;
+    }
+    // Solo permitir dígitos
+    if (!/^\d+$/.test(valor)) return;
+    // Limitar a 2 dígitos máximo
+    if (valor.length > 2) return;
+    // Validar rango 1-10
+    const num = parseInt(valor);
+    if (num > 10) return;
+
     setCalificaciones((prev) => ({
       ...prev,
-      [estudianteId]: { ...prev[estudianteId], nota: Math.round(nota) },
+      [estudianteId]: { ...prev[estudianteId], nota: valor },
     }));
   };
 
@@ -750,6 +780,38 @@ export default function Calificaciones() {
       ...prev,
       [estudianteId]: { ...prev[estudianteId], observacion },
     }));
+  };
+
+  // ✅ NUEVO: Aplicar una nota a TODOS los estudiantes de golpe
+  const aplicarNotaATodos = (nota: number) => {
+    setCalificaciones((prev) => {
+      const nuevas = { ...prev };
+      estudiantes.forEach((est) => {
+        nuevas[est.id] = {
+          ...nuevas[est.id],
+          nota: String(nota),
+          observacion: nuevas[est.id]?.observacion || "",
+        };
+      });
+      return nuevas;
+    });
+  };
+
+  // ✅ NUEVO: Maneja Enter/Tab para saltar a la siguiente caja de nota
+  const handleNotaKeyDown = (e: React.KeyboardEvent<HTMLInputElement>, index: number) => {
+    if (e.key === "Enter" || e.key === "Tab") {
+      e.preventDefault();
+      const nextIndex = index + 1;
+      if (nextIndex < estudiantes.length) {
+        // En móvil: avanzar el carrusel
+        setCarruselIndex(nextIndex);
+        // Enfocar el siguiente input (con pequeño delay para que se renderice)
+        setTimeout(() => {
+          notaInputRefs.current[nextIndex]?.focus();
+          notaInputRefs.current[nextIndex]?.select();
+        }, 50);
+      }
+    }
   };
 
   // ==================== EFFECTS ====================
@@ -776,7 +838,6 @@ export default function Calificaciones() {
     }
   }, [selectedActividadId, cargarCalificaciones]);
 
-  // ✅ MODIFICADO: Listener ajusta query para grados iniciales (ambitoId = "general")
   useEffect(() => {
     if (activeTab !== "asistencia" || !selectedGradoId || !fechaAsistencia) {
       return;
@@ -909,6 +970,7 @@ export default function Calificaciones() {
                         setCalificaciones({});
                         setAsistencias({});
                         setActividades([]);
+                        setCarruselIndex(0);
                       }}
                       className={`p-3 rounded-lg border-2 transition-all duration-200 text-left text-sm ${
                         isSelected
@@ -1016,7 +1078,6 @@ export default function Calificaciones() {
                   <div className="flex flex-col sm:flex-row gap-2 w-full lg:w-auto lg:justify-end items-stretch sm:items-center">
                     {activeTab === "asistencia" ? (
                       <>
-                        {/* ✅ MODIFICADO: En iniciales NO se muestra selector de materia */}
                         {esGradoInicialActual ? (
                           <div className="bg-purple-50 border border-purple-200 rounded-lg px-3 py-2 text-xs text-purple-800 flex items-center gap-2">
                             <FaUserCheck className="text-sm" />
@@ -1250,7 +1311,6 @@ export default function Calificaciones() {
                                   </div>
                                 </div>
                                 <div className="flex items-center justify-between mt-2 pt-2 border-t border-slate-200">
-                                  {/* ✅ MODIFICADO: En iniciales no se muestra estrategia */}
                                   <span className="text-xs text-slate-500">
                                     {esGradoInicialActual ? "Calificación directa" : (
                                       <>
@@ -1317,36 +1377,108 @@ export default function Calificaciones() {
                           </div>
                         </div>
 
-                        <div className="flex justify-end mb-4">
+                        {/* ✅ NUEVO: Barra de acciones con Guardar + Aplicar a todos */}
+                        <div className="mb-4 flex flex-wrap gap-2 items-center justify-between bg-slate-50 border border-slate-200 rounded-lg p-3">
                           <button
                             onClick={guardarCalificaciones}
                             disabled={isSaving}
                             className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-all disabled:opacity-70 disabled:cursor-not-allowed"
                           >
                             {isSaving ? <FaSpinner className="animate-spin" /> : <FaSave />}
-                            Guardar Calificaciones
+                            Guardar
+                          </button>
+
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="text-xs text-slate-600 font-medium mr-1">Aplicar a todos:</span>
+                            {[7, 8, 9, 10].map((nota) => (
+                              <button
+                                key={nota}
+                                onClick={() => aplicarNotaATodos(nota)}
+                                className="w-9 h-9 rounded-lg bg-green-100 hover:bg-green-200 text-green-800 text-sm font-bold transition-all border border-green-300"
+                                title={`Aplicar nota ${nota} a todos los estudiantes`}
+                              >
+                                {nota}
+                              </button>
+                            ))}
+                            <button
+                              onClick={() => aplicarNotaATodos(0)}
+                              className="h-9 px-3 rounded-lg bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-semibold transition-all"
+                              title="Borrar todas las notas"
+                            >
+                              Limpiar
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* ✅ NUEVO: Controles de carrusel (solo visible en móvil) */}
+                        <div className="md:hidden mb-3 flex items-center justify-between gap-2 bg-indigo-50 border border-indigo-200 rounded-lg p-2">
+                          <button
+                            onClick={() => {
+                              const newIndex = Math.max(0, carruselIndex - 1);
+                              setCarruselIndex(newIndex);
+                              setTimeout(() => {
+                                notaInputRefs.current[newIndex]?.focus();
+                                notaInputRefs.current[newIndex]?.select();
+                              }, 50);
+                            }}
+                            disabled={carruselIndex === 0}
+                            className="p-2 rounded-lg bg-white hover:bg-indigo-100 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+                          >
+                            <FaChevronLeft className="text-indigo-600" />
+                          </button>
+                          <div className="flex-1 text-center">
+                            <div className="text-xs text-indigo-600 font-semibold">
+                              {carruselIndex + 1} / {estudiantes.length}
+                            </div>
+                            <div className="text-[10px] text-indigo-500">
+                              Desliza o usa Enter ↵
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => {
+                              const newIndex = Math.min(estudiantes.length - 1, carruselIndex + 1);
+                              setCarruselIndex(newIndex);
+                              setTimeout(() => {
+                                notaInputRefs.current[newIndex]?.focus();
+                                notaInputRefs.current[newIndex]?.select();
+                              }, 50);
+                            }}
+                            disabled={carruselIndex === estudiantes.length - 1}
+                            className="p-2 rounded-lg bg-white hover:bg-indigo-100 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+                          >
+                            <FaChevronRight className="text-indigo-600" />
                           </button>
                         </div>
 
+                        {/* ✅ MODIFICADO: Lista con carrusel en móvil + input de texto */}
                         <div className="space-y-2">
-                          {estudiantes.map((est) => {
+                          {estudiantes.map((est, index) => {
                             const calificacion = calificaciones[est.id];
-                            const notaOriginal = calificacion?.nota;
+                            const notaStr = calificacion?.nota || "";
+                            const notaNum = parseInt(notaStr);
+                            const notaOriginal = !isNaN(notaNum) ? notaNum : undefined;
                             const notaFinal = calcularNotaFinal(
                               notaOriginal || 0,
                               calificacion?.refuerzo,
                               actividadSeleccionada.estrategiaNota
                             );
                             const letra = notaOriginal !== undefined ? notaALetra(notaFinal) : "";
-                            // ✅ MODIFICADO: En iniciales no se muestra botón de refuerzo
                             const necesitaRefuerzo = !esGradoInicialActual &&
                               notaOriginal !== undefined && notaOriginal < 7 && !calificacion?.refuerzo;
                             const esDeOtroDocente = calificacion?.docenteId && calificacion.docenteId !== user?.uid;
 
+                            // ✅ Carrusel: en móvil solo mostrar el estudiante actual
+                            const esMovil = typeof window !== "undefined" && window.innerWidth < 768;
+                            if (esMovil && index !== carruselIndex) return null;
+
                             return (
                               <div
                                 key={est.id}
-                                className="border border-slate-200 rounded-lg p-3 hover:border-blue-300 transition-colors"
+                                className={`border rounded-lg p-3 transition-colors ${
+                                  index === carruselIndex 
+                                    ? "border-indigo-400 bg-indigo-50/30 shadow-sm md:border-slate-200 md:bg-transparent md:shadow-none" 
+                                    : "border-slate-200 hover:border-blue-300"
+                                }`}
                               >
                                 <div className="flex items-center justify-between gap-3">
                                   <div className="flex-1 min-w-0">
@@ -1376,25 +1508,26 @@ export default function Calificaciones() {
                                         {letra}
                                       </div>
                                     )}
+                                    {/* ✅ CAMBIADO: type="text" con inputMode="numeric" para borrar en móvil */}
                                     <input
-                                      type="number"
-                                      min="1"
-                                      max="10"
-                                      step="1"
-                                      value={notaOriginal !== undefined ? notaOriginal : ""}
-                                      onChange={(e) => {
-                                        const valor = parseInt(e.target.value);
-                                        if (!isNaN(valor) && valor >= 1 && valor <= 10) {
-                                          actualizarCalificacion(est.id, valor);
-                                        }
+                                      ref={(el) => {
+                                        notaInputRefs.current[index] = el;
                                       }}
+                                      type="text"
+                                      inputMode="numeric"
+                                      pattern="[0-9]*"
+                                      maxLength={2}
+                                      value={notaStr}
+                                      onChange={(e) => actualizarCalificacion(est.id, e.target.value)}
+                                      onKeyDown={(e) => handleNotaKeyDown(e, index)}
+                                      onFocus={(e) => e.target.select()}
                                       placeholder="1-10"
-                                      className={`w-16 border-2 rounded px-2 py-1 text-center text-sm font-bold focus:ring-2 focus:ring-blue-500 ${
+                                      className={`w-16 border-2 rounded px-2 py-1.5 text-center text-sm font-bold focus:ring-2 focus:ring-blue-500 focus:outline-none ${
                                         notaOriginal !== undefined
                                           ? notaOriginal >= 7
-                                            ? "border-green-500 text-green-700"
-                                            : "border-red-500 text-red-700"
-                                          : "border-slate-300"
+                                            ? "border-green-500 text-green-700 bg-green-50"
+                                            : "border-red-500 text-red-700 bg-red-50"
+                                          : "border-slate-300 bg-white"
                                       }`}
                                     />
                                     {necesitaRefuerzo && (
@@ -1412,7 +1545,7 @@ export default function Calificaciones() {
                                         title="Aplicar refuerzo"
                                       >
                                         <FaSyncAlt className="text-xs" />
-                                        Refuerzo
+                                        <span className="hidden sm:inline">Refuerzo</span>
                                       </button>
                                     )}
                                   </div>
@@ -1428,6 +1561,7 @@ export default function Calificaciones() {
                                     <div className="text-orange-600 mt-1">{calificacion.refuerzo.detalle}</div>
                                   </div>
                                 )}
+                                {/* Campo observación (no recibe Enter) */}
                                 <div className="mt-2">
                                   <input
                                     type="text"
@@ -1616,7 +1750,6 @@ export default function Calificaciones() {
                 />
               </div>
 
-              {/* ✅ MODIFICADO: En iniciales NO se muestra estrategia de refuerzo */}
               {!esGradoInicialActual && (
                 <div>
                   <label className="block text-sm font-semibold text-slate-700 mb-2">
@@ -1736,7 +1869,7 @@ export default function Calificaciones() {
                     Nota final estimada:{" "}
                     <span className="font-bold">
                       {calcularNotaFinal(
-                        calificaciones[refuerzoEstudianteId]?.nota || 0,
+                        parseInt(calificaciones[refuerzoEstudianteId]?.nota || "0") || 0,
                         { nota: refuerzoForm.nota, detalle: "", fecha: "", aplicadoPor: "" },
                         actividadSeleccionada.estrategiaNota
                       )}
