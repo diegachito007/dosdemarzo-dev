@@ -23,7 +23,8 @@ import {
   FaExclamationTriangle,
   FaBook,
   FaCheckCircle,
-  FaTrash
+  FaTrash,
+  FaPlus
 } from 'react-icons/fa';
 
 interface AsignaturaDocente {
@@ -156,6 +157,15 @@ export default function MiHorario() {
     return ambito?.nombre || 'Sin ámbito';
   };
 
+  // ✅ NUEVO: Detectar si el grado es Inicial o Preparatoria
+  const esGradoInicial = (gradoNombre: string): boolean => {
+    return (
+      gradoNombre.toLowerCase().includes('inicial 1') ||
+      gradoNombre.toLowerCase().includes('inicial 2') ||
+      gradoNombre.toLowerCase().includes('preparatoria')
+    );
+  };
+
   // Materias del grado seleccionado
   const destrezasDelGrado = useMemo(() => {
     if (!selectedGradoId) return [];
@@ -173,6 +183,23 @@ export default function MiHorario() {
     const asignadasIds = asignaturasDelGrado.map(a => a.destrezaId);
     return destrezasDelGrado.filter(d => !asignadasIds.includes(d.id));
   }, [destrezasDelGrado, asignaturasDelGrado]);
+
+  // ✅ NUEVO: Agrupar destrezas disponibles por ámbito
+  const destrezasPorAmbito = useMemo(() => {
+    const grupos: Record<string, { ambito: Ambito; destrezas: Destreza[] }> = {};
+    
+    destrezasDisponibles.forEach(destreza => {
+      const ambito = ambitos.find(a => a.id === destreza.ambitoId);
+      if (!ambito) return;
+
+      if (!grupos[ambito.id]) {
+        grupos[ambito.id] = { ambito, destrezas: [] };
+      }
+      grupos[ambito.id].destrezas.push(destreza);
+    });
+
+    return Object.values(grupos);
+  }, [destrezasDisponibles, ambitos]);
 
   const verificarDisponibilidad = async (destrezaId: string): Promise<boolean> => {
     try {
@@ -215,10 +242,57 @@ export default function MiHorario() {
         activo: true,
         createdAt: new Date()
       });
-      // ✅ Ya no necesitamos actualizar el estado local: onSnapshot lo hace automáticamente
     } catch (error) {
       console.error('Error asignando materia:', error);
       alert('Error al asignar la materia');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // ✅ NUEVO: Asignar todas las destrezas de un ámbito (solo para Inicial/Preparatoria)
+  const asignarTodasDelAmbito = async (ambitoId: string) => {
+    if (!user?.uid || !anioActivo?.id || !selectedGradoId) return;
+
+    const grupo = destrezasPorAmbito.find(g => g.ambito.id === ambitoId);
+    if (!grupo) return;
+
+    const totalDestrezas = grupo.destrezas.length;
+    if (!confirm(`¿Asignar las ${totalDestrezas} destrezas de "${grupo.ambito.nombre}" a tu horario?`)) {
+      return;
+    }
+
+    setSaving(true);
+    try {
+      let asignadas = 0;
+      let omitidas = 0;
+
+      for (const destreza of grupo.destrezas) {
+        const disponible = await verificarDisponibilidad(destreza.id);
+        if (!disponible) {
+          omitidas++;
+          continue;
+        }
+
+        await addDoc(collection(db, 'asignaturasDocente'), {
+          docenteId: user.uid,
+          gradoId: selectedGradoId,
+          destrezaId: destreza.id,
+          anioLectivoId: anioActivo.id,
+          activo: true,
+          createdAt: new Date()
+        });
+        asignadas++;
+      }
+
+      let mensaje = `✅ Se asignaron ${asignadas} destreza(s)`;
+      if (omitidas > 0) {
+        mensaje += `\n⚠️ ${omitidas} omitida(s) (ya estaban asignadas a otro docente)`;
+      }
+      alert(mensaje);
+    } catch (error) {
+      console.error('Error asignando todas las destrezas del ámbito:', error);
+      alert('Error al asignar las destrezas');
     } finally {
       setSaving(false);
     }
@@ -230,7 +304,6 @@ export default function MiHorario() {
     setSaving(true);
     try {
       await deleteDoc(doc(db, 'asignaturasDocente', asignacionId));
-      // ✅ Ya no necesitamos actualizar el estado local: onSnapshot lo hace automáticamente
     } catch (error) {
       console.error('Error removiendo materia:', error);
       alert('Error al remover la materia');
@@ -261,6 +334,7 @@ export default function MiHorario() {
   }
 
   const gradoActual = grados.find(g => g.id === selectedGradoId);
+  const esInicialOPreparatoria = gradoActual ? esGradoInicial(gradoActual.nombre) : false;
 
   return (
     <Layout title="Mi Horario" subtitle="Configura las materias que dictas en cada grado" showBack>
@@ -289,6 +363,7 @@ export default function MiHorario() {
             <div className="flex flex-wrap gap-2">
               {grados.map(grado => {
                 const countAsignadas = asignaturas.filter(a => a.gradoId === grado.id).length;
+                const esInicial = esGradoInicial(grado.nombre);
                 return (
                   <button
                     key={grado.id}
@@ -300,6 +375,11 @@ export default function MiHorario() {
                     }`}
                   >
                     <span>{grado.nombre} - {grado.paralelo}</span>
+                    {esInicial && (
+                      <span className="text-xs px-1.5 py-0.5 rounded-full bg-purple-100 text-purple-700 font-bold">
+                        Inicial
+                      </span>
+                    )}
                     {countAsignadas > 0 && (
                       <span className={`text-xs px-1.5 py-0.5 rounded-full font-bold ${
                         selectedGradoId === grado.id
@@ -381,7 +461,13 @@ export default function MiHorario() {
               Materias Disponibles
             </h3>
             <p className="text-xs text-slate-500 mb-4">
-              Haz clic en "Asignar" para agregar una materia a tu horario de {gradoActual?.nombre} - {gradoActual?.paralelo}
+              {esInicialOPreparatoria ? (
+                <>
+                  <strong>Modo Inicial/Preparatoria:</strong> Usa el botón "Asignar todo el ámbito" para asignar rápidamente todas las destrezas de un ámbito, o asigna individualmente.
+                </>
+              ) : (
+                <>Haz clic en "Asignar" para agregar una materia a tu horario de {gradoActual?.nombre} - {gradoActual?.paralelo}</>
+              )}
             </p>
             
             {destrezasDisponibles.length === 0 ? (
@@ -390,7 +476,76 @@ export default function MiHorario() {
                 <p className="text-sm font-medium">¡Ya tienes todas las materias asignadas!</p>
                 <p className="text-xs mt-1">No hay más materias disponibles en este grado</p>
               </div>
+            ) : esInicialOPreparatoria ? (
+              // ✅ VISTA AGRUPADA POR ÁMBITO (solo para Inicial/Preparatoria)
+              <div className="space-y-4">
+                {destrezasPorAmbito.map(({ ambito, destrezas: destrezasAmbito }) => (
+                  <div key={ambito.id} className="border-2 border-purple-200 rounded-lg overflow-hidden">
+                    {/* Encabezado del ámbito con botón de asignar todo */}
+                    <div className="bg-purple-50 border-b border-purple-200 px-4 py-3 flex items-center justify-between">
+                      <div className="flex items-center gap-2 flex-1 min-w-0">
+                        <FaBook className="text-purple-600 shrink-0" />
+                        <div className="min-w-0">
+                          <h4 className="font-semibold text-purple-900 text-sm truncate">
+                            {ambito.nombre}
+                          </h4>
+                          <p className="text-xs text-purple-700">
+                            {destrezasAmbito.length} destreza{destrezasAmbito.length !== 1 ? 's' : ''} disponible{destrezasAmbito.length !== 1 ? 's' : ''}
+                          </p>
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => asignarTodasDelAmbito(ambito.id)}
+                        disabled={saving}
+                        className="ml-3 flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium bg-purple-600 hover:bg-purple-700 text-white transition-all disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+                        title={`Asignar todas las destrezas de ${ambito.nombre}`}
+                      >
+                        {saving ? (
+                          <FaSpinner className="animate-spin text-xs" />
+                        ) : (
+                          <>
+                            <FaPlus className="text-xs" />
+                            Asignar todo
+                          </>
+                        )}
+                      </button>
+                    </div>
+
+                    {/* Lista de destrezas del ámbito */}
+                    <div className="p-3 space-y-2">
+                      {destrezasAmbito.map(destreza => (
+                        <div
+                          key={destreza.id}
+                          className="flex items-center justify-between p-2.5 rounded-lg border border-slate-200 bg-slate-50 hover:border-blue-300 hover:bg-blue-50 transition-all"
+                        >
+                          <div className="flex-1 min-w-0">
+                            <p className="font-medium text-slate-800 text-sm truncate">
+                              {destreza.nombre}
+                            </p>
+                          </div>
+                          
+                          <button
+                            onClick={() => asignarMateria(destreza.id)}
+                            disabled={saving}
+                            className="ml-3 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-blue-600 hover:bg-blue-700 text-white transition-all disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+                          >
+                            {saving ? (
+                              <FaSpinner className="animate-spin text-xs" />
+                            ) : (
+                              <>
+                                <FaCheck className="text-xs" />
+                                Asignar
+                              </>
+                            )}
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
             ) : (
+              // ✅ VISTA PLANA (para EGB y BGU - flujo actual)
               <div className="space-y-2">
                 {destrezasDisponibles.map(destreza => {
                   const ambitoNombre = getAmbitoNombre(destreza.ambitoId);
