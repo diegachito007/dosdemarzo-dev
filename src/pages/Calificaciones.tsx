@@ -217,7 +217,6 @@ export default function Calificaciones() {
     Record<string, { estado: "P" | "T" | "A" | "J"; observacion: string; registradoPor?: string; editadoPor?: string }>
   >({});
 
-  // ✅ MODIFICADO: Ahora el valor de nota es string para permitir borrar
   const [calificaciones, setCalificaciones] = useState<
     Record<string, { nota: string; observacion: string; refuerzo?: RefuerzoData | null; docenteId?: string; editadoPor?: string }>
   >({});
@@ -239,9 +238,7 @@ export default function Calificaciones() {
     fecha: new Date().toISOString().split("T")[0],
   });
 
-  // ✅ NUEVO: Estado para carrusel en móvil
   const [carruselIndex, setCarruselIndex] = useState(0);
-  // ✅ NUEVO: Refs para los inputs de nota (permite saltar con Enter/Tab)
   const notaInputRefs = useRef<(HTMLInputElement | null)[]>([]);
 
   const periodoActual = periodos.find((p) => {
@@ -426,7 +423,6 @@ export default function Calificaciones() {
     }
   }, []);
 
-  // ✅ MODIFICADO: convierte nota number a string para el input de texto
   const cargarCalificaciones = useCallback(async (actividadId: string) => {
     try {
       const q = query(collection(db, "calificaciones"), where("actividadId", "==", actividadId));
@@ -600,7 +596,6 @@ export default function Calificaciones() {
     }
   };
 
-  // ✅ MODIFICADO: convierte el string de nota a number para guardar
   const guardarCalificaciones = async () => {
     if (!selectedActividadId) {
       alert("⚠️ Debes seleccionar una actividad antes de guardar calificaciones");
@@ -751,9 +746,7 @@ export default function Calificaciones() {
     }));
   };
 
-  // ✅ MODIFICADO: acepta string y valida que sea número 1-10 o vacío
   const actualizarCalificacion = (estudianteId: string, valor: string) => {
-    // Permitir vacío (para borrar)
     if (valor === "") {
       setCalificaciones((prev) => ({
         ...prev,
@@ -761,11 +754,8 @@ export default function Calificaciones() {
       }));
       return;
     }
-    // Solo permitir dígitos
     if (!/^\d+$/.test(valor)) return;
-    // Limitar a 2 dígitos máximo
     if (valor.length > 2) return;
-    // Validar rango 1-10
     const num = parseInt(valor);
     if (num > 10) return;
 
@@ -782,7 +772,6 @@ export default function Calificaciones() {
     }));
   };
 
-  // ✅ NUEVO: Aplicar una nota a TODOS los estudiantes de golpe
   const aplicarNotaATodos = (nota: number) => {
     setCalificaciones((prev) => {
       const nuevas = { ...prev };
@@ -797,19 +786,32 @@ export default function Calificaciones() {
     });
   };
 
-  // ✅ NUEVO: Maneja Enter/Tab para saltar a la siguiente caja de nota
+  // ✅ NUEVO: Enfoca la caja de nota y la centra en la zona visible (compensa el teclado)
+  const enfocarYCentrarInput = (index: number) => {
+    setCarruselIndex(index);
+    // 1er intento: cuando el input ya se renderizó
+    setTimeout(() => {
+      const el = notaInputRefs.current[index];
+      if (el) {
+        el.focus();
+        el.select();
+        el.scrollIntoView({ block: "center", behavior: "smooth" });
+      }
+    }, 80);
+    // 2do intento: cuando el teclado virtual ya terminó de abrirse
+    setTimeout(() => {
+      const el = notaInputRefs.current[index];
+      if (el) el.scrollIntoView({ block: "center", behavior: "smooth" });
+    }, 400);
+  };
+
+  // ✅ MODIFICADO: Usa enfocarYCentrarInput para saltar al siguiente
   const handleNotaKeyDown = (e: React.KeyboardEvent<HTMLInputElement>, index: number) => {
     if (e.key === "Enter" || e.key === "Tab") {
       e.preventDefault();
       const nextIndex = index + 1;
       if (nextIndex < estudiantes.length) {
-        // En móvil: avanzar el carrusel
-        setCarruselIndex(nextIndex);
-        // Enfocar el siguiente input (con pequeño delay para que se renderice)
-        setTimeout(() => {
-          notaInputRefs.current[nextIndex]?.focus();
-          notaInputRefs.current[nextIndex]?.select();
-        }, 50);
+        enfocarYCentrarInput(nextIndex);
       }
     }
   };
@@ -879,6 +881,26 @@ export default function Calificaciones() {
 
     return () => unsubscribe();
   }, [activeTab, selectedGradoId, fechaAsistencia, selectedMateriaId, selectedAmbitoId, esGradoBachillerato, esGradoInicialActual]);
+
+  // ✅ NUEVO: Si el teclado virtual tapa la caja de nota, la re-centra automáticamente (móvil/tablet)
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return;
+
+    const reCentrar = () => {
+      const activo = document.activeElement as HTMLElement | null;
+      if (
+        activo &&
+        activo.tagName === "INPUT" &&
+        activo.getAttribute("inputmode") === "numeric"
+      ) {
+        activo.scrollIntoView({ block: "center", behavior: "smooth" });
+      }
+    };
+
+    vv.addEventListener("resize", reCentrar);
+    return () => vv.removeEventListener("resize", reCentrar);
+  }, []);
 
   // ==================== RENDER ====================
 
@@ -1377,7 +1399,6 @@ export default function Calificaciones() {
                           </div>
                         </div>
 
-                        {/* ✅ NUEVO: Barra de acciones con Guardar + Aplicar a todos */}
                         <div className="mb-4 flex flex-wrap gap-2 items-center justify-between bg-slate-50 border border-slate-200 rounded-lg p-3">
                           <button
                             onClick={guardarCalificaciones}
@@ -1410,17 +1431,9 @@ export default function Calificaciones() {
                           </div>
                         </div>
 
-                        {/* ✅ NUEVO: Controles de carrusel (solo visible en móvil) */}
                         <div className="md:hidden mb-3 flex items-center justify-between gap-2 bg-indigo-50 border border-indigo-200 rounded-lg p-2">
                           <button
-                            onClick={() => {
-                              const newIndex = Math.max(0, carruselIndex - 1);
-                              setCarruselIndex(newIndex);
-                              setTimeout(() => {
-                                notaInputRefs.current[newIndex]?.focus();
-                                notaInputRefs.current[newIndex]?.select();
-                              }, 50);
-                            }}
+                            onClick={() => enfocarYCentrarInput(Math.max(0, carruselIndex - 1))}
                             disabled={carruselIndex === 0}
                             className="p-2 rounded-lg bg-white hover:bg-indigo-100 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
                           >
@@ -1435,14 +1448,7 @@ export default function Calificaciones() {
                             </div>
                           </div>
                           <button
-                            onClick={() => {
-                              const newIndex = Math.min(estudiantes.length - 1, carruselIndex + 1);
-                              setCarruselIndex(newIndex);
-                              setTimeout(() => {
-                                notaInputRefs.current[newIndex]?.focus();
-                                notaInputRefs.current[newIndex]?.select();
-                              }, 50);
-                            }}
+                            onClick={() => enfocarYCentrarInput(Math.min(estudiantes.length - 1, carruselIndex + 1))}
                             disabled={carruselIndex === estudiantes.length - 1}
                             className="p-2 rounded-lg bg-white hover:bg-indigo-100 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
                           >
@@ -1450,7 +1456,6 @@ export default function Calificaciones() {
                           </button>
                         </div>
 
-                        {/* ✅ MODIFICADO: Lista con carrusel en móvil + input de texto */}
                         <div className="space-y-2">
                           {estudiantes.map((est, index) => {
                             const calificacion = calificaciones[est.id];
@@ -1467,7 +1472,6 @@ export default function Calificaciones() {
                               notaOriginal !== undefined && notaOriginal < 7 && !calificacion?.refuerzo;
                             const esDeOtroDocente = calificacion?.docenteId && calificacion.docenteId !== user?.uid;
 
-                            // ✅ Carrusel: en móvil solo mostrar el estudiante actual
                             const esMovil = typeof window !== "undefined" && window.innerWidth < 768;
                             if (esMovil && index !== carruselIndex) return null;
 
@@ -1508,7 +1512,6 @@ export default function Calificaciones() {
                                         {letra}
                                       </div>
                                     )}
-                                    {/* ✅ CAMBIADO: type="text" con inputMode="numeric" para borrar en móvil */}
                                     <input
                                       ref={(el) => {
                                         notaInputRefs.current[index] = el;
@@ -1520,7 +1523,13 @@ export default function Calificaciones() {
                                       value={notaStr}
                                       onChange={(e) => actualizarCalificacion(est.id, e.target.value)}
                                       onKeyDown={(e) => handleNotaKeyDown(e, index)}
-                                      onFocus={(e) => e.target.select()}
+                                      onFocus={(e) => {
+                                        e.target.select();
+                                        // Cuando el teclado termine de abrir, centra la caja en la zona visible
+                                        setTimeout(() => {
+                                          e.target.scrollIntoView({ block: "center", behavior: "smooth" });
+                                        }, 300);
+                                      }}
                                       placeholder="1-10"
                                       className={`w-16 border-2 rounded px-2 py-1.5 text-center text-sm font-bold focus:ring-2 focus:ring-blue-500 focus:outline-none ${
                                         notaOriginal !== undefined
@@ -1561,7 +1570,6 @@ export default function Calificaciones() {
                                     <div className="text-orange-600 mt-1">{calificacion.refuerzo.detalle}</div>
                                   </div>
                                 )}
-                                {/* Campo observación (no recibe Enter) */}
                                 <div className="mt-2">
                                   <input
                                     type="text"

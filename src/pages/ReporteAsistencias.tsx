@@ -226,10 +226,15 @@ export default function ReporteAsistencias() {
     return grados.filter((g) => userData?.tutorDe?.includes(g.id));
   }, [grados, userData]);
 
+  // ✅ CORREGIDO: Solo grados donde TÚ registraste asistencia
   const gradosDocente = useMemo(() => {
-    const gradosConMaterias = new Set(asistencias.map((a) => a.gradoId));
+    const gradosConMaterias = new Set(
+      asistencias
+        .filter((a) => a.registradoPor === user?.uid)
+        .map((a) => a.gradoId)
+    );
     return grados.filter((g) => gradosConMaterias.has(g.id));
-  }, [grados, asistencias]);
+  }, [grados, asistencias, user?.uid]);
 
   const gradoTutorEfectivo = useMemo(() => {
     if (gradoTutorSel && gradosTutor.some((g) => g.id === gradoTutorSel)) {
