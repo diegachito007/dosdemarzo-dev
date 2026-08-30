@@ -28,7 +28,10 @@ import {
   FaUserTie,
   FaBookOpen,
   FaLock,
-  FaUpload
+  FaUpload,
+  FaCheckCircle,
+  FaTimesCircle,
+  FaQuestionCircle
 } from 'react-icons/fa';
 
 // ✅ Función para formatear texto: MAYÚSCULAS, sin tildes y sin números
@@ -40,6 +43,27 @@ const formatText = (text: string): string => {
     .replace(/[\u0300-\u036f]/g, "")
     .toUpperCase();
 };
+
+// ==================== TIPOS PARA MODALES ====================
+
+interface Toast {
+  id: string;
+  type: 'success' | 'error' | 'warning' | 'info';
+  title: string;
+  message?: string;
+}
+
+interface ConfirmModalState {
+  isOpen: boolean;
+  title: string;
+  message: string;
+  confirmText?: string;
+  cancelText?: string;
+  confirmColor?: string;
+  icon?: React.ComponentType<{ className?: string }>;
+  onConfirm: () => void;
+  onCancel: () => void;
+}
 
 export default function Estudiantes() {
   const { user, userData } = useAuth();
@@ -66,9 +90,74 @@ export default function Estudiantes() {
   const [parsedStudents, setParsedStudents] = useState<{cedula: string, apellidos: string, nombres: string}[]>([]);
   const [isSavingMassive, setIsSavingMassive] = useState(false);
 
+  // ✅ NUEVO: Sistema de toasts (reemplaza alert)
+  const [toasts, setToasts] = useState<Toast[]>([]);
+
+  // ✅ NUEVO: Modal de confirmación personalizado (reemplaza confirm)
+  const [confirmModal, setConfirmModal] = useState<ConfirmModalState>({
+    isOpen: false,
+    title: "",
+    message: "",
+    onConfirm: () => {},
+    onCancel: () => {},
+  });
+
   const docenteSinGrados = userData?.role === 'docente' && (!userData?.gradosAsignados || userData.gradosAsignados.length === 0);
   const esAdmin = userData?.role === 'super_admin';
   const anioActivo = aniosLectivos.find(a => a.activo);
+
+  // ==================== HELPERS DE NOTIFICACIÓN ====================
+
+  const mostrarToast = useCallback((
+    type: Toast['type'],
+    title: string,
+    message?: string,
+    duration = 4000
+  ) => {
+    const id = `toast-${Date.now()}-${Math.random()}`;
+    const toast: Toast = { id, type, title, message };
+    setToasts((prev) => [...prev, toast]);
+    setTimeout(() => {
+      setToasts((prev) => prev.filter((t) => t.id !== id));
+    }, duration);
+  }, []);
+
+  const cerrarToast = useCallback((id: string) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+  }, []);
+
+  const confirmar = useCallback((
+    title: string,
+    message: string,
+    options?: {
+      confirmText?: string;
+      cancelText?: string;
+      confirmColor?: string;
+      icon?: React.ComponentType<{ className?: string }>;
+    }
+  ): Promise<boolean> => {
+    return new Promise((resolve) => {
+      setConfirmModal({
+        isOpen: true,
+        title,
+        message,
+        confirmText: options?.confirmText || "Confirmar",
+        cancelText: options?.cancelText || "Cancelar",
+        confirmColor: options?.confirmColor || "bg-red-600 hover:bg-red-700",
+        icon: options?.icon || FaQuestionCircle,
+        onConfirm: () => {
+          setConfirmModal((prev) => ({ ...prev, isOpen: false }));
+          resolve(true);
+        },
+        onCancel: () => {
+          setConfirmModal((prev) => ({ ...prev, isOpen: false }));
+          resolve(false);
+        },
+      });
+    });
+  }, []);
+
+  // ==================== LÓGICA PRINCIPAL ====================
 
   // ✅ Filtrar tutorDe solo para el año lectivo activo
   const tutorDeAnioActivo = useMemo(() => {
@@ -333,18 +422,18 @@ export default function Estudiantes() {
     }
   }, [massiveData]);
 
-  // ✅ Guardado masivo
+  // ✅ MODIFICADO: Usa toasts en lugar de alert
   const guardarEstudiantesMasivos = useCallback(async () => {
     if (!anioActivo) {
-      alert('No hay un año lectivo activo.');
+      mostrarToast('warning', 'Sin año lectivo', 'No hay un año lectivo activo.');
       return;
     }
     if (!selectedGradoId) {
-      alert('Debe seleccionar un grado primero.');
+      mostrarToast('warning', 'Sin grado seleccionado', 'Debe seleccionar un grado primero.');
       return;
     }
     if (parsedStudents.length === 0) {
-      alert('No hay estudiantes válidos para registrar.');
+      mostrarToast('warning', 'Sin estudiantes válidos', 'No hay estudiantes válidos para registrar.');
       return;
     }
 
@@ -377,7 +466,12 @@ export default function Estudiantes() {
 
       await Promise.all(promesas);
       
-      alert(`✅ Se registraron ${parsedStudents.length} estudiante(s) correctamente`);
+      mostrarToast(
+        'success',
+        'Registro masivo completado',
+        `Se registraron ${parsedStudents.length} estudiante(s) correctamente.`,
+        5000
+      );
       setMassiveData("");
       setParsedStudents([]);
       setShowMassiveForm(false);
@@ -385,11 +479,11 @@ export default function Estudiantes() {
       await cargarEstudiantes();
     } catch (error) {
       console.error('Error guardando estudiantes masivos:', error);
-      alert('Error al guardar los estudiantes');
+      mostrarToast('error', 'Error al guardar', 'No se pudieron registrar los estudiantes.');
     } finally {
       setIsSavingMassive(false);
     }
-  }, [parsedStudents, selectedGradoId, anioActivo, user, cargarEstudiantes]);
+  }, [parsedStudents, selectedGradoId, anioActivo, user, cargarEstudiantes, mostrarToast]);
 
   const validarEstudiante = useCallback((cedula: string, apellidos: string, nombres: string, excludeId?: string): string[] => {
     const errors: string[] = [];
@@ -433,12 +527,12 @@ export default function Estudiantes() {
       }
       resetForm();
       await cargarEstudiantes();
-      alert('✅ Estudiante actualizado correctamente');
+      mostrarToast('success', 'Estudiante actualizado', `"${formData.apellidos} ${formData.nombres}" se actualizó correctamente.`);
     } catch (error) {
       console.error('Error guardando estudiante:', error);
-      alert('Error al guardar');
+      mostrarToast('error', 'Error al guardar', 'No se pudo actualizar el estudiante.');
     }
-  }, [formData, editingId, resetForm, cargarEstudiantes, validarEstudiante]);
+  }, [formData, editingId, resetForm, cargarEstudiantes, validarEstudiante, mostrarToast]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -447,7 +541,7 @@ export default function Estudiantes() {
 
   const handleEdit = useCallback((estudiante: Estudiante) => {
     if (!puedeGestionarEstudiantes(estudiante.gradoId)) {
-      alert('❌ No tienes permisos para editar estudiantes de este grado');
+      mostrarToast('error', 'Sin permisos', 'No tienes permisos para editar estudiantes de este grado.');
       return;
     }
     setFormData({
@@ -459,30 +553,44 @@ export default function Estudiantes() {
     setEditingId(estudiante.id);
     setValidationErrors([]);
     window.scrollTo({ top: 0, behavior: 'smooth' });
-  }, [puedeGestionarEstudiantes]);
+  }, [puedeGestionarEstudiantes, mostrarToast]);
 
+  // ✅ MODIFICADO: Usa modal de confirmación personalizado
   const handleDelete = useCallback(async (id: string) => {
     const estudiante = estudiantes.find(e => e.id === id);
     if (!estudiante) return;
     if (!puedeGestionarEstudiantes(estudiante.gradoId)) {
-      alert('❌ No tienes permisos para eliminar estudiantes de este grado');
+      mostrarToast('error', 'Sin permisos', 'No tienes permisos para eliminar estudiantes de este grado.');
       return;
     }
-    if (!confirm('¿Estás seguro de eliminar este estudiante? Esta acción no se puede deshacer.')) return;
+    
+    const confirmado = await confirmar(
+      `Eliminar a ${estudiante.apellidos} ${estudiante.nombres}`,
+      `¿Estás seguro de eliminar a este estudiante?\n\nCédula: ${estudiante.cedula || 'Sin cédula'}\nGrado: ${grados.find(g => g.id === estudiante.gradoId)?.nombre || 'Desconocido'}\n\nEsta acción no se puede deshacer.`,
+      {
+        confirmText: "Sí, eliminar",
+        cancelText: "Cancelar",
+        confirmColor: "bg-red-600 hover:bg-red-700",
+        icon: FaTrash,
+      }
+    );
+    if (!confirmado) return;
+    
     try {
       await deleteDoc(doc(db, 'estudiantes', id));
+      mostrarToast('success', 'Estudiante eliminado', `"${estudiante.apellidos} ${estudiante.nombres}" fue eliminado correctamente.`);
       await cargarEstudiantes();
     } catch (error) {
       console.error('Error eliminando:', error);
-      alert('Error al eliminar');
+      mostrarToast('error', 'Error al eliminar', 'No se pudo eliminar el estudiante.');
     }
-  }, [cargarEstudiantes, estudiantes, puedeGestionarEstudiantes]);
+  }, [cargarEstudiantes, estudiantes, puedeGestionarEstudiantes, confirmar, mostrarToast, grados]);
 
   const handleToggleActivo = useCallback(async (id: string, estadoActual: boolean) => {
     const estudiante = estudiantes.find(e => e.id === id);
     if (!estudiante) return;
     if (!puedeGestionarEstudiantes(estudiante.gradoId)) {
-      alert('❌ No tienes permisos para modificar el estado de este estudiante');
+      mostrarToast('error', 'Sin permisos', 'No tienes permisos para modificar el estado de este estudiante.');
       return;
     }
     try {
@@ -492,8 +600,9 @@ export default function Estudiantes() {
       await cargarEstudiantes();
     } catch (error) {
       console.error('Error actualizando estado:', error);
+      mostrarToast('error', 'Error al actualizar', 'No se pudo cambiar el estado del estudiante.');
     }
-  }, [cargarEstudiantes, estudiantes, puedeGestionarEstudiantes]);
+  }, [cargarEstudiantes, estudiantes, puedeGestionarEstudiantes, mostrarToast]);
 
   useEffect(() => {
     cargarAniosLectivos();
@@ -508,6 +617,41 @@ export default function Estudiantes() {
       (est.cedula && est.cedula.includes(searchTerm))
     );
   });
+
+  // ==================== CONFIG DE TOASTS ====================
+
+  const toastConfig = {
+    success: {
+      bg: 'bg-green-50 border-green-400',
+      iconBg: 'bg-green-500',
+      titleColor: 'text-green-900',
+      msgColor: 'text-green-700',
+      icon: FaCheckCircle,
+    },
+    error: {
+      bg: 'bg-red-50 border-red-400',
+      iconBg: 'bg-red-500',
+      titleColor: 'text-red-900',
+      msgColor: 'text-red-700',
+      icon: FaTimesCircle,
+    },
+    warning: {
+      bg: 'bg-yellow-50 border-yellow-400',
+      iconBg: 'bg-yellow-500',
+      titleColor: 'text-yellow-900',
+      msgColor: 'text-yellow-700',
+      icon: FaExclamationTriangle,
+    },
+    info: {
+      bg: 'bg-blue-50 border-blue-400',
+      iconBg: 'bg-blue-500',
+      titleColor: 'text-blue-900',
+      msgColor: 'text-blue-700',
+      icon: FaInfoCircle,
+    },
+  };
+
+  const ConfirmIcon = confirmModal.icon || FaQuestionCircle;
 
   if (loading) {
     return (
@@ -907,7 +1051,6 @@ export default function Estudiantes() {
                                         >
                                           <FaEdit /> Editar
                                         </button>
-                                        {/* ✅ CORREGIDO: Ahora visible para tutores (ya está dentro de puedeEditar) */}
                                         <button
                                           onClick={() => handleDelete(est.id)}
                                           className="flex-1 inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-red-50 text-red-600 hover:bg-red-100 text-sm font-medium transition-all"
@@ -967,7 +1110,6 @@ export default function Estudiantes() {
                                     >
                                       <FaEdit /> Editar
                                     </button>
-                                    {/* ✅ CORREGIDO: Ahora visible para tutores (ya está dentro de puedeEditar) */}
                                     <button
                                       onClick={() => handleDelete(est.id)}
                                       className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg transition-all bg-red-50 text-red-600 hover:bg-red-100 text-xs font-medium"
@@ -1018,6 +1160,75 @@ export default function Estudiantes() {
             </div>
           )}
         </>
+      )}
+
+      {/* ✅ CONTENEDOR DE TOASTS (esquina superior derecha) */}
+      <div className="fixed top-4 right-4 z-100 space-y-2 pointer-events-none max-w-sm w-full">
+        {toasts.map((toast) => {
+          const config = toastConfig[toast.type];
+          const Icon = config.icon;
+          return (
+            <div
+              key={toast.id}
+              className={`pointer-events-auto bg-white border-l-4 ${config.bg} rounded-lg shadow-2xl p-4 flex items-start gap-3 animate-in slide-in-from-right duration-300`}
+            >
+              <div className={`${config.iconBg} w-8 h-8 rounded-full flex items-center justify-center shrink-0`}>
+                <Icon className="text-white text-sm" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className={`font-semibold text-sm ${config.titleColor}`}>{toast.title}</p>
+                {toast.message && (
+                  <p className={`text-xs ${config.msgColor} mt-0.5 whitespace-pre-line`}>{toast.message}</p>
+                )}
+              </div>
+              <button
+                onClick={() => cerrarToast(toast.id)}
+                className="text-gray-400 hover:text-gray-600 shrink-0 transition-colors"
+              >
+                <FaTimes className="w-4 h-4" />
+              </button>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* ✅ MODAL DE CONFIRMACIÓN PERSONALIZADO */}
+      {confirmModal.isOpen && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-60 p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden animate-in zoom-in-95 duration-200">
+            <div className="bg-linear-to-r from-slate-50 to-slate-100 px-6 pt-6 pb-4 border-b border-slate-200">
+              <div className="flex items-start gap-4">
+                <div className="w-12 h-12 rounded-full bg-slate-200 flex items-center justify-center shrink-0">
+                  <ConfirmIcon className="text-slate-700 text-xl" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <h3 className="text-lg font-bold text-slate-900 mb-1">
+                    {confirmModal.title}
+                  </h3>
+                  <p className="text-sm text-slate-600 leading-relaxed whitespace-pre-line">
+                    {confirmModal.message}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="px-6 py-4 bg-slate-50 flex gap-3 justify-end">
+              <button
+                onClick={confirmModal.onCancel}
+                className="px-4 py-2 bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 rounded-lg text-sm font-semibold transition-all"
+              >
+                {confirmModal.cancelText || "Cancelar"}
+              </button>
+              <button
+                onClick={confirmModal.onConfirm}
+                className={`px-4 py-2 ${confirmModal.confirmColor || "bg-red-600 hover:bg-red-700"} text-white rounded-lg text-sm font-semibold transition-all flex items-center gap-2`}
+              >
+                <ConfirmIcon className="text-xs" />
+                {confirmModal.confirmText || "Confirmar"}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </Layout>
   );

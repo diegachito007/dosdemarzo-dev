@@ -48,6 +48,9 @@ import {
   FaChevronLeft,
   FaChevronRight,
   FaQuestionCircle,
+  FaCheckCircle,
+  FaTimesCircle,
+  FaInfoCircle,
 } from "react-icons/fa";
 
 // ==================== INTERFACES ====================
@@ -116,7 +119,13 @@ interface AsignaturaDocente {
   activo: boolean;
 }
 
-// ✅ NUEVO: Interfaz para el modal de confirmación personalizado
+interface Toast {
+  id: string;
+  type: "success" | "error" | "warning" | "info";
+  title: string;
+  message?: string;
+}
+
 interface ConfirmModalState {
   isOpen: boolean;
   title: string;
@@ -255,7 +264,10 @@ export default function Calificaciones() {
   const [carruselIndex, setCarruselIndex] = useState(0);
   const notaInputRefs = useRef<(HTMLInputElement | null)[]>([]);
 
-  // ✅ NUEVO: Estado para modal de confirmación personalizado
+  // ✅ Sistema de toasts (reemplaza alert)
+  const [toasts, setToasts] = useState<Toast[]>([]);
+
+  // ✅ Modal de confirmación personalizado
   const [confirmModal, setConfirmModal] = useState<ConfirmModalState>({
     isOpen: false,
     title: "",
@@ -309,7 +321,26 @@ export default function Calificaciones() {
     (esGradoInicialActual || materiaSeleccionada !== "") &&
     estudiantes.every((est) => asistencias[est.id]?.estado);
 
-  // ✅ NUEVO: Función de confirmación personalizada (reemplaza el `confirm()` del navegador)
+  // ==================== HELPERS DE NOTIFICACIÓN ====================
+
+  const mostrarToast = useCallback((
+    type: Toast["type"],
+    title: string,
+    message?: string,
+    duration = 4000
+  ) => {
+    const id = `toast-${Date.now()}-${Math.random()}`;
+    const toast: Toast = { id, type, title, message };
+    setToasts((prev) => [...prev, toast]);
+    setTimeout(() => {
+      setToasts((prev) => prev.filter((t) => t.id !== id));
+    }, duration);
+  }, []);
+
+  const cerrarToast = useCallback((id: string) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+  }, []);
+
   const confirmar = useCallback((
     title: string,
     message: string,
@@ -511,7 +542,7 @@ export default function Calificaciones() {
 
   const guardarAsistencia = async () => {
     if (!esGradoInicialActual && !materiaSeleccionada) {
-      alert("⚠️ Debes seleccionar una materia/ámbito antes de guardar la asistencia.");
+      mostrarToast("warning", "Materia requerida", "Debes seleccionar una materia/ámbito antes de guardar la asistencia.");
       return;
     }
 
@@ -564,10 +595,10 @@ export default function Calificaciones() {
       });
 
       await Promise.all(batch);
-      alert("✅ Asistencia guardada correctamente");
+      mostrarToast("success", "Asistencia guardada", "La asistencia se registró correctamente.");
     } catch (error) {
       console.error("Error guardando asistencia:", error);
-      alert("Error al guardar asistencia");
+      mostrarToast("error", "Error al guardar", "No se pudo guardar la asistencia. Intenta nuevamente.");
     } finally {
       setIsSaving(false);
     }
@@ -575,7 +606,7 @@ export default function Calificaciones() {
 
   const guardarActividad = async () => {
     if (!actividadForm.detalle.trim()) {
-      alert("⚠️ El detalle de la actividad es obligatorio");
+      mostrarToast("warning", "Detalle obligatorio", "El detalle de la actividad es obligatorio.");
       return;
     }
 
@@ -604,7 +635,11 @@ export default function Calificaciones() {
         await addDoc(collection(db, "actividades"), { ...datos, createdAt: serverTimestamp() });
       }
 
-      alert(`✅ Actividad ${editingActividadId ? "actualizada" : "creada"} correctamente`);
+      mostrarToast(
+        "success",
+        editingActividadId ? "Actividad actualizada" : "Actividad creada",
+        "La actividad se guardó correctamente."
+      );
       setShowActividadModal(false);
       setEditingActividadId(null);
       setActividadForm({
@@ -616,13 +651,12 @@ export default function Calificaciones() {
       await cargarActividades(selectedDestrezaId);
     } catch (error) {
       console.error("Error guardando actividad:", error);
-      alert("Error al guardar actividad");
+      mostrarToast("error", "Error al guardar", "No se pudo guardar la actividad.");
     } finally {
       setIsSaving(false);
     }
   };
 
-  // ✅ MODIFICADO: Usa el modal de confirmación personalizado en lugar de `confirm()`
   const eliminarActividad = async (actividadId: string) => {
     const confirmado = await confirmar(
       "Eliminar actividad",
@@ -645,7 +679,7 @@ export default function Calificaciones() {
 
       await deleteDoc(doc(db, "actividades", actividadId));
 
-      alert("✅ Actividad eliminada correctamente");
+      mostrarToast("success", "Actividad eliminada", "La actividad y sus calificaciones fueron eliminadas.");
       await cargarActividades(selectedDestrezaId);
 
       if (selectedActividadId === actividadId) {
@@ -654,7 +688,7 @@ export default function Calificaciones() {
       }
     } catch (error) {
       console.error("Error eliminando actividad:", error);
-      alert("Error al eliminar actividad");
+      mostrarToast("error", "Error al eliminar", "No se pudo eliminar la actividad.");
     } finally {
       setIsSaving(false);
     }
@@ -662,7 +696,7 @@ export default function Calificaciones() {
 
   const guardarCalificaciones = async () => {
     if (!selectedActividadId) {
-      alert("⚠️ Debes seleccionar una actividad antes de guardar calificaciones");
+      mostrarToast("warning", "Actividad requerida", "Debes seleccionar una actividad antes de guardar calificaciones.");
       return;
     }
 
@@ -710,11 +744,11 @@ export default function Calificaciones() {
       });
 
       await Promise.all(batch);
-      alert("✅ Calificaciones guardadas correctamente");
+      mostrarToast("success", "Calificaciones guardadas", "Las calificaciones se guardaron correctamente.");
       await cargarCalificaciones(selectedActividadId);
     } catch (error) {
       console.error("Error guardando calificaciones:", error);
-      alert("Error al guardar calificaciones");
+      mostrarToast("error", "Error al guardar", "No se pudieron guardar las calificaciones.");
     } finally {
       setIsSaving(false);
     }
@@ -724,7 +758,7 @@ export default function Calificaciones() {
     if (!refuerzoEstudianteId || !selectedActividadId) return;
 
     if (!refuerzoForm.detalle.trim()) {
-      alert("⚠️ El detalle del refuerzo es obligatorio");
+      mostrarToast("warning", "Detalle obligatorio", "El detalle del refuerzo es obligatorio.");
       return;
     }
 
@@ -738,7 +772,7 @@ export default function Calificaciones() {
       const snap = await getDocs(q);
 
       if (snap.empty) {
-        alert("❌ No se encontró la calificación original");
+        mostrarToast("error", "Calificación no encontrada", "No se encontró la calificación original.");
         setIsSaving(false);
         return;
       }
@@ -755,7 +789,7 @@ export default function Calificaciones() {
         updatedAt: serverTimestamp(),
       });
 
-      alert("✅ Refuerzo aplicado correctamente");
+      mostrarToast("success", "Refuerzo aplicado", "El refuerzo se aplicó correctamente.");
       setShowRefuerzoModal(false);
       setRefuerzoEstudianteId(null);
       setRefuerzoForm({
@@ -766,7 +800,7 @@ export default function Calificaciones() {
       await cargarCalificaciones(selectedActividadId);
     } catch (error) {
       console.error("Error aplicando refuerzo:", error);
-      alert("Error al aplicar refuerzo");
+      mostrarToast("error", "Error al aplicar", "No se pudo aplicar el refuerzo.");
     } finally {
       setIsSaving(false);
     }
@@ -961,6 +995,39 @@ export default function Calificaciones() {
     vv.addEventListener("resize", reCentrar);
     return () => vv.removeEventListener("resize", reCentrar);
   }, []);
+
+  // ==================== CONFIG DE TOASTS ====================
+
+  const toastConfig = {
+    success: {
+      bg: "bg-green-50 border-green-400",
+      iconBg: "bg-green-500",
+      titleColor: "text-green-900",
+      msgColor: "text-green-700",
+      icon: FaCheckCircle,
+    },
+    error: {
+      bg: "bg-red-50 border-red-400",
+      iconBg: "bg-red-500",
+      titleColor: "text-red-900",
+      msgColor: "text-red-700",
+      icon: FaTimesCircle,
+    },
+    warning: {
+      bg: "bg-yellow-50 border-yellow-400",
+      iconBg: "bg-yellow-500",
+      titleColor: "text-yellow-900",
+      msgColor: "text-yellow-700",
+      icon: FaExclamationTriangle,
+    },
+    info: {
+      bg: "bg-blue-50 border-blue-400",
+      iconBg: "bg-blue-500",
+      titleColor: "text-blue-900",
+      msgColor: "text-blue-700",
+      icon: FaInfoCircle,
+    },
+  };
 
   // ==================== RENDER ====================
 
@@ -1764,7 +1831,7 @@ export default function Calificaciones() {
       )}
 
       {showActividadModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-100 p-4">
           <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-bold text-slate-900">
@@ -1867,7 +1934,7 @@ export default function Calificaciones() {
       )}
 
       {showRefuerzoModal && refuerzoEstudianteId && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-100 p-4">
           <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-bold text-slate-900">Aplicar Refuerzo</h3>
@@ -1970,11 +2037,10 @@ export default function Calificaciones() {
         </div>
       )}
 
-      {/* ✅ NUEVO: Modal de confirmación personalizado (reemplaza el `confirm()` feo del navegador) */}
+      {/* ✅ Modal de confirmación personalizado */}
       {confirmModal.isOpen && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-60 p-4 animate-in fade-in duration-200">
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-100 p-4 animate-in fade-in duration-200">
           <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden animate-in zoom-in-95 duration-200">
-            {/* Encabezado con ícono */}
             <div className="bg-linear-to-r from-slate-50 to-slate-100 px-6 pt-6 pb-4 border-b border-slate-200">
               <div className="flex items-start gap-4">
                 <div className="w-12 h-12 rounded-full bg-red-100 flex items-center justify-center shrink-0">
@@ -1984,14 +2050,13 @@ export default function Calificaciones() {
                   <h3 className="text-lg font-bold text-slate-900 mb-1">
                     {confirmModal.title}
                   </h3>
-                  <p className="text-sm text-slate-600 leading-relaxed">
+                  <p className="text-sm text-slate-600 leading-relaxed whitespace-pre-line">
                     {confirmModal.message}
                   </p>
                 </div>
               </div>
             </div>
 
-            {/* Botones de acción */}
             <div className="px-6 py-4 bg-slate-50 flex gap-3 justify-end">
               <button
                 onClick={confirmModal.onCancel}
@@ -2010,6 +2075,36 @@ export default function Calificaciones() {
           </div>
         </div>
       )}
+
+      {/* ✅ CONTENEDOR DE TOASTS (esquina superior derecha) */}
+      <div className="fixed top-4 right-4 z-100 space-y-2 pointer-events-none max-w-sm w-full">
+        {toasts.map((toast) => {
+          const config = toastConfig[toast.type];
+          const Icon = config.icon;
+          return (
+            <div
+              key={toast.id}
+              className={`pointer-events-auto bg-white border-l-4 ${config.bg} rounded-lg shadow-2xl p-4 flex items-start gap-3 animate-in slide-in-from-right duration-300`}
+            >
+              <div className={`${config.iconBg} w-8 h-8 rounded-full flex items-center justify-center shrink-0`}>
+                <Icon className="text-white text-sm" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className={`font-semibold text-sm ${config.titleColor}`}>{toast.title}</p>
+                {toast.message && (
+                  <p className={`text-xs ${config.msgColor} mt-0.5`}>{toast.message}</p>
+                )}
+              </div>
+              <button
+                onClick={() => cerrarToast(toast.id)}
+                className="text-gray-400 hover:text-gray-600 shrink-0 transition-colors"
+              >
+                <FaTimes className="w-4 h-4" />
+              </button>
+            </div>
+          );
+        })}
+      </div>
     </Layout>
   );
 }

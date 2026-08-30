@@ -9,7 +9,8 @@ import Layout from '../components/Layout';
 import {
   FaUserCheck, FaUserTimes, FaShieldAlt,
   FaUsers, FaClock, FaCheckCircle, FaTimesCircle, FaGraduationCap, FaPlus, FaUserTie,
-  FaExchangeAlt, FaSpinner, FaChalkboardTeacher, FaArchive
+  FaExchangeAlt, FaSpinner, FaChalkboardTeacher, FaArchive,
+  FaExclamationTriangle, FaInfoCircle, FaQuestionCircle, FaTimes as FaXmark
 } from 'react-icons/fa';
 
 interface AsignaturaDocente {
@@ -19,6 +20,27 @@ interface AsignaturaDocente {
   destrezaId: string;
   anioLectivoId: string;
   activo: boolean;
+}
+
+// ==================== TIPOS PARA MODALES ====================
+
+interface Toast {
+  id: string;
+  type: 'success' | 'error' | 'warning' | 'info';
+  title: string;
+  message?: string;
+}
+
+interface ConfirmModalState {
+  isOpen: boolean;
+  title: string;
+  message: string;
+  confirmText?: string;
+  cancelText?: string;
+  confirmColor?: string;
+  icon?: React.ComponentType<{ className?: string }>;
+  onConfirm: () => void;
+  onCancel: () => void;
 }
 
 export default function GestionUsuarios() {
@@ -42,6 +64,71 @@ export default function GestionUsuarios() {
   const [transferArchivar, setTransferArchivar] = useState(true);
   const [loadingTransfer, setLoadingTransfer] = useState(false);
   const [isTransferring, setIsTransferring] = useState(false);
+
+  // ✅ NUEVO: Sistema de toasts (reemplaza alert)
+  const [toasts, setToasts] = useState<Toast[]>([]);
+
+  // ✅ NUEVO: Modal de confirmación (reemplaza confirm)
+  const [confirmModal, setConfirmModal] = useState<ConfirmModalState>({
+    isOpen: false,
+    title: "",
+    message: "",
+    onConfirm: () => {},
+    onCancel: () => {},
+  });
+
+  // ==================== HELPERS DE NOTIFICACIÓN ====================
+
+  const mostrarToast = useCallback((
+    type: Toast['type'],
+    title: string,
+    message?: string,
+    duration = 4000
+  ) => {
+    const id = `toast-${Date.now()}-${Math.random()}`;
+    const toast: Toast = { id, type, title, message };
+    setToasts((prev) => [...prev, toast]);
+    setTimeout(() => {
+      setToasts((prev) => prev.filter((t) => t.id !== id));
+    }, duration);
+  }, []);
+
+  const cerrarToast = useCallback((id: string) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+  }, []);
+
+  const confirmar = useCallback((
+    title: string,
+    message: string,
+    options?: {
+      confirmText?: string;
+      cancelText?: string;
+      confirmColor?: string;
+      icon?: React.ComponentType<{ className?: string }>;
+    }
+  ): Promise<boolean> => {
+    return new Promise((resolve) => {
+      setConfirmModal({
+        isOpen: true,
+        title,
+        message,
+        confirmText: options?.confirmText || "Confirmar",
+        cancelText: options?.cancelText || "Cancelar",
+        confirmColor: options?.confirmColor || "bg-red-600 hover:bg-red-700",
+        icon: options?.icon || FaQuestionCircle,
+        onConfirm: () => {
+          setConfirmModal((prev) => ({ ...prev, isOpen: false }));
+          resolve(true);
+        },
+        onCancel: () => {
+          setConfirmModal((prev) => ({ ...prev, isOpen: false }));
+          resolve(false);
+        },
+      });
+    });
+  }, []);
+
+  // ==================== CARGA DE DATOS ====================
 
   const cargarGrados = useCallback(async () => {
     try {
@@ -92,6 +179,8 @@ export default function GestionUsuarios() {
     cargarUsuarios();
   }, [cargarGrados, cargarUsuarios]);
 
+  // ==================== ACCIONES ====================
+
   const updateStatus = async (userId: string, newStatus: string) => {
     try {
       const previo = users.find(u => u.uid === userId)?.status;
@@ -107,20 +196,22 @@ export default function GestionUsuarios() {
         }
       }
 
-      const mensaje =
-        newStatus === 'active'
-          ? previo === 'deleted'
-            ? 'reactivado (asigna sus grados)'
-            : 'aprobado'
-          : newStatus === 'rejected'
-          ? 'rechazado'
-          : 'bloqueado';
+      // ✅ Toast en lugar de alert
+      if (newStatus === 'active') {
+        const msg = previo === 'deleted'
+          ? 'Usuario reactivado. Asigna sus grados y tutorías.'
+          : 'Usuario aprobado. Asigna sus grados y tutorías.';
+        mostrarToast('success', previo === 'deleted' ? 'Usuario reactivado' : 'Usuario aprobado', msg);
+      } else if (newStatus === 'rejected') {
+        mostrarToast('warning', 'Usuario rechazado', 'El registro ha sido rechazado.');
+      } else if (newStatus === 'blocked') {
+        mostrarToast('warning', 'Usuario bloqueado', 'El usuario ya no podrá acceder al sistema.');
+      }
 
-      alert(`✅ Usuario ${mensaje}`);
       await cargarUsuarios();
     } catch (error) {
       console.error('Error actualizando:', error);
-      alert('Error al actualizar');
+      mostrarToast('error', 'Error al actualizar', 'No se pudo cambiar el estado del usuario.');
     }
   };
 
@@ -132,7 +223,7 @@ export default function GestionUsuarios() {
         gradosAsignados: gradosSeleccionados,
         tutorDe: tutorDe,
       });
-      alert('✅ Asignación guardada correctamente');
+      mostrarToast('success', 'Asignación guardada', 'Los grados y tutorías se actualizaron correctamente.');
       setShowGradosModal(false);
       setSelectedUserForGrados(null);
       setGradosSeleccionados([]);
@@ -140,23 +231,36 @@ export default function GestionUsuarios() {
       await cargarUsuarios();
     } catch (error) {
       console.error('Error guardando asignación:', error);
-      alert('Error al guardar asignación');
+      mostrarToast('error', 'Error al guardar', 'No se pudo actualizar la asignación.');
     }
   };
 
   const toggleRole = async (user: AppUser) => {
     const newRole = user.role === 'super_admin' ? 'docente' : 'super_admin';
+
+    // ✅ Modal de confirmación antes de cambiar rol
+    const confirmado = await confirmar(
+      'Cambiar rol de usuario',
+      `¿Estás seguro de cambiar el rol de "${user.displayName}" a ${newRole === 'super_admin' ? 'Super Admin' : 'Docente'}?`,
+      {
+        confirmText: "Sí, cambiar",
+        cancelText: "Cancelar",
+        confirmColor: "bg-purple-600 hover:bg-purple-700",
+        icon: FaShieldAlt,
+      }
+    );
+    if (!confirmado) return;
+
     try {
       await updateDoc(doc(db, 'usuarios', user.uid), { role: newRole });
-      alert(`✅ Rol cambiado a ${newRole}`);
+      mostrarToast('success', 'Rol actualizado', `${user.displayName} ahora es ${newRole === 'super_admin' ? 'Super Admin' : 'Docente'}.`);
       await cargarUsuarios();
     } catch (error) {
       console.error('Error cambiando rol:', error);
-      alert('Error al cambiar rol');
+      mostrarToast('error', 'Error al cambiar rol', 'No se pudo actualizar el rol.');
     }
   };
 
-  // ✅ NUEVO: Helper para desactivar materias de un docente
   const desactivarMateriasDocente = async (docenteUid: string): Promise<number> => {
     try {
       const q = query(
@@ -177,19 +281,25 @@ export default function GestionUsuarios() {
     }
   };
 
-  // ✅ Archivar: limpia asignaciones, desactiva materias, pero conserva historial
+  // ✅ Archivar con modal de confirmación personalizado
   const archivarUsuario = async (user: AppUser) => {
     if (!canDeleteUser(user)) {
-      alert('❌ No tienes permisos para archivar este usuario');
+      mostrarToast('error', 'Sin permisos', 'No tienes permisos para archivar este usuario.');
       return;
     }
-    if (!confirm(
-      `¿Archivar a ${user.displayName}?\n\n` +
-      `• Se le quitarán los grados asignados y tutorías.\n` +
-      `• Sus materias de "Mi Horario" se desactivarán.\n` +
-      `• Su historial de notas y asistencias SE CONSERVA.\n` +
-      `• Podrás reactivarlo desde la pestaña "Archivados".`
-    )) return;
+
+    const confirmado = await confirmar(
+      `Archivar a ${user.displayName}`,
+      `• Se le quitarán los grados asignados y tutorías.\n• Sus materias de "Mi Horario" se desactivarán.\n• Su historial de notas y asistencias SE CONSERVA.\n• Podrás reactivarlo desde la pestaña "Archivados".`,
+      {
+        confirmText: "Sí, archivar",
+        cancelText: "Cancelar",
+        confirmColor: "bg-red-600 hover:bg-red-700",
+        icon: FaArchive,
+      }
+    );
+    if (!confirmado) return;
+
     try {
       const materiasDesactivadas = await desactivarMateriasDocente(user.uid);
       await updateDoc(doc(db, 'usuarios', user.uid), {
@@ -197,15 +307,16 @@ export default function GestionUsuarios() {
         gradosAsignados: [],
         tutorDe: [],
       });
-      alert(
-        `✅ Usuario archivado.\n` +
-        `• ${materiasDesactivadas} materia(s) desactivada(s) de Mi Horario.\n` +
-        `• Su historial se conserva y podrás reactivarlo desde "Archivados".`
+      mostrarToast(
+        'success',
+        'Usuario archivado',
+        `${materiasDesactivadas} materia(s) desactivada(s). Su historial se conserva.`,
+        5000
       );
       await cargarUsuarios();
     } catch (error) {
       console.error('Error archivando:', error);
-      alert('Error al archivar');
+      mostrarToast('error', 'Error al archivar', 'No se pudo archivar el usuario.');
     }
   };
 
@@ -232,18 +343,26 @@ export default function GestionUsuarios() {
     }
   };
 
+  // ✅ Transferencia con modal de confirmación personalizado
   const ejecutarTransferencia = async () => {
     if (!transferSource || !transferDestId) {
-      alert('⚠️ Selecciona el docente que recibirá las materias');
+      mostrarToast('warning', 'Docente destino requerido', 'Selecciona el docente que recibirá las materias.');
       return;
     }
     const dest = users.find(u => u.uid === transferDestId);
     if (!dest) return;
 
-    if (!confirm(
-      `¿Transferir ${transferMaterias.length} materia(s) de ${transferSource.displayName} a ${dest.displayName}?` +
-      (transferArchivar ? `\n\n📦 Además se ARCHIVARÁ a ${transferSource.displayName}.` : '')
-    )) return;
+    const confirmado = await confirmar(
+      'Transferir materias',
+      `¿Transferir ${transferMaterias.length} materia(s) de "${transferSource.displayName}" a "${dest.displayName}"?${transferArchivar ? `\n\n📦 Además se ARCHIVARÁ a ${transferSource.displayName}.` : ''}`,
+      {
+        confirmText: "Sí, transferir",
+        cancelText: "Cancelar",
+        confirmColor: "bg-teal-600 hover:bg-teal-700",
+        icon: FaExchangeAlt,
+      }
+    );
+    if (!confirmado) return;
 
     setIsTransferring(true);
     try {
@@ -293,11 +412,11 @@ export default function GestionUsuarios() {
         });
       }
 
-      alert(
-        `✅ Transferencia completada:\n` +
-        `• ${transferidas} materia(s) transferida(s)\n` +
-        `• ${omitidas} omitida(s) (el destino ya las tenía)\n` +
-        (transferArchivar ? `• ${transferSource.displayName} fue ARCHIVADO (reactivable)` : '')
+      mostrarToast(
+        'success',
+        'Transferencia completada',
+        `${transferidas} materia(s) transferida(s)${omitidas > 0 ? `, ${omitidas} omitida(s)` : ''}${transferArchivar ? `. ${transferSource.displayName} archivado.` : ''}`,
+        6000
       );
       setShowTransferModal(false);
       setTransferSource(null);
@@ -305,11 +424,13 @@ export default function GestionUsuarios() {
       await cargarUsuarios();
     } catch (error) {
       console.error('Error transfiriendo:', error);
-      alert('Error al transferir materias');
+      mostrarToast('error', 'Error al transferir', 'No se pudieron transferir las materias.');
     } finally {
       setIsTransferring(false);
     }
   };
+
+  // ==================== FILTROS Y BADGES ====================
 
   const filteredUsers = users.filter(u => u.status === filter);
 
@@ -350,10 +471,47 @@ export default function GestionUsuarios() {
     deleted: users.filter(u => u.status === 'deleted').length
   };
 
+  // ==================== CONFIG DE TOASTS ====================
+
+  const toastConfig = {
+    success: {
+      bg: 'bg-green-50 border-green-400',
+      iconBg: 'bg-green-500',
+      titleColor: 'text-green-900',
+      msgColor: 'text-green-700',
+      icon: FaCheckCircle,
+    },
+    error: {
+      bg: 'bg-red-50 border-red-400',
+      iconBg: 'bg-red-500',
+      titleColor: 'text-red-900',
+      msgColor: 'text-red-700',
+      icon: FaTimesCircle,
+    },
+    warning: {
+      bg: 'bg-yellow-50 border-yellow-400',
+      iconBg: 'bg-yellow-500',
+      titleColor: 'text-yellow-900',
+      msgColor: 'text-yellow-700',
+      icon: FaExclamationTriangle,
+    },
+    info: {
+      bg: 'bg-blue-50 border-blue-400',
+      iconBg: 'bg-blue-500',
+      titleColor: 'text-blue-900',
+      msgColor: 'text-blue-700',
+      icon: FaInfoCircle,
+    },
+  };
+
+  const ConfirmIcon = confirmModal.icon || FaQuestionCircle;
+
   if (loading) {
     return (
       <Layout title="Gestión de Usuarios" subtitle="Administra usuarios del sistema" showBack>
-        <div className="text-center py-12">Cargando...</div>
+        <div className="text-center py-12">
+          <FaSpinner className="animate-spin text-4xl text-blue-600 mx-auto" />
+        </div>
       </Layout>
     );
   }
@@ -821,6 +979,75 @@ export default function GestionUsuarios() {
           sus grados. El historial de notas y asistencias siempre se conserva con trazabilidad.
         </p>
       </div>
+
+      {/* ✅ CONTENEDOR DE TOASTS (esquina superior derecha) */}
+      <div className="fixed top-4 right-4 z-100 space-y-2 pointer-events-none max-w-sm w-full">
+        {toasts.map((toast) => {
+          const config = toastConfig[toast.type];
+          const Icon = config.icon;
+          return (
+            <div
+              key={toast.id}
+              className={`pointer-events-auto bg-white border-l-4 ${config.bg} rounded-lg shadow-2xl p-4 flex items-start gap-3 animate-in slide-in-from-right duration-300`}
+            >
+              <div className={`${config.iconBg} w-8 h-8 rounded-full flex items-center justify-center shrink-0`}>
+                <Icon className="text-white text-sm" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className={`font-semibold text-sm ${config.titleColor}`}>{toast.title}</p>
+                {toast.message && (
+                  <p className={`text-xs ${config.msgColor} mt-0.5 whitespace-pre-line`}>{toast.message}</p>
+                )}
+              </div>
+              <button
+                onClick={() => cerrarToast(toast.id)}
+                className="text-gray-400 hover:text-gray-600 shrink-0 transition-colors"
+              >
+                <FaXmark className="w-4 h-4" />
+              </button>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* ✅ MODAL DE CONFIRMACIÓN PERSONALIZADO */}
+      {confirmModal.isOpen && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-60 p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden animate-in zoom-in-95 duration-200">
+            <div className="bg-linear-to-r from-slate-50 to-slate-100 px-6 pt-6 pb-4 border-b border-slate-200">
+              <div className="flex items-start gap-4">
+                <div className="w-12 h-12 rounded-full bg-slate-200 flex items-center justify-center shrink-0">
+                  <ConfirmIcon className="text-slate-700 text-xl" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <h3 className="text-lg font-bold text-slate-900 mb-1">
+                    {confirmModal.title}
+                  </h3>
+                  <p className="text-sm text-slate-600 leading-relaxed whitespace-pre-line">
+                    {confirmModal.message}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="px-6 py-4 bg-slate-50 flex gap-3 justify-end">
+              <button
+                onClick={confirmModal.onCancel}
+                className="px-4 py-2 bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 rounded-lg text-sm font-semibold transition-all"
+              >
+                {confirmModal.cancelText || "Cancelar"}
+              </button>
+              <button
+                onClick={confirmModal.onConfirm}
+                className={`px-4 py-2 ${confirmModal.confirmColor || "bg-red-600 hover:bg-red-700"} text-white rounded-lg text-sm font-semibold transition-all flex items-center gap-2`}
+              >
+                <ConfirmIcon className="text-xs" />
+                {confirmModal.confirmText || "Confirmar"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </Layout>
   );
 }

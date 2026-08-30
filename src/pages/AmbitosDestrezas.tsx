@@ -38,7 +38,31 @@ import {
   FaCalendarAlt,
   FaUserCheck,
   FaCopy,
+  FaCheckCircle,
+  FaTimesCircle,
+  FaQuestionCircle,
 } from "react-icons/fa";
+
+// ==================== TIPOS PARA MODALES ====================
+
+interface Toast {
+  id: string;
+  type: "success" | "error" | "warning" | "info";
+  title: string;
+  message?: string;
+}
+
+interface ConfirmModalState {
+  isOpen: boolean;
+  title: string;
+  message: string;
+  confirmText?: string;
+  cancelText?: string;
+  confirmColor?: string;
+  icon?: React.ComponentType<{ className?: string }>;
+  onConfirm: () => void;
+  onCancel: () => void;
+}
 
 export default function AmbitosDestrezas() {
   const { user } = useAuth();
@@ -73,12 +97,76 @@ export default function AmbitosDestrezas() {
   const [destrezaMassiveData, setDestrezaMassiveData] = useState("");
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
 
-  // ✅ NUEVO: Estados para copiar a otros grados
   const [showCopyModal, setShowCopyModal] = useState(false);
   const [selectedDestGrados, setSelectedDestGrados] = useState<string[]>([]);
   const [isCopying, setIsCopying] = useState(false);
 
+  // ✅ NUEVO: Sistema de toasts (reemplaza alert)
+  const [toasts, setToasts] = useState<Toast[]>([]);
+
+  // ✅ NUEVO: Modal de confirmación personalizado (reemplaza confirm)
+  const [confirmModal, setConfirmModal] = useState<ConfirmModalState>({
+    isOpen: false,
+    title: "",
+    message: "",
+    onConfirm: () => {},
+    onCancel: () => {},
+  });
+
   const destrezaFormRef = useRef<HTMLDivElement>(null);
+
+  // ==================== HELPERS DE NOTIFICACIÓN ====================
+
+  const mostrarToast = useCallback((
+    type: Toast["type"],
+    title: string,
+    message?: string,
+    duration = 4000,
+  ) => {
+    const id = `toast-${Date.now()}-${Math.random()}`;
+    const toast: Toast = { id, type, title, message };
+    setToasts((prev) => [...prev, toast]);
+    setTimeout(() => {
+      setToasts((prev) => prev.filter((t) => t.id !== id));
+    }, duration);
+  }, []);
+
+  const cerrarToast = useCallback((id: string) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+  }, []);
+
+  const confirmar = useCallback((
+    title: string,
+    message: string,
+    options?: {
+      confirmText?: string;
+      cancelText?: string;
+      confirmColor?: string;
+      icon?: React.ComponentType<{ className?: string }>;
+    },
+  ): Promise<boolean> => {
+    return new Promise((resolve) => {
+      setConfirmModal({
+        isOpen: true,
+        title,
+        message,
+        confirmText: options?.confirmText || "Confirmar",
+        cancelText: options?.cancelText || "Cancelar",
+        confirmColor: options?.confirmColor || "bg-red-600 hover:bg-red-700",
+        icon: options?.icon || FaQuestionCircle,
+        onConfirm: () => {
+          setConfirmModal((prev) => ({ ...prev, isOpen: false }));
+          resolve(true);
+        },
+        onCancel: () => {
+          setConfirmModal((prev) => ({ ...prev, isOpen: false }));
+          resolve(false);
+        },
+      });
+    });
+  }, []);
+
+  // ==================== RESETS ====================
 
   const resetAmbitoForm = useCallback(() => {
     setAmbitoFormData({ nombre: "", orden: 0 });
@@ -97,6 +185,8 @@ export default function AmbitosDestrezas() {
     setShowDestrezaForm(false);
     setValidationErrors([]);
   }, []);
+
+  // ==================== CARGA DE DATOS ====================
 
   const cargarAniosLectivos = useCallback(async () => {
     try {
@@ -153,7 +243,6 @@ export default function AmbitosDestrezas() {
     }
   }, [selectedGradoId, aniosLectivos]);
 
-  // ✅ SIN orderBy para evitar índices compuestos
   const cargarTodosLosAmbitos = useCallback(async () => {
     try {
       const q = query(collection(db, "ambitos"), where("activo", "==", true));
@@ -219,6 +308,8 @@ export default function AmbitosDestrezas() {
     }
   }, []);
 
+  // ==================== PARSEO Y VALIDACIÓN ====================
+
   const parseAmbitosMassiveData = useCallback(
     (data: string): { ambitos: string[]; parseErrors: string[] } => {
       const lines = data.trim().split("\n");
@@ -273,6 +364,8 @@ export default function AmbitosDestrezas() {
     },
     [ambitos],
   );
+
+  // ==================== GUARDADO DE ÁMBITOS ====================
 
   const guardarAmbitosMasivos = useCallback(async () => {
     if (!ambitoMassiveData.trim()) {
@@ -343,12 +436,18 @@ export default function AmbitosDestrezas() {
       await cargarAmbitos(selectedGradoId);
       await cargarTodosLosAmbitos();
       resetAmbitoForm();
-      alert(
-        `✅ Se registraron ${parsedAmbitos.length} ámbito(s) correctamente`,
+      mostrarToast(
+        "success",
+        "Ámbitos registrados",
+        `Se registraron ${parsedAmbitos.length} ámbito(s) correctamente.`,
       );
     } catch (error) {
       console.error("Error guardando ámbitos masivos:", error);
-      alert("Error al guardar los ámbitos");
+      mostrarToast(
+        "error",
+        "Error al guardar",
+        "No se pudieron guardar los ámbitos.",
+      );
     } finally {
       setIsSaving(false);
     }
@@ -360,6 +459,7 @@ export default function AmbitosDestrezas() {
     cargarAmbitos,
     cargarTodosLosAmbitos,
     resetAmbitoForm,
+    mostrarToast,
   ]);
 
   const guardarAmbito = useCallback(async () => {
@@ -408,12 +508,21 @@ export default function AmbitosDestrezas() {
           createdBy: user?.uid,
         });
       }
+      mostrarToast(
+        "success",
+        editingAmbitoId ? "Ámbito actualizado" : "Ámbito creado",
+        `"${ambitoFormData.nombre}" se guardó correctamente.`,
+      );
       resetAmbitoForm();
       await cargarAmbitos(selectedGradoId);
       await cargarTodosLosAmbitos();
     } catch (error) {
       console.error("Error guardando ámbito:", error);
-      alert("Error al guardar");
+      mostrarToast(
+        "error",
+        "Error al guardar",
+        "No se pudo guardar el ámbito.",
+      );
     } finally {
       setIsSaving(false);
     }
@@ -426,16 +535,26 @@ export default function AmbitosDestrezas() {
     resetAmbitoForm,
     cargarAmbitos,
     cargarTodosLosAmbitos,
+    mostrarToast,
   ]);
 
-  // ✅ NUEVO: Copiar ámbitos y destrezas a otros grados (fusión inteligente)
+  // ==================== COPIAR A OTROS GRADOS ====================
+
   const copiarAGrados = useCallback(async () => {
     if (selectedDestGrados.length === 0) {
-      alert("⚠️ Selecciona al menos un grado de destino");
+      mostrarToast(
+        "warning",
+        "Selecciona grados de destino",
+        "Debes seleccionar al menos un grado para copiar.",
+      );
       return;
     }
     if (ambitos.length === 0) {
-      alert("⚠️ El grado actual no tiene ámbitos para copiar");
+      mostrarToast(
+        "warning",
+        "Sin ámbitos para copiar",
+        "El grado actual no tiene ámbitos para copiar.",
+      );
       return;
     }
 
@@ -445,7 +564,6 @@ export default function AmbitosDestrezas() {
       let destrezasCreadas = 0;
 
       for (const destGradoId of selectedDestGrados) {
-        // 1. Cargar ámbitos existentes en el destino
         const qAmbDest = query(
           collection(db, "ambitos"),
           where("gradoId", "==", destGradoId),
@@ -455,14 +573,11 @@ export default function AmbitosDestrezas() {
           (d) => ({ id: d.id, ...d.data() }) as Ambito,
         );
 
-        // 2. Por cada ámbito del grado origen
         for (const ambitoOrigen of ambitos) {
-          // Buscar ámbito con el mismo nombre en el destino
           let ambitoDestId = ambitosDest.find(
             (a) => a.nombre.toLowerCase() === ambitoOrigen.nombre.toLowerCase(),
           )?.id;
 
-          // Si no existe, crearlo
           if (!ambitoDestId) {
             const ref = await addDoc(collection(db, "ambitos"), {
               nombre: ambitoOrigen.nombre,
@@ -476,7 +591,6 @@ export default function AmbitosDestrezas() {
             ambitosCreados++;
           }
 
-          // 3. Cargar destrezas del ámbito origen
           const qDesOrigen = query(
             collection(db, "destrezas"),
             where("ambitoId", "==", ambitoOrigen.id),
@@ -486,7 +600,6 @@ export default function AmbitosDestrezas() {
             .map((d) => ({ id: d.id, ...d.data() }) as Destreza)
             .sort((a, b) => (a.orden || 0) - (b.orden || 0));
 
-          // 4. Cargar destrezas existentes en el ámbito destino
           const qDesDest = query(
             collection(db, "destrezas"),
             where("ambitoId", "==", ambitoDestId),
@@ -496,7 +609,6 @@ export default function AmbitosDestrezas() {
             (d) => ({ id: d.id, ...d.data() }) as Destreza,
           );
 
-          // 5. Copiar solo las destrezas que falten
           let ordenMax =
             destrezasDest.length > 0
               ? Math.max(...destrezasDest.map((d) => d.orden || 0))
@@ -526,8 +638,11 @@ export default function AmbitosDestrezas() {
         }
       }
 
-      alert(
-        `✅ Copia completada:\n${ambitosCreados} ámbito(s) y ${destrezasCreadas} destreza(s) creados en ${selectedDestGrados.length} grado(s).\n(Lo que ya existía no se duplicó)`,
+      mostrarToast(
+        "success",
+        "Copia completada",
+        `${ambitosCreados} ámbito(s) y ${destrezasCreadas} destreza(s) creados en ${selectedDestGrados.length} grado(s).`,
+        6000,
       );
       setShowCopyModal(false);
       setSelectedDestGrados([]);
@@ -536,7 +651,11 @@ export default function AmbitosDestrezas() {
       await cargarDestrezas(selectedGradoId);
     } catch (error) {
       console.error("Error copiando ámbitos y destrezas:", error);
-      alert("Error al copiar ámbitos y destrezas");
+      mostrarToast(
+        "error",
+        "Error al copiar",
+        "No se pudieron copiar ámbitos y destrezas.",
+      );
     } finally {
       setIsCopying(false);
     }
@@ -548,6 +667,7 @@ export default function AmbitosDestrezas() {
     cargarTodosLosAmbitos,
     cargarAmbitos,
     cargarDestrezas,
+    mostrarToast,
   ]);
 
   const toggleDestGrado = (gradoId: string) => {
@@ -557,6 +677,8 @@ export default function AmbitosDestrezas() {
         : [...prev, gradoId],
     );
   };
+
+  // ==================== GUARDADO DE DESTREZAS ====================
 
   const analizarYGuardarDestrezas = useCallback(async () => {
     const errors: string[] = [];
@@ -571,7 +693,6 @@ export default function AmbitosDestrezas() {
       return;
     }
 
-    // ✅ MODO INTELIGENTE: detecta si son destrezas largas (con punto) o cortas (una por línea)
     const lineasLimpias = destrezaMassiveData
       .split("\n")
       .map((l) => l.trim())
@@ -581,13 +702,11 @@ export default function AmbitosDestrezas() {
 
     let destrezasList: string[];
     if (usaPuntos) {
-      // 📖 Modo largo: cada destreza termina en "." (puede ocupar varias líneas)
       destrezasList = destrezaMassiveData
         .split(/(?<=\.)\s*\n+/)
         .map((d) => d.trim())
         .filter((d) => d.length > 0);
     } else {
-      // ✏️ Modo corto: cada línea es una destreza (ej: "Matemática"), sin punto
       destrezasList = lineasLimpias;
     }
 
@@ -650,12 +769,18 @@ export default function AmbitosDestrezas() {
       await Promise.all(batch);
       await cargarDestrezas(selectedGradoId);
       resetDestrezaForm();
-      alert(
-        `✅ Se registraron ${destrezasList.length} destreza(s) en "${ambito.nombre}"`,
+      mostrarToast(
+        "success",
+        "Destrezas registradas",
+        `Se registraron ${destrezasList.length} destreza(s) en "${ambito.nombre}".`,
       );
     } catch (error) {
       console.error("Error guardando destrezas:", error);
-      alert("Error al guardar las destrezas");
+      mostrarToast(
+        "error",
+        "Error al guardar",
+        "No se pudieron guardar las destrezas.",
+      );
     } finally {
       setIsSaving(false);
     }
@@ -668,7 +793,10 @@ export default function AmbitosDestrezas() {
     user,
     cargarDestrezas,
     resetDestrezaForm,
+    mostrarToast,
   ]);
+
+  // ==================== EDITAR / ELIMINAR ====================
 
   const handleEditAmbito = useCallback((ambito: Ambito) => {
     setAmbitoFormData({ nombre: ambito.nombre, orden: ambito.orden || 0 });
@@ -678,55 +806,105 @@ export default function AmbitosDestrezas() {
     setValidationErrors([]);
   }, []);
 
+  // ✅ MODIFICADO: Usa modal de confirmación personalizado
   const handleDeleteAmbito = useCallback(
     async (id: string) => {
+      const ambito = ambitos.find((a) => a.id === id);
       const destrezasDelAmbito = destrezas.filter((d) => d.ambitoId === id);
+      let confirmado: boolean;
+
       if (destrezasDelAmbito.length > 0) {
-        if (
-          !confirm(
-            `Este ámbito tiene ${destrezasDelAmbito.length} destreza(s). ¿Eliminar también las destrezas?`,
-          )
-        ) {
-          return;
-        }
-        const deleteDestrezas = destrezasDelAmbito.map((d) =>
-          deleteDoc(doc(db, "destrezas", d.id)),
+        confirmado = await confirmar(
+          `Eliminar "${ambito?.nombre || "ámbito"}"`,
+          `Este ámbito tiene ${destrezasDelAmbito.length} destreza(s). ¿Eliminar también las destrezas asociadas? Esta acción no se puede deshacer.`,
+          {
+            confirmText: "Sí, eliminar todo",
+            cancelText: "Cancelar",
+            confirmColor: "bg-red-600 hover:bg-red-700",
+            icon: FaTrash,
+          },
         );
-        await Promise.all(deleteDestrezas);
       } else {
-        if (!confirm("¿Eliminar este ámbito?")) return;
+        confirmado = await confirmar(
+          `Eliminar "${ambito?.nombre || "ámbito"}"`,
+          `¿Estás seguro de eliminar este ámbito? Esta acción no se puede deshacer.`,
+          {
+            confirmText: "Sí, eliminar",
+            cancelText: "Cancelar",
+            confirmColor: "bg-red-600 hover:bg-red-700",
+            icon: FaTrash,
+          },
+        );
       }
+      if (!confirmado) return;
+
       try {
+        if (destrezasDelAmbito.length > 0) {
+          const deleteDestrezas = destrezasDelAmbito.map((d) =>
+            deleteDoc(doc(db, "destrezas", d.id)),
+          );
+          await Promise.all(deleteDestrezas);
+        }
         await deleteDoc(doc(db, "ambitos", id));
+        mostrarToast(
+          "success",
+          "Ámbito eliminado",
+          `"${ambito?.nombre}" y sus destrezas fueron eliminados.`,
+        );
         await cargarAmbitos(selectedGradoId);
         await cargarDestrezas(selectedGradoId);
         await cargarTodosLosAmbitos();
       } catch (error) {
         console.error("Error eliminando:", error);
-        alert("Error al eliminar");
+        mostrarToast(
+          "error",
+          "Error al eliminar",
+          "No se pudo eliminar el ámbito.",
+        );
       }
     },
     [
+      ambitos,
       destrezas,
       selectedGradoId,
       cargarAmbitos,
       cargarDestrezas,
       cargarTodosLosAmbitos,
+      confirmar,
+      mostrarToast,
     ],
   );
 
+  // ✅ MODIFICADO: Usa modal de confirmación personalizado
   const handleDeleteDestreza = useCallback(
     async (id: string) => {
-      if (!confirm("¿Eliminar esta destreza?")) return;
+      const destreza = destrezas.find((d) => d.id === id);
+      const confirmado = await confirmar(
+        "Eliminar destreza",
+        `¿Estás seguro de eliminar esta destreza?\n\n"${(destreza?.descripcion || "").substring(0, 120)}..."`,
+        {
+          confirmText: "Sí, eliminar",
+          cancelText: "Cancelar",
+          confirmColor: "bg-red-600 hover:bg-red-700",
+          icon: FaTrash,
+        },
+      );
+      if (!confirmado) return;
+
       try {
         await deleteDoc(doc(db, "destrezas", id));
+        mostrarToast("success", "Destreza eliminada", "La destreza fue eliminada correctamente.");
         await cargarDestrezas(selectedGradoId);
       } catch (error) {
         console.error("Error eliminando:", error);
-        alert("Error al eliminar");
+        mostrarToast(
+          "error",
+          "Error al eliminar",
+          "No se pudo eliminar la destreza.",
+        );
       }
     },
-    [selectedGradoId, cargarDestrezas],
+    [destrezas, selectedGradoId, cargarDestrezas, confirmar, mostrarToast],
   );
 
   const handleEditDestreza = useCallback((destreza: Destreza) => {
@@ -774,11 +952,20 @@ export default function AmbitosDestrezas() {
           createdBy: user?.uid,
         });
       }
+      mostrarToast(
+        "success",
+        editingDestrezaId ? "Destreza actualizada" : "Destreza creada",
+        "La destreza se guardó correctamente.",
+      );
       await cargarDestrezas(selectedGradoId);
       resetDestrezaForm();
     } catch (error) {
       console.error("Error:", error);
-      alert("Error al guardar");
+      mostrarToast(
+        "error",
+        "Error al guardar",
+        "No se pudo guardar la destreza.",
+      );
     } finally {
       setIsSaving(false);
     }
@@ -792,7 +979,10 @@ export default function AmbitosDestrezas() {
     user,
     cargarDestrezas,
     resetDestrezaForm,
+    mostrarToast,
   ]);
+
+  // ==================== NAVEGACIÓN ====================
 
   const getDestrezasByAmbito = (ambitoId: string) => {
     return destrezas.filter((d) => d.ambitoId === ambitoId);
@@ -878,6 +1068,8 @@ export default function AmbitosDestrezas() {
     }
   }, [grados, selectedGradoId, ambitos, destrezas]);
 
+  // ==================== EFFECTS ====================
+
   useEffect(() => {
     cargarAniosLectivos();
   }, [cargarAniosLectivos]);
@@ -895,6 +1087,41 @@ export default function AmbitosDestrezas() {
       cargarDestrezas(selectedGradoId);
     }
   }, [selectedGradoId, cargarAmbitos, cargarDestrezas]);
+
+  // ==================== CONFIG DE TOASTS ====================
+
+  const toastConfig = {
+    success: {
+      bg: "bg-green-50 border-green-400",
+      iconBg: "bg-green-500",
+      titleColor: "text-green-900",
+      msgColor: "text-green-700",
+      icon: FaCheckCircle,
+    },
+    error: {
+      bg: "bg-red-50 border-red-400",
+      iconBg: "bg-red-500",
+      titleColor: "text-red-900",
+      msgColor: "text-red-700",
+      icon: FaTimesCircle,
+    },
+    warning: {
+      bg: "bg-yellow-50 border-yellow-400",
+      iconBg: "bg-yellow-500",
+      titleColor: "text-yellow-900",
+      msgColor: "text-yellow-700",
+      icon: FaExclamationTriangle,
+    },
+    info: {
+      bg: "bg-blue-50 border-blue-400",
+      iconBg: "bg-blue-500",
+      titleColor: "text-blue-900",
+      msgColor: "text-blue-700",
+      icon: FaInfoCircle,
+    },
+  };
+
+  const ConfirmIcon = confirmModal.icon || FaQuestionCircle;
 
   if (loading) {
     return (
@@ -1067,7 +1294,6 @@ export default function AmbitosDestrezas() {
               </div>
             </div>
             <div className="flex gap-2">
-              {/* ✅ NUEVO: Botón Copiar a otros grados */}
               <button
                 onClick={() => {
                   setSelectedDestGrados([]);
@@ -1466,7 +1692,7 @@ export default function AmbitosDestrezas() {
 
       {/* Modal de Confirmación para Ámbitos Masivos */}
       {showConfirmAmbitoModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-100 p-4">
           <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6">
             <div className="flex items-center gap-3 mb-4">
               <div className="bg-purple-100 p-2 rounded-lg">
@@ -1522,9 +1748,9 @@ export default function AmbitosDestrezas() {
         </div>
       )}
 
-      {/* ✅ NUEVO: Modal para Copiar a otros grados */}
+      {/* Modal para Copiar a otros grados */}
       {showCopyModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-100 p-4">
           <div className="bg-white rounded-xl shadow-xl max-w-lg w-full p-6">
             <div className="flex items-center gap-3 mb-4">
               <div className="bg-blue-100 p-2 rounded-lg">
@@ -1632,6 +1858,75 @@ export default function AmbitosDestrezas() {
                 className="flex-1 inline-flex items-center justify-center gap-2 bg-slate-200 hover:bg-slate-300 text-slate-700 px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <FaTimes className="text-xs" /> Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ✅ CONTENEDOR DE TOASTS (esquina superior derecha) */}
+      <div className="fixed top-4 right-4 z-100 space-y-2 pointer-events-none max-w-sm w-full">
+        {toasts.map((toast) => {
+          const config = toastConfig[toast.type];
+          const Icon = config.icon;
+          return (
+            <div
+              key={toast.id}
+              className={`pointer-events-auto bg-white border-l-4 ${config.bg} rounded-lg shadow-2xl p-4 flex items-start gap-3 animate-in slide-in-from-right duration-300`}
+            >
+              <div className={`${config.iconBg} w-8 h-8 rounded-full flex items-center justify-center shrink-0`}>
+                <Icon className="text-white text-sm" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className={`font-semibold text-sm ${config.titleColor}`}>{toast.title}</p>
+                {toast.message && (
+                  <p className={`text-xs ${config.msgColor} mt-0.5 whitespace-pre-line`}>{toast.message}</p>
+                )}
+              </div>
+              <button
+                onClick={() => cerrarToast(toast.id)}
+                className="text-gray-400 hover:text-gray-600 shrink-0 transition-colors"
+              >
+                <FaTimes className="w-4 h-4" />
+              </button>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* ✅ MODAL DE CONFIRMACIÓN PERSONALIZADO */}
+      {confirmModal.isOpen && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-60 p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden animate-in zoom-in-95 duration-200">
+            <div className="bg-linear-to-r from-slate-50 to-slate-100 px-6 pt-6 pb-4 border-b border-slate-200">
+              <div className="flex items-start gap-4">
+                <div className="w-12 h-12 rounded-full bg-slate-200 flex items-center justify-center shrink-0">
+                  <ConfirmIcon className="text-slate-700 text-xl" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <h3 className="text-lg font-bold text-slate-900 mb-1">
+                    {confirmModal.title}
+                  </h3>
+                  <p className="text-sm text-slate-600 leading-relaxed whitespace-pre-line">
+                    {confirmModal.message}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="px-6 py-4 bg-slate-50 flex gap-3 justify-end">
+              <button
+                onClick={confirmModal.onCancel}
+                className="px-4 py-2 bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 rounded-lg text-sm font-semibold transition-all"
+              >
+                {confirmModal.cancelText || "Cancelar"}
+              </button>
+              <button
+                onClick={confirmModal.onConfirm}
+                className={`px-4 py-2 ${confirmModal.confirmColor || "bg-red-600 hover:bg-red-700"} text-white rounded-lg text-sm font-semibold transition-all flex items-center gap-2`}
+              >
+                <ConfirmIcon className="text-xs" />
+                {confirmModal.confirmText || "Confirmar"}
               </button>
             </div>
           </div>

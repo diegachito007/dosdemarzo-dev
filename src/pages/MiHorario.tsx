@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { 
   collection, 
   query, 
@@ -24,7 +24,11 @@ import {
   FaBook,
   FaCheckCircle,
   FaTrash,
-  FaPlus
+  FaPlus,
+  FaTimes,
+  FaTimesCircle,
+  FaInfoCircle,
+  FaQuestionCircle
 } from 'react-icons/fa';
 
 interface AsignaturaDocente {
@@ -37,6 +41,27 @@ interface AsignaturaDocente {
   createdAt?: Timestamp | Date;
 }
 
+// ==================== TIPOS PARA MODALES ====================
+
+interface Toast {
+  id: string;
+  type: 'success' | 'error' | 'warning' | 'info';
+  title: string;
+  message?: string;
+}
+
+interface ConfirmModalState {
+  isOpen: boolean;
+  title: string;
+  message: string;
+  confirmText?: string;
+  cancelText?: string;
+  confirmColor?: string;
+  icon?: React.ComponentType<{ className?: string }>;
+  onConfirm: () => void;
+  onCancel: () => void;
+}
+
 export default function MiHorario() {
   const { user, userData } = useAuth();
   const [grados, setGrados] = useState<Grado[]>([]);
@@ -47,6 +72,71 @@ export default function MiHorario() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [selectedGradoId, setSelectedGradoId] = useState<string>('');
+
+  // ✅ NUEVO: Sistema de toasts (reemplaza alert)
+  const [toasts, setToasts] = useState<Toast[]>([]);
+
+  // ✅ NUEVO: Modal de confirmación personalizado (reemplaza confirm)
+  const [confirmModal, setConfirmModal] = useState<ConfirmModalState>({
+    isOpen: false,
+    title: "",
+    message: "",
+    onConfirm: () => {},
+    onCancel: () => {},
+  });
+
+  // ==================== HELPERS DE NOTIFICACIÓN ====================
+
+  const mostrarToast = useCallback((
+    type: Toast['type'],
+    title: string,
+    message?: string,
+    duration = 4000
+  ) => {
+    const id = `toast-${Date.now()}-${Math.random()}`;
+    const toast: Toast = { id, type, title, message };
+    setToasts((prev) => [...prev, toast]);
+    setTimeout(() => {
+      setToasts((prev) => prev.filter((t) => t.id !== id));
+    }, duration);
+  }, []);
+
+  const cerrarToast = useCallback((id: string) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+  }, []);
+
+  const confirmar = useCallback((
+    title: string,
+    message: string,
+    options?: {
+      confirmText?: string;
+      cancelText?: string;
+      confirmColor?: string;
+      icon?: React.ComponentType<{ className?: string }>;
+    }
+  ): Promise<boolean> => {
+    return new Promise((resolve) => {
+      setConfirmModal({
+        isOpen: true,
+        title,
+        message,
+        confirmText: options?.confirmText || "Confirmar",
+        cancelText: options?.cancelText || "Cancelar",
+        confirmColor: options?.confirmColor || "bg-red-600 hover:bg-red-700",
+        icon: options?.icon || FaQuestionCircle,
+        onConfirm: () => {
+          setConfirmModal((prev) => ({ ...prev, isOpen: false }));
+          resolve(true);
+        },
+        onCancel: () => {
+          setConfirmModal((prev) => ({ ...prev, isOpen: false }));
+          resolve(false);
+        },
+      });
+    });
+  }, []);
+
+  // ==================== CARGA DE DATOS ====================
 
   // ✅ Cargar datos iniciales (año lectivo y grados) - solo una vez
   useEffect(() => {
@@ -151,13 +241,13 @@ export default function MiHorario() {
     return () => unsubscribe();
   }, [user?.uid, anioActivo?.id]);
 
-  // Helper para obtener el nombre del ámbito
+  // ==================== HELPERS ====================
+
   const getAmbitoNombre = (ambitoId: string): string => {
     const ambito = ambitos.find(a => a.id === ambitoId);
     return ambito?.nombre || 'Sin ámbito';
   };
 
-  // ✅ NUEVO: Detectar si el grado es Inicial o Preparatoria
   const esGradoInicial = (gradoNombre: string): boolean => {
     return (
       gradoNombre.toLowerCase().includes('inicial 1') ||
@@ -184,7 +274,7 @@ export default function MiHorario() {
     return destrezasDelGrado.filter(d => !asignadasIds.includes(d.id));
   }, [destrezasDelGrado, asignaturasDelGrado]);
 
-  // ✅ NUEVO: Agrupar destrezas disponibles por ámbito
+  // Agrupar destrezas disponibles por ámbito
   const destrezasPorAmbito = useMemo(() => {
     const grupos: Record<string, { ambito: Ambito; destrezas: Destreza[] }> = {};
     
@@ -200,6 +290,8 @@ export default function MiHorario() {
 
     return Object.values(grupos);
   }, [destrezasDisponibles, ambitos]);
+
+  // ==================== ACCIONES ====================
 
   const verificarDisponibilidad = async (destrezaId: string): Promise<boolean> => {
     try {
@@ -229,11 +321,12 @@ export default function MiHorario() {
     try {
       const disponible = await verificarDisponibilidad(destrezaId);
       if (!disponible) {
-        alert('❌ Esta materia ya está asignada a otro docente en este grado');
+        mostrarToast('warning', 'Materia no disponible', 'Esta materia ya está asignada a otro docente en este grado.');
         setSaving(false);
         return;
       }
 
+      const destreza = destrezas.find(d => d.id === destrezaId);
       await addDoc(collection(db, 'asignaturasDocente'), {
         docenteId: user.uid,
         gradoId: selectedGradoId,
@@ -242,15 +335,16 @@ export default function MiHorario() {
         activo: true,
         createdAt: new Date()
       });
+      mostrarToast('success', 'Materia asignada', `"${destreza?.nombre || 'Materia'}" se agregó a tu horario.`);
     } catch (error) {
       console.error('Error asignando materia:', error);
-      alert('Error al asignar la materia');
+      mostrarToast('error', 'Error al asignar', 'No se pudo asignar la materia. Intenta nuevamente.');
     } finally {
       setSaving(false);
     }
   };
 
-  // ✅ NUEVO: Asignar todas las destrezas de un ámbito (solo para Inicial/Preparatoria)
+  // ✅ MODIFICADO: Usa modal de confirmación personalizado
   const asignarTodasDelAmbito = async (ambitoId: string) => {
     if (!user?.uid || !anioActivo?.id || !selectedGradoId) return;
 
@@ -258,9 +352,17 @@ export default function MiHorario() {
     if (!grupo) return;
 
     const totalDestrezas = grupo.destrezas.length;
-    if (!confirm(`¿Asignar las ${totalDestrezas} destrezas de "${grupo.ambito.nombre}" a tu horario?`)) {
-      return;
-    }
+    const confirmado = await confirmar(
+      `Asignar destrezas de "${grupo.ambito.nombre}"`,
+      `¿Asignar las ${totalDestrezas} destreza(s) de este ámbito a tu horario en este grado? Las destrezas ya asignadas a otro docente se omitirán.`,
+      {
+        confirmText: "Sí, asignar",
+        cancelText: "Cancelar",
+        confirmColor: "bg-purple-600 hover:bg-purple-700",
+        icon: FaPlus,
+      }
+    );
+    if (!confirmado) return;
 
     setSaving(true);
     try {
@@ -285,32 +387,87 @@ export default function MiHorario() {
         asignadas++;
       }
 
-      let mensaje = `✅ Se asignaron ${asignadas} destreza(s)`;
+      let mensaje = `Se asignaron ${asignadas} destreza(s).`;
       if (omitidas > 0) {
-        mensaje += `\n⚠️ ${omitidas} omitida(s) (ya estaban asignadas a otro docente)`;
+        mensaje += ` ${omitidas} omitida(s) (ya estaban asignadas a otro docente).`;
       }
-      alert(mensaje);
+      mostrarToast(
+        'success',
+        'Asignación masiva completada',
+        mensaje,
+        6000
+      );
     } catch (error) {
       console.error('Error asignando todas las destrezas del ámbito:', error);
-      alert('Error al asignar las destrezas');
+      mostrarToast('error', 'Error al asignar', 'No se pudieron asignar las destrezas del ámbito.');
     } finally {
       setSaving(false);
     }
   };
 
+  // ✅ MODIFICADO: Usa modal de confirmación personalizado
   const removerMateria = async (asignacionId: string) => {
-    if (!confirm('¿Quitar esta materia de tu horario?')) return;
+    const asignatura = asignaturas.find(a => a.id === asignacionId);
+    const destreza = asignatura ? destrezas.find(d => d.id === asignatura.destrezaId) : null;
+    
+    const confirmado = await confirmar(
+      'Quitar materia del horario',
+      `¿Quitar "${destreza?.nombre || 'esta materia'}" de tu horario?\n\nPodrás volver a asignarla después si lo necesitas.`,
+      {
+        confirmText: "Sí, quitar",
+        cancelText: "Cancelar",
+        confirmColor: "bg-red-600 hover:bg-red-700",
+        icon: FaTrash,
+      }
+    );
+    if (!confirmado) return;
 
     setSaving(true);
     try {
       await deleteDoc(doc(db, 'asignaturasDocente', asignacionId));
+      mostrarToast('success', 'Materia removida', `"${destreza?.nombre || 'Materia'}" se quitó de tu horario.`);
     } catch (error) {
       console.error('Error removiendo materia:', error);
-      alert('Error al remover la materia');
+      mostrarToast('error', 'Error al remover', 'No se pudo quitar la materia del horario.');
     } finally {
       setSaving(false);
     }
   };
+
+  // ==================== CONFIG DE TOASTS ====================
+
+  const toastConfig = {
+    success: {
+      bg: 'bg-green-50 border-green-400',
+      iconBg: 'bg-green-500',
+      titleColor: 'text-green-900',
+      msgColor: 'text-green-700',
+      icon: FaCheckCircle,
+    },
+    error: {
+      bg: 'bg-red-50 border-red-400',
+      iconBg: 'bg-red-500',
+      titleColor: 'text-red-900',
+      msgColor: 'text-red-700',
+      icon: FaTimesCircle,
+    },
+    warning: {
+      bg: 'bg-yellow-50 border-yellow-400',
+      iconBg: 'bg-yellow-500',
+      titleColor: 'text-yellow-900',
+      msgColor: 'text-yellow-700',
+      icon: FaExclamationTriangle,
+    },
+    info: {
+      bg: 'bg-blue-50 border-blue-400',
+      iconBg: 'bg-blue-500',
+      titleColor: 'text-blue-900',
+      msgColor: 'text-blue-700',
+      icon: FaInfoCircle,
+    },
+  };
+
+  const ConfirmIcon = confirmModal.icon || FaQuestionCircle;
 
   if (loading) {
     return (
@@ -345,7 +502,6 @@ export default function MiHorario() {
             <FaChalkboardTeacher className="text-sm" />
             <span className="text-sm font-medium">Año lectivo:</span>
             <span className="text-base font-bold text-blue-900">{anioActivo.nombre}</span>
-            {/* ✅ Indicador de tiempo real */}
             <span className="ml-auto flex items-center gap-1 text-xs text-blue-600">
               <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
               En vivo
@@ -477,11 +633,9 @@ export default function MiHorario() {
                 <p className="text-xs mt-1">No hay más materias disponibles en este grado</p>
               </div>
             ) : esInicialOPreparatoria ? (
-              // ✅ VISTA AGRUPADA POR ÁMBITO (solo para Inicial/Preparatoria)
               <div className="space-y-4">
                 {destrezasPorAmbito.map(({ ambito, destrezas: destrezasAmbito }) => (
                   <div key={ambito.id} className="border-2 border-purple-200 rounded-lg overflow-hidden">
-                    {/* Encabezado del ámbito con botón de asignar todo */}
                     <div className="bg-purple-50 border-b border-purple-200 px-4 py-3 flex items-center justify-between">
                       <div className="flex items-center gap-2 flex-1 min-w-0">
                         <FaBook className="text-purple-600 shrink-0" />
@@ -511,7 +665,6 @@ export default function MiHorario() {
                       </button>
                     </div>
 
-                    {/* Lista de destrezas del ámbito */}
                     <div className="p-3 space-y-2">
                       {destrezasAmbito.map(destreza => (
                         <div
@@ -545,7 +698,6 @@ export default function MiHorario() {
                 ))}
               </div>
             ) : (
-              // ✅ VISTA PLANA (para EGB y BGU - flujo actual)
               <div className="space-y-2">
                 {destrezasDisponibles.map(destreza => {
                   const ambitoNombre = getAmbitoNombre(destreza.ambitoId);
@@ -597,6 +749,75 @@ export default function MiHorario() {
           </div>
         )}
       </div>
+
+      {/* ✅ CONTENEDOR DE TOASTS (esquina superior derecha) */}
+      <div className="fixed top-4 right-4 z-100 space-y-2 pointer-events-none max-w-sm w-full">
+        {toasts.map((toast) => {
+          const config = toastConfig[toast.type];
+          const Icon = config.icon;
+          return (
+            <div
+              key={toast.id}
+              className={`pointer-events-auto bg-white border-l-4 ${config.bg} rounded-lg shadow-2xl p-4 flex items-start gap-3 animate-in slide-in-from-right duration-300`}
+            >
+              <div className={`${config.iconBg} w-8 h-8 rounded-full flex items-center justify-center shrink-0`}>
+                <Icon className="text-white text-sm" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className={`font-semibold text-sm ${config.titleColor}`}>{toast.title}</p>
+                {toast.message && (
+                  <p className={`text-xs ${config.msgColor} mt-0.5 whitespace-pre-line`}>{toast.message}</p>
+                )}
+              </div>
+              <button
+                onClick={() => cerrarToast(toast.id)}
+                className="text-gray-400 hover:text-gray-600 shrink-0 transition-colors"
+              >
+                <FaTimes className="w-4 h-4" />
+              </button>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* ✅ MODAL DE CONFIRMACIÓN PERSONALIZADO */}
+      {confirmModal.isOpen && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-60 p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden animate-in zoom-in-95 duration-200">
+            <div className="bg-linear-to-r from-slate-50 to-slate-100 px-6 pt-6 pb-4 border-b border-slate-200">
+              <div className="flex items-start gap-4">
+                <div className="w-12 h-12 rounded-full bg-slate-200 flex items-center justify-center shrink-0">
+                  <ConfirmIcon className="text-slate-700 text-xl" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <h3 className="text-lg font-bold text-slate-900 mb-1">
+                    {confirmModal.title}
+                  </h3>
+                  <p className="text-sm text-slate-600 leading-relaxed whitespace-pre-line">
+                    {confirmModal.message}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="px-6 py-4 bg-slate-50 flex gap-3 justify-end">
+              <button
+                onClick={confirmModal.onCancel}
+                className="px-4 py-2 bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 rounded-lg text-sm font-semibold transition-all"
+              >
+                {confirmModal.cancelText || "Cancelar"}
+              </button>
+              <button
+                onClick={confirmModal.onConfirm}
+                className={`px-4 py-2 ${confirmModal.confirmColor || "bg-red-600 hover:bg-red-700"} text-white rounded-lg text-sm font-semibold transition-all flex items-center gap-2`}
+              >
+                <ConfirmIcon className="text-xs" />
+                {confirmModal.confirmText || "Confirmar"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </Layout>
   );
 }

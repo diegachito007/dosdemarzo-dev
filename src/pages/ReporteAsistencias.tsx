@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import {
   collection,
   query,
@@ -37,6 +37,7 @@ import {
   FaFileSignature,
   FaTimes,
   FaPrint,
+  FaTimesCircle,
 } from "react-icons/fa";
 
 interface AsistenciaData {
@@ -51,6 +52,13 @@ interface AsistenciaData {
 }
 
 type TipoReporte = "semanal" | "mensual" | "trimestral";
+
+interface Toast {
+  id: string;
+  type: "success" | "error" | "warning" | "info";
+  title: string;
+  message?: string;
+}
 
 // ==================== HELPERS ====================
 
@@ -219,6 +227,9 @@ export default function ReporteAsistencias() {
   const [motivoJustificacion, setMotivoJustificacion] = useState("");
   const [isJustificando, setIsJustificando] = useState(false);
 
+  // ✅ NUEVO: Sistema de toasts
+  const [toasts, setToasts] = useState<Toast[]>([]);
+
   const periodoInicializado = useRef(false);
 
   const esTutor = (userData?.tutorDe?.length ?? 0) > 0;
@@ -226,7 +237,6 @@ export default function ReporteAsistencias() {
     return grados.filter((g) => userData?.tutorDe?.includes(g.id));
   }, [grados, userData]);
 
-  // ✅ CORREGIDO: Solo grados donde TÚ registraste asistencia
   const gradosDocente = useMemo(() => {
     const gradosConMaterias = new Set(
       asistencias
@@ -259,6 +269,28 @@ export default function ReporteAsistencias() {
       return "tutor";
     return vistaActiva;
   }, [vistaActiva, esTutor, gradosDocente]);
+
+  // ==================== HELPERS DE NOTIFICACIÓN ====================
+
+  const mostrarToast = useCallback((
+    type: Toast["type"],
+    title: string,
+    message?: string,
+    duration = 4000
+  ) => {
+    const id = `toast-${Date.now()}-${Math.random()}`;
+    const toast: Toast = { id, type, title, message };
+    setToasts((prev) => [...prev, toast]);
+    setTimeout(() => {
+      setToasts((prev) => prev.filter((t) => t.id !== id));
+    }, duration);
+  }, []);
+
+  const cerrarToast = useCallback((id: string) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+  }, []);
+
+  // ==================== EFFECTS ====================
 
   useEffect(() => {
     const unsubs: (() => void)[] = [];
@@ -649,9 +681,10 @@ export default function ReporteAsistencias() {
     );
   };
 
+  // ✅ MODIFICADO: Usa toasts en lugar de alert
   const justificarDiasSeleccionados = async () => {
     if (!estudianteJustificarId || diasJustificar.size === 0) {
-      alert("⚠️ Debes seleccionar al menos un día para justificar");
+      mostrarToast("warning", "Selección requerida", "Debes seleccionar al menos un día para justificar.");
       return;
     }
 
@@ -668,7 +701,7 @@ export default function ReporteAsistencias() {
       });
 
       if (asistenciasAActualizar.length === 0) {
-        alert("ℹ️ No hay ausencias para justificar en los días seleccionados");
+        mostrarToast("info", "Sin ausencias", "No hay ausencias para justificar en los días seleccionados.");
         setIsJustificando(false);
         return;
       }
@@ -688,8 +721,11 @@ export default function ReporteAsistencias() {
 
       await Promise.all(batch);
 
-      alert(
-        `✅ Se justificaron ${asistenciasAActualizar.length} ausencia(s) correctamente`,
+      mostrarToast(
+        "success",
+        "Justificación completada",
+        `Se justificaron ${asistenciasAActualizar.length} ausencia(s) correctamente.`,
+        5000
       );
       setShowJustificarModal(false);
       setEstudianteJustificarId(null);
@@ -697,7 +733,7 @@ export default function ReporteAsistencias() {
       setMotivoJustificacion("");
     } catch (error) {
       console.error("Error justificando asistencias:", error);
-      alert("Error al justificar las asistencias");
+      mostrarToast("error", "Error al justificar", "No se pudieron justificar las asistencias.");
     } finally {
       setIsJustificando(false);
     }
@@ -984,12 +1020,15 @@ export default function ReporteAsistencias() {
 </html>`;
   };
 
+  // ✅ MODIFICADO: Usa toast en lugar de alert para el mensaje de popup bloqueado
   const handlePrint = () => {
     const html = generarHTMLImpresion();
     const win = window.open("", "_blank");
     if (!win) {
-      alert(
-        "⚠️ Permite las ventanas emergentes en tu navegador para poder imprimir.",
+      mostrarToast(
+        "warning",
+        "Ventana emergente bloqueada",
+        "Permite las ventanas emergentes en tu navegador para poder imprimir el reporte."
       );
       return;
     }
@@ -1001,6 +1040,39 @@ export default function ReporteAsistencias() {
   const puedeImprimir =
     (vistaEfectiva === "tutor" && estudiantesGradoTutor.length > 0) ||
     (vistaEfectiva === "docente" && materiasDocenteGrado.length > 0);
+
+  // ==================== CONFIG DE TOASTS ====================
+
+  const toastConfig = {
+    success: {
+      bg: "bg-green-50 border-green-400",
+      iconBg: "bg-green-500",
+      titleColor: "text-green-900",
+      msgColor: "text-green-700",
+      icon: FaCheckCircle,
+    },
+    error: {
+      bg: "bg-red-50 border-red-400",
+      iconBg: "bg-red-500",
+      titleColor: "text-red-900",
+      msgColor: "text-red-700",
+      icon: FaTimesCircle,
+    },
+    warning: {
+      bg: "bg-yellow-50 border-yellow-400",
+      iconBg: "bg-yellow-500",
+      titleColor: "text-yellow-900",
+      msgColor: "text-yellow-700",
+      icon: FaExclamationTriangle,
+    },
+    info: {
+      bg: "bg-blue-50 border-blue-400",
+      iconBg: "bg-blue-500",
+      titleColor: "text-blue-900",
+      msgColor: "text-blue-700",
+      icon: FaInfoCircle,
+    },
+  };
 
   if (loading) {
     return (
@@ -1800,6 +1872,36 @@ export default function ReporteAsistencias() {
           </div>
         </div>
       )}
+
+      {/* ✅ CONTENEDOR DE TOASTS (esquina superior derecha) */}
+      <div className="fixed top-4 right-4 z-100 space-y-2 pointer-events-none max-w-sm w-full">
+        {toasts.map((toast) => {
+          const config = toastConfig[toast.type];
+          const Icon = config.icon;
+          return (
+            <div
+              key={toast.id}
+              className={`pointer-events-auto bg-white border-l-4 ${config.bg} rounded-lg shadow-2xl p-4 flex items-start gap-3 animate-in slide-in-from-right duration-300`}
+            >
+              <div className={`${config.iconBg} w-8 h-8 rounded-full flex items-center justify-center shrink-0`}>
+                <Icon className="text-white text-sm" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className={`font-semibold text-sm ${config.titleColor}`}>{toast.title}</p>
+                {toast.message && (
+                  <p className={`text-xs ${config.msgColor} mt-0.5 whitespace-pre-line`}>{toast.message}</p>
+                )}
+              </div>
+              <button
+                onClick={() => cerrarToast(toast.id)}
+                className="text-gray-400 hover:text-gray-600 shrink-0 transition-colors"
+              >
+                <FaTimes className="w-4 h-4" />
+              </button>
+            </div>
+          );
+        })}
+      </div>
     </Layout>
   );
 }

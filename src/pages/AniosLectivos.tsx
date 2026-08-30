@@ -16,13 +16,36 @@ import { useAuth } from '../context/AuthContext';
 import type { AnioLectivo, PeriodoEvaluacion } from '../types';
 import Layout from '../components/Layout';
 import ConfirmModal from '../components/ConfirmModal';
-import { FaPlus, FaEdit, FaTrash, FaCheck, FaTimes, FaCalendarAlt, FaInfoCircle, FaClock, FaSpinner } from 'react-icons/fa';
+import { 
+  FaPlus, FaEdit, FaTrash, FaCheck, FaTimes, FaCalendarAlt, FaInfoCircle, FaClock, FaSpinner,
+  FaCheckCircle, FaTimesCircle, FaExclamationTriangle, FaQuestionCircle} from 'react-icons/fa';
 
 interface PeriodoCalculado {
   nombre: string;
   fechaInicio: string;
   fechaFin: string;
   orden: number;
+}
+
+// ==================== TIPOS PARA MODALES ====================
+
+interface Toast {
+  id: string;
+  type: 'success' | 'error' | 'warning' | 'info';
+  title: string;
+  message?: string;
+}
+
+interface ConfirmModalState {
+  isOpen: boolean;
+  title: string;
+  message: string;
+  confirmText?: string;
+  cancelText?: string;
+  confirmColor?: string;
+  icon?: React.ComponentType<{ className?: string }>;
+  onConfirm: () => void;
+  onCancel: () => void;
 }
 
 export default function AniosLectivos() {
@@ -43,6 +66,71 @@ export default function AniosLectivos() {
 
   const [periodosEditables, setPeriodosEditables] = useState<PeriodoCalculado[]>([]);
 
+  // ✅ NUEVO: Sistema de toasts (reemplaza alert)
+  const [toasts, setToasts] = useState<Toast[]>([]);
+
+  // ✅ NUEVO: Modal de confirmación personalizado (reemplaza confirm)
+  const [confirmModal, setConfirmModal] = useState<ConfirmModalState>({
+    isOpen: false,
+    title: "",
+    message: "",
+    onConfirm: () => {},
+    onCancel: () => {},
+  });
+
+  // ==================== HELPERS DE NOTIFICACIÓN ====================
+
+  const mostrarToast = useCallback((
+    type: Toast['type'],
+    title: string,
+    message?: string,
+    duration = 4000
+  ) => {
+    const id = `toast-${Date.now()}-${Math.random()}`;
+    const toast: Toast = { id, type, title, message };
+    setToasts((prev) => [...prev, toast]);
+    setTimeout(() => {
+      setToasts((prev) => prev.filter((t) => t.id !== id));
+    }, duration);
+  }, []);
+
+  const cerrarToast = useCallback((id: string) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+  }, []);
+
+  const confirmar = useCallback((
+    title: string,
+    message: string,
+    options?: {
+      confirmText?: string;
+      cancelText?: string;
+      confirmColor?: string;
+      icon?: React.ComponentType<{ className?: string }>;
+    }
+  ): Promise<boolean> => {
+    return new Promise((resolve) => {
+      setConfirmModal({
+        isOpen: true,
+        title,
+        message,
+        confirmText: options?.confirmText || "Confirmar",
+        cancelText: options?.cancelText || "Cancelar",
+        confirmColor: options?.confirmColor || "bg-red-600 hover:bg-red-700",
+        icon: options?.icon || FaQuestionCircle,
+        onConfirm: () => {
+          setConfirmModal((prev) => ({ ...prev, isOpen: false }));
+          resolve(true);
+        },
+        onCancel: () => {
+          setConfirmModal((prev) => ({ ...prev, isOpen: false }));
+          resolve(false);
+        },
+      });
+    });
+  }, []);
+
+  // ==================== FUNCIONES AUXILIARES ====================
+
   const calcularNombre = (fechaInicio: string, fechaFin: string): string => {
     if (!fechaInicio || !fechaFin) return '';
     
@@ -54,7 +142,6 @@ export default function AniosLectivos() {
 
   const nombreGenerado = calcularNombre(formData.fechaInicio, formData.fechaFin);
 
-  // ✅ Calcular períodos automáticamente
   const calcularPeriodos = useCallback((fechaInicio: string, fechaFin: string, tipo: 'trimestral' | 'quimestral'): PeriodoCalculado[] => {
     if (!fechaInicio || !fechaFin) return [];
 
@@ -88,7 +175,6 @@ export default function AniosLectivos() {
     return periodos;
   }, []);
 
-  // ✅ Actualizar un período específico
   const actualizarPeriodo = (index: number, campo: 'fechaInicio' | 'fechaFin', valor: string) => {
     setPeriodosEditables(prev => {
       const nuevos = [...prev];
@@ -148,32 +234,32 @@ export default function AniosLectivos() {
     e.preventDefault();
     
     if (!formData.fechaInicio || !formData.fechaFin) {
-      alert('Las fechas son obligatorias');
+      mostrarToast('warning', 'Fechas obligatorias', 'Las fechas de inicio y fin son obligatorias.');
       return;
     }
 
     if (new Date(formData.fechaFin) <= new Date(formData.fechaInicio)) {
-      alert('La fecha de fin debe ser posterior a la fecha de inicio');
+      mostrarToast('warning', 'Rango inválido', 'La fecha de fin debe ser posterior a la fecha de inicio.');
       return;
     }
 
     if (periodosEditables.length === 0) {
-      alert('No se han generado los períodos');
+      mostrarToast('warning', 'Sin períodos', 'No se han generado los períodos de evaluación.');
       return;
     }
 
     for (const periodo of periodosEditables) {
       if (!periodo.fechaInicio || !periodo.fechaFin) {
-        alert(`Las fechas del ${periodo.nombre} son obligatorias`);
+        mostrarToast('warning', 'Fechas incompletas', `Las fechas del ${periodo.nombre} son obligatorias.`);
         return;
       }
       if (new Date(periodo.fechaFin) <= new Date(periodo.fechaInicio)) {
-        alert(`La fecha de fin del ${periodo.nombre} debe ser posterior a la fecha de inicio`);
+        mostrarToast('warning', 'Rango inválido', `La fecha de fin del ${periodo.nombre} debe ser posterior a la fecha de inicio.`);
         return;
       }
       if (new Date(periodo.fechaInicio) < new Date(formData.fechaInicio) || 
           new Date(periodo.fechaFin) > new Date(formData.fechaFin)) {
-        alert(`Las fechas del ${periodo.nombre} deben estar dentro del rango del año lectivo`);
+        mostrarToast('warning', 'Rango fuera de límites', `Las fechas del ${periodo.nombre} deben estar dentro del rango del año lectivo.`);
         return;
       }
     }
@@ -265,11 +351,17 @@ export default function AniosLectivos() {
         });
       }
 
+      mostrarToast(
+        'success', 
+        editingId ? 'Período actualizado' : 'Período creado',
+        `El año lectivo ${nombre} se guardó correctamente con ${periodosEditables.length} período(s).`,
+        5000
+      );
       resetForm();
       await cargarAnios();
     } catch (error) {
       console.error('Error guardando año lectivo:', error);
-      alert('Error al guardar');
+      mostrarToast('error', 'Error al guardar', 'No se pudo guardar el año lectivo. Intenta nuevamente.');
     } finally {
       setIsSaving(false);
     }
@@ -288,8 +380,20 @@ export default function AniosLectivos() {
     cargarPeriodosExistentes(anio.id);
   };
 
+  // ✅ MODIFICADO: Usa modal de confirmación personalizado
   const handleDelete = async (id: string) => {
-    if (!confirm('¿Estás seguro de eliminar este año lectivo? Se eliminarán también los períodos asociados.')) return;
+    const anio = anios.find(a => a.id === id);
+    const confirmado = await confirmar(
+      `Eliminar año lectivo ${anio?.nombre || ''}`,
+      `¿Estás seguro de eliminar este año lectivo? Se eliminarán también todos los períodos de evaluación asociados. Esta acción no se puede deshacer.`,
+      {
+        confirmText: "Sí, eliminar",
+        cancelText: "Cancelar",
+        confirmColor: "bg-red-600 hover:bg-red-700",
+        icon: FaTrash,
+      }
+    );
+    if (!confirmado) return;
 
     try {
       const periodos = await getDocs(
@@ -300,14 +404,16 @@ export default function AniosLectivos() {
       }
 
       await deleteDoc(doc(db, 'aniosLectivos', id));
+      mostrarToast('success', 'Año lectivo eliminado', `${anio?.nombre} y sus períodos fueron eliminados correctamente.`);
       await cargarAnios();
     } catch (error) {
       console.error('Error eliminando:', error);
-      alert('Error al eliminar');
+      mostrarToast('error', 'Error al eliminar', 'No se pudo eliminar el año lectivo.');
     }
   };
 
   const handleActivar = async (id: string) => {
+    const anio = anios.find(a => a.id === id);
     setIsSaving(true);
     try {
       const updates = anios
@@ -316,9 +422,11 @@ export default function AniosLectivos() {
       
       await Promise.all(updates);
       await updateDoc(doc(db, 'aniosLectivos', id), { activo: true });
+      mostrarToast('success', 'Período activado', `${anio?.nombre} ahora es el período académico vigente.`);
       await cargarAnios();
     } catch (error) {
       console.error('Error activando:', error);
+      mostrarToast('error', 'Error al activar', 'No se pudo activar el período.');
     } finally {
       setIsSaving(false);
     }
@@ -339,6 +447,41 @@ export default function AniosLectivos() {
   useEffect(() => {
     cargarAnios();
   }, [cargarAnios]);
+
+  // ==================== CONFIG DE TOASTS ====================
+
+  const toastConfig = {
+    success: {
+      bg: 'bg-green-50 border-green-400',
+      iconBg: 'bg-green-500',
+      titleColor: 'text-green-900',
+      msgColor: 'text-green-700',
+      icon: FaCheckCircle,
+    },
+    error: {
+      bg: 'bg-red-50 border-red-400',
+      iconBg: 'bg-red-500',
+      titleColor: 'text-red-900',
+      msgColor: 'text-red-700',
+      icon: FaTimesCircle,
+    },
+    warning: {
+      bg: 'bg-yellow-50 border-yellow-400',
+      iconBg: 'bg-yellow-500',
+      titleColor: 'text-yellow-900',
+      msgColor: 'text-yellow-700',
+      icon: FaExclamationTriangle,
+    },
+    info: {
+      bg: 'bg-blue-50 border-blue-400',
+      iconBg: 'bg-blue-500',
+      titleColor: 'text-blue-900',
+      msgColor: 'text-blue-700',
+      icon: FaInfoCircle,
+    },
+  };
+
+  const ConfirmIcon = confirmModal.icon || FaQuestionCircle;
 
   if (loading) {
     return (
@@ -724,6 +867,7 @@ export default function AniosLectivos() {
         )}
       </div>
 
+      {/* Modal existente para confirmar creación cuando hay un periodo activo */}
       <ConfirmModal
         isOpen={showConfirmModal}
         title="Crear Nuevo Periodo Académico"
@@ -734,6 +878,75 @@ export default function AniosLectivos() {
         cancelText="Cancelar"
         type="warning"
       />
+
+      {/* ✅ CONTENEDOR DE TOASTS (esquina superior derecha) */}
+      <div className="fixed top-4 right-4 z-100 space-y-2 pointer-events-none max-w-sm w-full">
+        {toasts.map((toast) => {
+          const config = toastConfig[toast.type];
+          const Icon = config.icon;
+          return (
+            <div
+              key={toast.id}
+              className={`pointer-events-auto bg-white border-l-4 ${config.bg} rounded-lg shadow-2xl p-4 flex items-start gap-3 animate-in slide-in-from-right duration-300`}
+            >
+              <div className={`${config.iconBg} w-8 h-8 rounded-full flex items-center justify-center shrink-0`}>
+                <Icon className="text-white text-sm" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className={`font-semibold text-sm ${config.titleColor}`}>{toast.title}</p>
+                {toast.message && (
+                  <p className={`text-xs ${config.msgColor} mt-0.5 whitespace-pre-line`}>{toast.message}</p>
+                )}
+              </div>
+              <button
+                onClick={() => cerrarToast(toast.id)}
+                className="text-gray-400 hover:text-gray-600 shrink-0 transition-colors"
+              >
+                <FaTimes className="w-4 h-4" />
+              </button>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* ✅ MODAL DE CONFIRMACIÓN PERSONALIZADO (para eliminar) */}
+      {confirmModal.isOpen && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-60 p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden animate-in zoom-in-95 duration-200">
+            <div className="bg-linear-to-r from-slate-50 to-slate-100 px-6 pt-6 pb-4 border-b border-slate-200">
+              <div className="flex items-start gap-4">
+                <div className="w-12 h-12 rounded-full bg-slate-200 flex items-center justify-center shrink-0">
+                  <ConfirmIcon className="text-slate-700 text-xl" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <h3 className="text-lg font-bold text-slate-900 mb-1">
+                    {confirmModal.title}
+                  </h3>
+                  <p className="text-sm text-slate-600 leading-relaxed whitespace-pre-line">
+                    {confirmModal.message}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="px-6 py-4 bg-slate-50 flex gap-3 justify-end">
+              <button
+                onClick={confirmModal.onCancel}
+                className="px-4 py-2 bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 rounded-lg text-sm font-semibold transition-all"
+              >
+                {confirmModal.cancelText || "Cancelar"}
+              </button>
+              <button
+                onClick={confirmModal.onConfirm}
+                className={`px-4 py-2 ${confirmModal.confirmColor || "bg-red-600 hover:bg-red-700"} text-white rounded-lg text-sm font-semibold transition-all flex items-center gap-2`}
+              >
+                <ConfirmIcon className="text-xs" />
+                {confirmModal.confirmText || "Confirmar"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </Layout>
   );
 }

@@ -1,15 +1,55 @@
-import { useState, useEffect, startTransition } from 'react';
+import { useState, useEffect, startTransition, useCallback } from 'react';
 import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
 import Layout from '../components/Layout';
-import { FaUser, FaSave, FaCheckCircle, FaExclamationTriangle, FaFileSignature } from 'react-icons/fa';
+import { 
+  FaUser, 
+  FaSave, 
+  FaCheckCircle, 
+  FaExclamationTriangle, 
+  FaFileSignature,
+  FaTimes,
+  FaTimesCircle,
+  FaInfoCircle
+} from 'react-icons/fa';
+
+// ==================== TIPOS PARA MODALES ====================
+
+interface Toast {
+  id: string;
+  type: 'success' | 'error' | 'warning' | 'info';
+  title: string;
+  message?: string;
+}
 
 export default function Configuracion() {
   const { user, userData } = useAuth();
   const [nombreDocumento, setNombreDocumento] = useState('');
   const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
+
+  // ✅ NUEVO: Sistema de toasts (reemplaza alert y el estado "saved")
+  const [toasts, setToasts] = useState<Toast[]>([]);
+
+  // ==================== HELPERS DE NOTIFICACIÓN ====================
+
+  const mostrarToast = useCallback((
+    type: Toast['type'],
+    title: string,
+    message?: string,
+    duration = 4000
+  ) => {
+    const id = `toast-${Date.now()}-${Math.random()}`;
+    const toast: Toast = { id, type, title, message };
+    setToasts((prev) => [...prev, toast]);
+    setTimeout(() => {
+      setToasts((prev) => prev.filter((t) => t.id !== id));
+    }, duration);
+  }, []);
+
+  const cerrarToast = useCallback((id: string) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+  }, []);
 
   // ✅ Cargar datos actuales del usuario
   useEffect(() => {
@@ -22,7 +62,7 @@ export default function Configuracion() {
 
   const handleGuardar = async () => {
     if (!nombreDocumento.trim()) {
-      alert('El nombre para documentos es obligatorio');
+      mostrarToast('warning', 'Nombre obligatorio', 'El nombre para documentos es obligatorio.');
       return;
     }
 
@@ -33,14 +73,46 @@ export default function Configuracion() {
         updatedAt: serverTimestamp(),
       });
       
-      setSaved(true);
-      setTimeout(() => setSaved(false), 3000);
+      mostrarToast('success', 'Información actualizada', 'Tu nombre para documentos se guardó correctamente.');
     } catch (error) {
       console.error('Error guardando:', error);
-      alert('Error al guardar los cambios');
+      mostrarToast('error', 'Error al guardar', 'No se pudieron guardar los cambios. Intenta nuevamente.');
     } finally {
       setSaving(false);
     }
+  };
+
+  // ==================== CONFIG DE TOASTS ====================
+
+  const toastConfig = {
+    success: {
+      bg: 'bg-green-50 border-green-400',
+      iconBg: 'bg-green-500',
+      titleColor: 'text-green-900',
+      msgColor: 'text-green-700',
+      icon: FaCheckCircle,
+    },
+    error: {
+      bg: 'bg-red-50 border-red-400',
+      iconBg: 'bg-red-500',
+      titleColor: 'text-red-900',
+      msgColor: 'text-red-700',
+      icon: FaTimesCircle,
+    },
+    warning: {
+      bg: 'bg-yellow-50 border-yellow-400',
+      iconBg: 'bg-yellow-500',
+      titleColor: 'text-yellow-900',
+      msgColor: 'text-yellow-700',
+      icon: FaExclamationTriangle,
+    },
+    info: {
+      bg: 'bg-blue-50 border-blue-400',
+      iconBg: 'bg-blue-500',
+      titleColor: 'text-blue-900',
+      msgColor: 'text-blue-700',
+      icon: FaInfoCircle,
+    },
   };
 
   return (
@@ -158,11 +230,6 @@ export default function Configuracion() {
                       <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
                       Guardando...
                     </>
-                  ) : saved ? (
-                    <>
-                      <FaCheckCircle />
-                      Guardado
-                    </>
                   ) : (
                     <>
                       <FaSave />
@@ -170,12 +237,6 @@ export default function Configuracion() {
                     </>
                   )}
                 </button>
-
-                {saved && (
-                  <p className="text-sm text-green-600 font-medium">
-                    ✅ Información actualizada correctamente
-                  </p>
-                )}
               </div>
             </div>
           </div>
@@ -200,6 +261,36 @@ export default function Configuracion() {
             </div>
           </div>
         </div>
+      </div>
+
+      {/* ✅ CONTENEDOR DE TOASTS (esquina superior derecha) */}
+      <div className="fixed top-4 right-4 z-100 space-y-2 pointer-events-none max-w-sm w-full">
+        {toasts.map((toast) => {
+          const config = toastConfig[toast.type];
+          const Icon = config.icon;
+          return (
+            <div
+              key={toast.id}
+              className={`pointer-events-auto bg-white border-l-4 ${config.bg} rounded-lg shadow-2xl p-4 flex items-start gap-3 animate-in slide-in-from-right duration-300`}
+            >
+              <div className={`${config.iconBg} w-8 h-8 rounded-full flex items-center justify-center shrink-0`}>
+                <Icon className="text-white text-sm" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className={`font-semibold text-sm ${config.titleColor}`}>{toast.title}</p>
+                {toast.message && (
+                  <p className={`text-xs ${config.msgColor} mt-0.5`}>{toast.message}</p>
+                )}
+              </div>
+              <button
+                onClick={() => cerrarToast(toast.id)}
+                className="text-gray-400 hover:text-gray-600 shrink-0 transition-colors"
+              >
+                <FaTimes className="w-4 h-4" />
+              </button>
+            </div>
+          );
+        })}
       </div>
     </Layout>
   );
