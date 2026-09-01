@@ -197,9 +197,12 @@ const esBachillerato = (gradoNombre: string): boolean => {
     gradoNombre.includes("8vo") ||
     gradoNombre.includes("9no") ||
     gradoNombre.includes("10mo") ||
-    gradoNombre.includes("1ro BGU") ||
+    gradoNombre.includes("1ro BGU") ||   // compatibilidad con grados ya creados
     gradoNombre.includes("2do BGU") ||
-    gradoNombre.includes("3ro BGU")
+    gradoNombre.includes("3ro BGU") ||
+    gradoNombre.includes("1ro BC") ||    // nuevo nombre
+    gradoNombre.includes("2do BC") ||
+    gradoNombre.includes("3ro BC")
   );
 };
 

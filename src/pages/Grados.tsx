@@ -21,12 +21,12 @@ import {
   FaLayerGroup, FaCheckCircle, FaTimesCircle, FaQuestionCircle
 } from 'react-icons/fa';
 
-// ✅ NIVELES ACTUALIZADOS: Se agregaron 1ro, 2do y 3ro de BGU
+// ✅ NIVELES ACTUALIZADOS: Bachillerato ahora es BC
 const NIVELES = [
   'Inicial 1', 'Inicial 2', 'Preparatoria',
   '2do EGB', '3ro EGB', '4to EGB', '5to EGB', '6to EGB', 
   '7mo EGB', '8vo EGB', '9no EGB', '10mo EGB',
-  '1ro BGU', '2do BGU', '3ro BGU'
+  '1ro BC', '2do BC', '3ro BC'
 ];
 
 const PARALELOS = ['A', 'B', 'C', 'D', 'E'];
