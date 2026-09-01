@@ -29,8 +29,6 @@ import {
   FaUserCheck,
   FaExclamationTriangle,
   FaTasks,
-  FaCalendarAlt,
-  FaClock,
   FaSave,
   FaSpinner,
   FaGraduationCap,
@@ -197,10 +195,10 @@ const esBachillerato = (gradoNombre: string): boolean => {
     gradoNombre.includes("8vo") ||
     gradoNombre.includes("9no") ||
     gradoNombre.includes("10mo") ||
-    gradoNombre.includes("1ro BGU") ||   // compatibilidad con grados ya creados
+    gradoNombre.includes("1ro BGU") ||
     gradoNombre.includes("2do BGU") ||
     gradoNombre.includes("3ro BGU") ||
-    gradoNombre.includes("1ro BC") ||    // nuevo nombre
+    gradoNombre.includes("1ro BC") ||
     gradoNombre.includes("2do BC") ||
     gradoNombre.includes("3ro BC")
   );
@@ -267,10 +265,8 @@ export default function Calificaciones() {
   const [carruselIndex, setCarruselIndex] = useState(0);
   const notaInputRefs = useRef<(HTMLInputElement | null)[]>([]);
 
-  // ✅ Sistema de toasts (reemplaza alert)
   const [toasts, setToasts] = useState<Toast[]>([]);
 
-  // ✅ Modal de confirmación personalizado
   const [confirmModal, setConfirmModal] = useState<ConfirmModalState>({
     isOpen: false,
     title: "",
@@ -979,7 +975,6 @@ export default function Calificaciones() {
     return () => unsubscribe();
   }, [activeTab, selectedGradoId, fechaAsistencia, selectedMateriaId, selectedAmbitoId, esGradoBachillerato, esGradoInicialActual]);
 
-  // Detector del teclado virtual
   useEffect(() => {
     const vv = window.visualViewport;
     if (!vv) return;
@@ -1036,7 +1031,7 @@ export default function Calificaciones() {
 
   if (loading) {
     return (
-      <Layout title="Calificaciones" subtitle="Registro de notas y asistencia" showBack>
+      <Layout>
         <div className="flex items-center justify-center py-20">
           <div className="text-center">
             <div className="animate-spin rounded-full h-10 w-10 border-2 border-blue-600 border-t-transparent mx-auto mb-3"></div>
@@ -1052,7 +1047,7 @@ export default function Calificaciones() {
   const ConfirmIcon = confirmModal.icon || FaQuestionCircle;
 
   return (
-    <Layout title="Calificaciones" subtitle="Registro de notas y asistencia" showBack>
+    <Layout>
       {docenteSinGrados && (
         <div className="bg-yellow-50 border-2 border-yellow-300 rounded-xl px-8 py-12 mb-6">
           <div className="flex items-start gap-4 max-w-3xl">
@@ -1071,33 +1066,7 @@ export default function Calificaciones() {
 
       {!docenteSinGrados && (
         <>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
-            {anioActivo && (
-              <div className="bg-blue-50 border border-blue-200 rounded-lg px-3 py-2">
-                <div className="flex items-center gap-2 text-blue-800">
-                  <FaCalendarAlt className="text-sm shrink-0" />
-                  <span className="text-xs font-medium">Año lectivo:</span>
-                  <span className="text-sm font-bold text-blue-900 truncate">{anioActivo.nombre}</span>
-                </div>
-              </div>
-            )}
-            {periodoActual ? (
-              <div className="bg-green-50 border border-green-200 rounded-lg px-3 py-2">
-                <div className="flex items-center gap-2 text-green-800">
-                  <FaClock className="text-sm shrink-0" />
-                  <span className="text-xs font-medium">Período actual:</span>
-                  <span className="text-sm font-bold text-green-900 truncate">{periodoActual.nombre}</span>
-                </div>
-              </div>
-            ) : (
-              <div className="bg-yellow-50 border border-yellow-200 rounded-lg px-3 py-2">
-                <div className="flex items-center gap-2 text-yellow-800">
-                  <FaExclamationTriangle className="text-sm shrink-0" />
-                  <span className="text-xs font-medium">No hay período activo en esta fecha</span>
-                </div>
-              </div>
-            )}
-          </div>
+          {/* ❌ ELIMINADO: Bloque de Año lectivo y Período actual (ya no es redundante) */}
 
           {grados.length > 0 ? (
             <div className="bg-white rounded-xl shadow-sm border border-slate-200 mb-4 p-4">
