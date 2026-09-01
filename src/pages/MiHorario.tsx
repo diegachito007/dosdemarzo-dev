@@ -16,7 +16,6 @@ import { useAuth } from '../context/AuthContext';
 import type { Grado, Destreza, AnioLectivo, Ambito } from '../types';
 import Layout from '../components/Layout';
 import { 
-  FaChalkboardTeacher, 
   FaGraduationCap, 
   FaCheck, 
   FaSpinner, 
@@ -40,8 +39,6 @@ interface AsignaturaDocente {
   activo: boolean;
   createdAt?: Timestamp | Date;
 }
-
-// ==================== TIPOS PARA MODALES ====================
 
 interface Toast {
   id: string;
@@ -73,10 +70,8 @@ export default function MiHorario() {
   const [saving, setSaving] = useState(false);
   const [selectedGradoId, setSelectedGradoId] = useState<string>('');
 
-  // ✅ NUEVO: Sistema de toasts (reemplaza alert)
   const [toasts, setToasts] = useState<Toast[]>([]);
 
-  // ✅ NUEVO: Modal de confirmación personalizado (reemplaza confirm)
   const [confirmModal, setConfirmModal] = useState<ConfirmModalState>({
     isOpen: false,
     title: "",
@@ -138,13 +133,11 @@ export default function MiHorario() {
 
   // ==================== CARGA DE DATOS ====================
 
-  // ✅ Cargar datos iniciales (año lectivo y grados) - solo una vez
   useEffect(() => {
     let isMounted = true;
 
     const cargarDatosIniciales = async () => {
       try {
-        // 1. Año lectivo activo
         const qAnios = query(collection(db, 'aniosLectivos'), where('activo', '==', true));
         const snapAnios = await getDocs(qAnios);
         if (snapAnios.empty) {
@@ -154,7 +147,6 @@ export default function MiHorario() {
         const anioData = { id: snapAnios.docs[0].id, ...snapAnios.docs[0].data() } as AnioLectivo;
         if (isMounted) setAnioActivo(anioData);
 
-        // 2. Grados asignados al usuario
         let qGrados;
         if (userData?.role === 'docente' && userData?.gradosAsignados && userData.gradosAsignados.length > 0) {
           qGrados = query(
@@ -192,7 +184,6 @@ export default function MiHorario() {
     };
   }, [userData]);
 
-  // ✅ LISTENER EN TIEMPO REAL: Destrezas (se actualizan automáticamente)
   useEffect(() => {
     const q = query(collection(db, 'destrezas'), where('activo', '==', true), orderBy('orden', 'asc'));
     
@@ -206,7 +197,6 @@ export default function MiHorario() {
     return () => unsubscribe();
   }, []);
 
-  // ✅ LISTENER EN TIEMPO REAL: Ámbitos (se actualizan automáticamente)
   useEffect(() => {
     const q = query(collection(db, 'ambitos'), where('activo', '==', true), orderBy('orden', 'asc'));
     
@@ -220,7 +210,6 @@ export default function MiHorario() {
     return () => unsubscribe();
   }, []);
 
-  // ✅ LISTENER EN TIEMPO REAL: Asignaturas del docente actual
   useEffect(() => {
     if (!user?.uid || !anioActivo?.id) return;
 
@@ -256,25 +245,21 @@ export default function MiHorario() {
     );
   };
 
-  // Materias del grado seleccionado
   const destrezasDelGrado = useMemo(() => {
     if (!selectedGradoId) return [];
     const ambitosDelGrado = ambitos.filter(a => a.gradoId === selectedGradoId).map(a => a.id);
     return destrezas.filter(d => ambitosDelGrado.includes(d.ambitoId));
   }, [selectedGradoId, destrezas, ambitos]);
 
-  // Asignaturas del grado seleccionado
   const asignaturasDelGrado = useMemo(() => {
     return asignaturas.filter(a => a.gradoId === selectedGradoId);
   }, [asignaturas, selectedGradoId]);
 
-  // Materias disponibles
   const destrezasDisponibles = useMemo(() => {
     const asignadasIds = asignaturasDelGrado.map(a => a.destrezaId);
     return destrezasDelGrado.filter(d => !asignadasIds.includes(d.id));
   }, [destrezasDelGrado, asignaturasDelGrado]);
 
-  // Agrupar destrezas disponibles por ámbito
   const destrezasPorAmbito = useMemo(() => {
     const grupos: Record<string, { ambito: Ambito; destrezas: Destreza[] }> = {};
     
@@ -344,7 +329,6 @@ export default function MiHorario() {
     }
   };
 
-  // ✅ MODIFICADO: Usa modal de confirmación personalizado
   const asignarTodasDelAmbito = async (ambitoId: string) => {
     if (!user?.uid || !anioActivo?.id || !selectedGradoId) return;
 
@@ -405,7 +389,6 @@ export default function MiHorario() {
     }
   };
 
-  // ✅ MODIFICADO: Usa modal de confirmación personalizado
   const removerMateria = async (asignacionId: string) => {
     const asignatura = asignaturas.find(a => a.id === asignacionId);
     const destreza = asignatura ? destrezas.find(d => d.id === asignatura.destrezaId) : null;
@@ -469,9 +452,10 @@ export default function MiHorario() {
 
   const ConfirmIcon = confirmModal.icon || FaQuestionCircle;
 
+  // ✅ Layout limpio (sin título, subtítulo ni botón atrás)
   if (loading) {
     return (
-      <Layout title="Mi Horario" subtitle="Configura las materias que dictas" showBack>
+      <Layout>
         <div className="flex items-center justify-center py-20">
           <FaSpinner className="animate-spin text-4xl text-blue-600" />
         </div>
@@ -481,7 +465,7 @@ export default function MiHorario() {
 
   if (!anioActivo) {
     return (
-      <Layout title="Mi Horario" subtitle="Configura las materias que dictas" showBack>
+      <Layout>
         <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-6 text-center">
           <FaExclamationTriangle className="text-yellow-600 text-4xl mx-auto mb-3" />
           <p className="text-yellow-800">No hay año lectivo activo</p>
@@ -494,20 +478,9 @@ export default function MiHorario() {
   const esInicialOPreparatoria = gradoActual ? esGradoInicial(gradoActual.nombre) : false;
 
   return (
-    <Layout title="Mi Horario" subtitle="Configura las materias que dictas en cada grado" showBack>
+    <Layout>
       <div className="space-y-6">
-        {/* Banner de año lectivo */}
-        <div className="bg-blue-50 border border-blue-200 rounded-lg px-4 py-3">
-          <div className="flex items-center gap-2 text-blue-800">
-            <FaChalkboardTeacher className="text-sm" />
-            <span className="text-sm font-medium">Año lectivo:</span>
-            <span className="text-base font-bold text-blue-900">{anioActivo.nombre}</span>
-            <span className="ml-auto flex items-center gap-1 text-xs text-blue-600">
-              <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
-              En vivo
-            </span>
-          </div>
-        </div>
+        {/* ❌ ELIMINADO: Banner de año lectivo */}
 
         {/* Selector de grados */}
         {grados.length > 0 && (
@@ -750,7 +723,7 @@ export default function MiHorario() {
         )}
       </div>
 
-      {/* ✅ CONTENEDOR DE TOASTS (esquina superior derecha) */}
+      {/* ✅ CONTENEDOR DE TOASTS */}
       <div className="fixed top-4 right-4 z-100 space-y-2 pointer-events-none max-w-sm w-full">
         {toasts.map((toast) => {
           const config = toastConfig[toast.type];

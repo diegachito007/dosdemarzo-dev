@@ -16,7 +16,7 @@ import {
 
 interface LayoutProps {
   children: ReactNode;
-  title: string;
+  title?: string;          // ✅ Ahora opcional
   subtitle?: string;
   showBack?: boolean;
   backTo?: string;
@@ -93,6 +93,9 @@ export default function Layout({
     if (!userData?.tutorDe) return [];
     return grados.filter(g => userData.tutorDe?.includes(g.id)).map(g => g.id);
   }, [grados, userData]);
+
+  // ✅ Determina si debe mostrarse la barra de navegación de página
+  const mostrarBarraNavegacion = title || subtitle || action || showBack;
 
   return (
     <div className="min-h-screen bg-linear-to-br from-slate-50 to-slate-100 flex flex-col">
@@ -239,31 +242,35 @@ export default function Layout({
 
       {/* Contenido Principal */}
       <main className="grow max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-6">
-        {/* Barra de navegación */}
-        <div className="mb-6 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-          <div className="flex items-center gap-4">
-            {showBack && (
-              <button
-                onClick={() => navigate(backTo)}
-                className="flex items-center gap-2 text-slate-600 hover:text-blue-600 hover:bg-blue-50 px-3 py-2 rounded-lg transition-all"
-              >
-                <FaArrowLeft />
-                <span className="hidden sm:inline">Volver</span>
-              </button>
-            )}
-            <div>
-              <h2 className="text-2xl font-bold text-slate-800">{title}</h2>
-              {subtitle && (
-                <p className="text-slate-600 text-sm mt-1">{subtitle}</p>
+        {/* ✅ Barra de navegación - SOLO si hay title, subtitle, action o showBack */}
+        {mostrarBarraNavegacion && (
+          <div className="mb-6 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+            <div className="flex items-center gap-4">
+              {showBack && (
+                <button
+                  onClick={() => navigate(backTo)}
+                  className="flex items-center gap-2 text-slate-600 hover:text-blue-600 hover:bg-blue-50 px-3 py-2 rounded-lg transition-all"
+                >
+                  <FaArrowLeft />
+                  <span className="hidden sm:inline">Volver</span>
+                </button>
+              )}
+              {(title || subtitle) && (
+                <div>
+                  {title && <h2 className="text-2xl font-bold text-slate-800">{title}</h2>}
+                  {subtitle && (
+                    <p className="text-slate-600 text-sm mt-1">{subtitle}</p>
+                  )}
+                </div>
               )}
             </div>
+            {action && (
+              <div className="flex items-center gap-3">
+                {action}
+              </div>
+            )}
           </div>
-          {action && (
-            <div className="flex items-center gap-3">
-              {action}
-            </div>
-          )}
-        </div>
+        )}
 
         {/* Contenido de la página */}
         {children}

@@ -17,7 +17,7 @@ import type { Grado, AnioLectivo } from '../types';
 import Layout from '../components/Layout';
 import { 
   FaPlus, FaEdit, FaTrash, FaCheck, FaTimes, FaGraduationCap, 
-  FaInfoCircle, FaCalendarAlt, FaExclamationTriangle, FaLock, FaUnlock,
+  FaInfoCircle, FaCalendarAlt, FaExclamationTriangle,
   FaLayerGroup, FaCheckCircle, FaTimesCircle, FaQuestionCircle
 } from 'react-icons/fa';
 
@@ -61,16 +61,15 @@ export default function Grados() {
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   
-  // ✅ Selección múltiple
+  // ✅ Selección múltiple (sin matrícula)
   const [selectedNiveles, setSelectedNiveles] = useState<string[]>([]);
   const [selectedParalelos, setSelectedParalelos] = useState<string[]>([]);
   const [activo, setActivo] = useState(true);
-  const [abiertoMatricula, setAbiertoMatricula] = useState(false);
 
-  // ✅ NUEVO: Sistema de toasts (reemplaza alert)
+  // ✅ Sistema de toasts
   const [toasts, setToasts] = useState<Toast[]>([]);
 
-  // ✅ NUEVO: Modal de confirmación personalizado (reemplaza confirm)
+  // ✅ Modal de confirmación personalizado
   const [confirmModal, setConfirmModal] = useState<ConfirmModalState>({
     isOpen: false,
     title: "",
@@ -79,7 +78,6 @@ export default function Grados() {
     onCancel: () => {},
   });
   
-  // ✅ CORRECCIÓN: Usar useMemo para estado derivado (elimina el error de ESLint)
   const combinaciones = useMemo(() => {
     const nuevasCombinaciones: {nombre: string, paralelo: string}[] = [];
     selectedNiveles.forEach(nivel => {
@@ -151,7 +149,6 @@ export default function Grados() {
     setSelectedNiveles([]);
     setSelectedParalelos([]);
     setActivo(true);
-    setAbiertoMatricula(false);
     setEditingId(null);
     setShowForm(false);
   }, []);
@@ -167,9 +164,7 @@ export default function Grados() {
     }
   }, []);
 
-  // ✅ CORRECCIÓN: Filtrar grados SOLO del año lectivo activo
   const cargarGrados = useCallback(async () => {
-    // Si no hay año activo, limpiamos la lista y detenemos el loading
     if (!anioActivo) {
       startTransition(() => {
         setGrados([]);
@@ -210,7 +205,6 @@ export default function Grados() {
     }
   }, [userData, anioActivo]);
 
-  // ✅ MODIFICADO: Usa toasts en lugar de alert
   const guardarGrados = useCallback(async () => {
     if (!anioActivo) {
       mostrarToast('warning', 'Sin año lectivo activo', 'Crea uno primero en el módulo de Años Lectivos.');
@@ -223,7 +217,6 @@ export default function Grados() {
     }
 
     try {
-      // Verificar duplicados antes de crear
       const combinacionesExistentes = combinaciones.filter(comb => {
         return grados.some(g => 
           g.nombre === comb.nombre && 
@@ -238,7 +231,6 @@ export default function Grados() {
         return;
       }
 
-      // Crear todas las combinaciones en batch
       const promesas = combinaciones.map(async (comb) => {
         const ordenNivel = NIVELES.indexOf(comb.nombre) + 1;
         const ordenParalelo = PARALELOS.indexOf(comb.paralelo) + 1;
@@ -249,7 +241,6 @@ export default function Grados() {
           paralelo: comb.paralelo,
           anioLectivoId: anioActivo.id,
           activo,
-          abiertoMatricula,
           orden,
           createdAt: serverTimestamp(),
           createdBy: user?.uid
@@ -265,7 +256,7 @@ export default function Grados() {
       console.error('Error guardando grados:', error);
       mostrarToast('error', 'Error al guardar', 'No se pudieron crear los grados.');
     }
-  }, [combinaciones, activo, abiertoMatricula, grados, anioActivo, user, selectedNiveles, selectedParalelos, resetForm, cargarGrados, mostrarToast]);
+  }, [combinaciones, activo, grados, anioActivo, user, selectedNiveles, selectedParalelos, resetForm, cargarGrados, mostrarToast]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -276,12 +267,10 @@ export default function Grados() {
     setSelectedNiveles([grado.nombre]);
     setSelectedParalelos([grado.paralelo]);
     setActivo(grado.activo);
-    setAbiertoMatricula(grado.abiertoMatricula || false);
     setEditingId(grado.id);
     setShowForm(true);
   }, []);
 
-  // ✅ MODIFICADO: Usa modal de confirmación personalizado
   const handleDelete = useCallback(async (id: string) => {
     const grado = grados.find(g => g.id === id);
     const confirmado = await confirmar(
@@ -316,17 +305,6 @@ export default function Grados() {
     }
   }, [cargarGrados, mostrarToast]);
 
-  const handleToggleMatricula = useCallback(async (id: string, estadoActual: boolean) => {
-    try {
-      await updateDoc(doc(db, 'grados', id), { abiertoMatricula: !estadoActual });
-      await cargarGrados();
-    } catch (error) {
-      console.error('Error actualizando matrícula:', error);
-      mostrarToast('error', 'Error al actualizar', 'No se pudo cambiar el estado de matrícula.');
-    }
-  }, [cargarGrados, mostrarToast]);
-
-  // ✅ NUEVO: Toggle selección de nivel
   const toggleNivel = (nivel: string) => {
     setSelectedNiveles(prev => 
       prev.includes(nivel) 
@@ -335,7 +313,6 @@ export default function Grados() {
     );
   };
 
-  // ✅ NUEVO: Toggle selección de paralelo
   const toggleParalelo = (paralelo: string) => {
     setSelectedParalelos(prev => 
       prev.includes(paralelo)
@@ -346,7 +323,6 @@ export default function Grados() {
 
   useEffect(() => {
     cargarAniosLectivos();
-    // cargarGrados se ejecutará automáticamente cuando anioActivo cambie
   }, [cargarAniosLectivos]);
 
   useEffect(() => {
@@ -517,7 +493,7 @@ export default function Grados() {
               </p>
             </div>
 
-            {/* Opciones Adicionales */}
+            {/* ✅ Opciones Adicionales (solo activo, sin matrícula) */}
             <div className="flex flex-wrap items-center gap-6 mb-5 p-4 bg-slate-50 rounded-lg border border-slate-200">
               <div className="flex items-center gap-2">
                 <input
@@ -529,19 +505,6 @@ export default function Grados() {
                 />
                 <label htmlFor="activo" className="text-sm text-slate-700 font-medium">
                   Grados activos (visible en el sistema)
-                </label>
-              </div>
-              
-              <div className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  id="abiertoMatricula"
-                  checked={abiertoMatricula}
-                  onChange={(e) => setAbiertoMatricula(e.target.checked)}
-                  className="w-4 h-4 text-green-600 border-slate-300 rounded focus:ring-green-500"
-                />
-                <label htmlFor="abiertoMatricula" className="text-sm text-slate-700 font-medium flex items-center gap-1">
-                  🔓 Abiertos a Matrícula Pública
                 </label>
               </div>
             </div>
@@ -598,7 +561,6 @@ export default function Grados() {
                 <tr>
                   <th className="px-5 py-3 text-left text-xs font-semibold text-slate-700 uppercase tracking-wider">Grado</th>
                   <th className="px-5 py-3 text-center text-xs font-semibold text-slate-700 uppercase tracking-wider w-32">Estado</th>
-                  <th className="px-5 py-3 text-center text-xs font-semibold text-slate-700 uppercase tracking-wider w-40">Matrícula</th>
                   {puedeGestionar && (
                     <th className="px-5 py-3 text-center text-xs font-semibold text-slate-700 uppercase tracking-wider w-32">Acciones</th>
                   )}
@@ -607,7 +569,7 @@ export default function Grados() {
               <tbody className="divide-y divide-slate-200">
                 {gradosFiltrados.length === 0 ? (
                   <tr>
-                    <td colSpan={puedeGestionar ? 4 : 3} className="px-5 py-16 text-center">
+                    <td colSpan={puedeGestionar ? 3 : 2} className="px-5 py-16 text-center">
                       <div className="flex flex-col items-center">
                         <div className="bg-slate-100 rounded-full p-4 mb-3">
                           <FaGraduationCap className="text-3xl text-slate-400" />
@@ -643,20 +605,6 @@ export default function Grados() {
                           } ${!puedeGestionar ? 'cursor-default' : 'cursor-pointer hover:opacity-80'}`}
                         >
                           {grado.activo ? <><FaCheck className="mr-1 text-[10px]" /> Activo</> : 'Inactivo'}
-                        </button>
-                      </td>
-                      <td className="px-5 py-3 text-center">
-                        <button
-                          onClick={() => puedeGestionar && handleToggleMatricula(grado.id, grado.abiertoMatricula || false)}
-                          disabled={!puedeGestionar}
-                          className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                            grado.abiertoMatricula
-                              ? 'bg-green-100 text-green-700 border border-green-200 hover:bg-green-200'
-                              : 'bg-slate-100 text-slate-500 border border-slate-200 hover:bg-slate-200'
-                          } ${!puedeGestionar ? 'cursor-default opacity-60' : 'cursor-pointer'}`}
-                        >
-                          {grado.abiertoMatricula ? <FaUnlock className="text-xs" /> : <FaLock className="text-xs" />}
-                          {grado.abiertoMatricula ? 'Abierto' : 'Cerrado'}
                         </button>
                       </td>
                       {puedeGestionar && (
