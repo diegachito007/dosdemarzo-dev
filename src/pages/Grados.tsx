@@ -1,19 +1,16 @@
-import { useState, useEffect, startTransition, useCallback, useMemo } from 'react';
+import { useState, useMemo, useCallback } from 'react';
 import {
   collection,
-  query,
-  orderBy,
   addDoc,
   updateDoc,
   deleteDoc,
   doc,
   serverTimestamp,
-  getDocs,
-  where
 } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
-import type { Grado, AnioLectivo } from '../types';
+import { useData } from '../context/DataContext';
+import type { Grado } from '../types';
 import Layout from '../components/Layout';
 import { 
   FaPlus, FaEdit, FaTrash, FaCheck, FaTimes, FaGraduationCap, 
@@ -54,10 +51,10 @@ interface ConfirmModalState {
 
 export default function Grados() {
   const { user, userData } = useAuth();
-  const [grados, setGrados] = useState<Grado[]>([]);
-  const [gradosFiltrados, setGradosFiltrados] = useState<Grado[]>([]);
-  const [aniosLectivos, setAniosLectivos] = useState<AnioLectivo[]>([]);
-  const [loading, setLoading] = useState(true);
+
+  // ✅ Datos maestros desde el Context (cargados UNA sola vez)
+  const { grados, anioActivo, ready } = useData();
+
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   
@@ -66,10 +63,8 @@ export default function Grados() {
   const [selectedParalelos, setSelectedParalelos] = useState<string[]>([]);
   const [activo, setActivo] = useState(true);
 
-  // ✅ Sistema de toasts
   const [toasts, setToasts] = useState<Toast[]>([]);
 
-  // ✅ Modal de confirmación personalizado
   const [confirmModal, setConfirmModal] = useState<ConfirmModalState>({
     isOpen: false,
     title: "",
@@ -77,9 +72,10 @@ export default function Grados() {
     onConfirm: () => {},
     onCancel: () => {},
   });
-  
+
+  // ✅ Vista previa de combinaciones a crear (useMemo seguro, dependencias primitivas)
   const combinaciones = useMemo(() => {
-    const nuevasCombinaciones: {nombre: string, paralelo: string}[] = [];
+    const nuevasCombinaciones: { nombre: string; paralelo: string }[] = [];
     selectedNiveles.forEach(nivel => {
       selectedParalelos.forEach(paralelo => {
         nuevasCombinaciones.push({ nombre: nivel, paralelo });
@@ -88,11 +84,30 @@ export default function Grados() {
     return nuevasCombinaciones;
   }, [selectedNiveles, selectedParalelos]);
 
+  // ✅ Grados filtrados localmente por año activo + rol del docente (sin lectura a Firestore)
+  const gradosFiltrados = (() => {
+    // 1. Filtrar por año lectivo activo
+    let filtered = anioActivo
+      ? grados.filter(g => g.anioLectivoId === anioActivo.id)
+      : [];
+
+    // 2. Si es docente, filtrar solo los grados asignados
+    if (
+      userData?.role === 'docente' &&
+      userData?.gradosAsignados &&
+      userData.gradosAsignados.length > 0
+    ) {
+      const asignados = new Set(userData.gradosAsignados);
+      filtered = filtered.filter((g) => asignados.has(g.id));
+    }
+    return filtered;
+  })();
+
   const puedeGestionar = userData?.role === 'super_admin';
   const docenteSinGrados = userData?.role === 'docente' && (!userData?.gradosAsignados || userData.gradosAsignados.length === 0);
-  const anioActivo = aniosLectivos.find(a => a.activo);
 
   // ==================== HELPERS DE NOTIFICACIÓN ====================
+  // ✅ Solo useCallback en helpers estables (mostrarToast, cerrarToast, confirmar, resetForm)
 
   const mostrarToast = useCallback((
     type: Toast['type'],
@@ -143,8 +158,6 @@ export default function Grados() {
     });
   }, []);
 
-  // ==================== CARGA DE DATOS ====================
-
   const resetForm = useCallback(() => {
     setSelectedNiveles([]);
     setSelectedParalelos([]);
@@ -153,59 +166,10 @@ export default function Grados() {
     setShowForm(false);
   }, []);
 
-  const cargarAniosLectivos = useCallback(async () => {
-    try {
-      const q = query(collection(db, 'aniosLectivos'), where('activo', '==', true));
-      const snap = await getDocs(q);
-      const data = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as AnioLectivo));
-      startTransition(() => setAniosLectivos(data));
-    } catch (error) {
-      console.error('Error cargando años lectivos:', error);
-    }
-  }, []);
+  // ==================== ACCIONES ====================
 
-  const cargarGrados = useCallback(async () => {
-    if (!anioActivo) {
-      startTransition(() => {
-        setGrados([]);
-        setGradosFiltrados([]);
-        setLoading(false);
-      });
-      return;
-    }
-
-    try {
-      let q;
-      if (userData?.role === 'docente' && userData?.gradosAsignados && userData.gradosAsignados.length > 0) {
-        q = query(
-          collection(db, 'grados'),
-          where('anioLectivoId', '==', anioActivo.id),
-          where('__name__', 'in', userData.gradosAsignados),
-          orderBy('orden', 'asc')
-        );
-      } else {
-        q = query(
-          collection(db, 'grados'),
-          where('anioLectivoId', '==', anioActivo.id),
-          orderBy('orden', 'asc')
-        );
-      }
-      
-      const snap = await getDocs(q);
-      const data = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Grado));
-      
-      startTransition(() => {
-        setGrados(data);
-        setGradosFiltrados(data);
-        setLoading(false);
-      });
-    } catch (error) {
-      console.error('Error cargando grados:', error);
-      startTransition(() => setLoading(false));
-    }
-  }, [userData, anioActivo]);
-
-  const guardarGrados = useCallback(async () => {
+  // ✅ Función normal (sin useCallback): evita errores del React Compiler
+  async function guardarGrados() {
     if (!anioActivo) {
       mostrarToast('warning', 'Sin año lectivo activo', 'Crea uno primero en el módulo de Años Lectivos.');
       return;
@@ -216,21 +180,21 @@ export default function Grados() {
       return;
     }
 
+    // ✅ Verificación contra datos locales del Context (sin lectura a Firestore)
+    const combinacionesExistentes = combinaciones.filter(comb => {
+      return gradosFiltrados.some(g =>
+        g.nombre === comb.nombre &&
+        g.paralelo === comb.paralelo
+      );
+    });
+
+    if (combinacionesExistentes.length > 0) {
+      const mensajes = combinacionesExistentes.map(c => `${c.nombre} - ${c.paralelo}`).join('\n');
+      mostrarToast('warning', 'Grados ya existentes', `Los siguientes grados ya existen:\n${mensajes}`, 6000);
+      return;
+    }
+
     try {
-      const combinacionesExistentes = combinaciones.filter(comb => {
-        return grados.some(g => 
-          g.nombre === comb.nombre && 
-          g.paralelo === comb.paralelo &&
-          g.anioLectivoId === anioActivo.id
-        );
-      });
-
-      if (combinacionesExistentes.length > 0) {
-        const mensajes = combinacionesExistentes.map(c => `${c.nombre} - ${c.paralelo}`).join('\n');
-        mostrarToast('warning', 'Grados ya existentes', `Los siguientes grados ya existen:\n${mensajes}`, 6000);
-        return;
-      }
-
       const promesas = combinaciones.map(async (comb) => {
         const ordenNivel = NIVELES.indexOf(comb.nombre) + 1;
         const ordenParalelo = PARALELOS.indexOf(comb.paralelo) + 1;
@@ -248,31 +212,31 @@ export default function Grados() {
       });
 
       await Promise.all(promesas);
-      
+
       mostrarToast('success', 'Grados creados', `Se crearon ${combinaciones.length} grado(s) correctamente.`);
       resetForm();
-      await cargarGrados();
+      // ✅ NO se llama a cargarGrados(): el listener del Context detecta los cambios automáticamente
     } catch (error) {
       console.error('Error guardando grados:', error);
       mostrarToast('error', 'Error al guardar', 'No se pudieron crear los grados.');
     }
-  }, [combinaciones, activo, grados, anioActivo, user, selectedNiveles, selectedParalelos, resetForm, cargarGrados, mostrarToast]);
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     await guardarGrados();
   };
 
-  const handleEdit = useCallback((grado: Grado) => {
+  const handleEdit = (grado: Grado) => {
     setSelectedNiveles([grado.nombre]);
     setSelectedParalelos([grado.paralelo]);
     setActivo(grado.activo);
     setEditingId(grado.id);
     setShowForm(true);
-  }, []);
+  };
 
-  const handleDelete = useCallback(async (id: string) => {
-    const grado = grados.find(g => g.id === id);
+  async function handleDelete(id: string) {
+    const grado = gradosFiltrados.find(g => g.id === id);
     const confirmado = await confirmar(
       `Eliminar ${grado?.nombre || ''} - ${grado?.paralelo || ''}`,
       '¿Estás seguro de eliminar este grado? Esta acción no se puede deshacer.',
@@ -288,46 +252,38 @@ export default function Grados() {
     try {
       await deleteDoc(doc(db, 'grados', id));
       mostrarToast('success', 'Grado eliminado', `${grado?.nombre} - ${grado?.paralelo} fue eliminado correctamente.`);
-      await cargarGrados();
+      // ✅ NO se llama a cargarGrados(): el listener del Context detecta el cambio automáticamente
     } catch (error) {
       console.error('Error eliminando:', error);
       mostrarToast('error', 'Error al eliminar', 'No se pudo eliminar el grado.');
     }
-  }, [cargarGrados, grados, confirmar, mostrarToast]);
+  }
 
-  const handleToggleActivo = useCallback(async (id: string, estadoActual: boolean) => {
+  async function handleToggleActivo(id: string, estadoActual: boolean) {
     try {
       await updateDoc(doc(db, 'grados', id), { activo: !estadoActual });
-      await cargarGrados();
+      // ✅ NO se llama a cargarGrados(): el listener del Context detecta el cambio automáticamente
     } catch (error) {
       console.error('Error actualizando estado:', error);
       mostrarToast('error', 'Error al actualizar', 'No se pudo cambiar el estado del grado.');
     }
-  }, [cargarGrados, mostrarToast]);
+  }
 
   const toggleNivel = (nivel: string) => {
-    setSelectedNiveles(prev => 
-      prev.includes(nivel) 
+    setSelectedNiveles(prev =>
+      prev.includes(nivel)
         ? prev.filter(n => n !== nivel)
         : [...prev, nivel]
     );
   };
 
   const toggleParalelo = (paralelo: string) => {
-    setSelectedParalelos(prev => 
+    setSelectedParalelos(prev =>
       prev.includes(paralelo)
         ? prev.filter(p => p !== paralelo)
         : [...prev, paralelo]
     );
   };
-
-  useEffect(() => {
-    cargarAniosLectivos();
-  }, [cargarAniosLectivos]);
-
-  useEffect(() => {
-    cargarGrados();
-  }, [cargarGrados]);
 
   // ==================== CONFIG DE TOASTS ====================
 
@@ -364,9 +320,10 @@ export default function Grados() {
 
   const ConfirmIcon = confirmModal.icon || FaQuestionCircle;
 
-  if (loading) {
+  // ✅ Loading global: espera a que el Context cargue los datos maestros
+  if (!ready) {
     return (
-      <Layout title="Grados" subtitle="Gestiona los niveles educativos y paralelos" showBack>
+      <Layout>
         <div className="flex items-center justify-center py-20">
           <div className="animate-spin rounded-full h-10 w-10 border-2 border-blue-600 border-t-transparent mx-auto mb-3"></div>
           <p className="text-slate-600 text-sm font-medium">Cargando grados...</p>
@@ -376,20 +333,7 @@ export default function Grados() {
   }
 
   return (
-    <Layout 
-      title="Grados" 
-      subtitle="Gestiona los niveles educativos y paralelos"
-      showBack
-      action={puedeGestionar ? (
-        <button
-          onClick={() => setShowForm(!showForm)}
-          className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg transition-all text-sm font-medium shadow-sm hover:shadow-md"
-        >
-          <FaPlus className="text-sm" />
-          {showForm ? 'Cancelar' : 'Crear Grados'}
-        </button>
-      ) : null}
-    >
+    <Layout>
       {anioActivo && (
         <div className="bg-blue-50 border border-blue-200 rounded-lg px-4 py-3 mb-6">
           <div className="flex items-center gap-2 text-blue-800">
@@ -434,10 +378,16 @@ export default function Grados() {
               <FaLayerGroup />
               {editingId ? 'Editar Grado' : 'Creación Múltiple de Grados'}
             </h3>
+            <button
+              type="button"
+              onClick={resetForm}
+              className="text-white text-sm hover:bg-white/20 px-3 py-1 rounded transition"
+            >
+              Cerrar
+            </button>
           </div>
           
           <form onSubmit={handleSubmit} className="p-5">
-            {/* Selector de Niveles Múltiples */}
             <div className="mb-6">
               <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-3">
                 1. Selecciona los Niveles Educativos *
@@ -464,7 +414,6 @@ export default function Grados() {
               </p>
             </div>
 
-            {/* Selector de Paralelos Múltiples */}
             <div className="mb-6">
               <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-3">
                 2. Selecciona los Paralelos *
@@ -493,7 +442,6 @@ export default function Grados() {
               </p>
             </div>
 
-            {/* ✅ Opciones Adicionales (solo activo, sin matrícula) */}
             <div className="flex flex-wrap items-center gap-6 mb-5 p-4 bg-slate-50 rounded-lg border border-slate-200">
               <div className="flex items-center gap-2">
                 <input
@@ -509,7 +457,6 @@ export default function Grados() {
               </div>
             </div>
 
-            {/* Vista Previa de Combinaciones */}
             {combinaciones.length > 0 && (
               <div className="bg-linear-to-r from-blue-50 to-purple-50 border border-blue-200 rounded-lg px-4 py-4 mb-5">
                 <div className="flex items-center gap-2 text-blue-800 mb-3">
@@ -529,7 +476,6 @@ export default function Grados() {
               </div>
             )}
 
-            {/* Botones de Acción */}
             <div className="flex gap-2 pt-3 border-t border-slate-200">
               <button
                 type="submit"
@@ -555,6 +501,21 @@ export default function Grados() {
       {/* Tabla de Grados */}
       {!docenteSinGrados && (
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+          <div className="flex items-center justify-between p-4 border-b border-slate-200">
+            <h3 className="text-base font-bold text-slate-800 flex items-center gap-2">
+              <FaGraduationCap className="text-blue-600" />
+              Grados del Año Lectivo
+            </h3>
+            {puedeGestionar && !showForm && (
+              <button
+                onClick={() => setShowForm(true)}
+                className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg transition-all text-sm font-medium shadow-sm hover:shadow-md"
+              >
+                <FaPlus className="text-sm" />
+                Crear Grados
+              </button>
+            )}
+          </div>
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead className="bg-slate-50 border-b border-slate-200">
@@ -577,6 +538,15 @@ export default function Grados() {
                         <p className="text-slate-600 font-medium mb-1">
                           {userData?.role === 'docente' ? 'No tienes grados asignados' : 'No hay grados registrados para este año lectivo'}
                         </p>
+                        {puedeGestionar && (
+                          <button
+                            onClick={() => setShowForm(true)}
+                            className="mt-4 inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-all"
+                          >
+                            <FaPlus className="text-xs" />
+                            Crear primer grado
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -636,7 +606,7 @@ export default function Grados() {
         </div>
       )}
 
-      {/* ✅ CONTENEDOR DE TOASTS (esquina superior derecha) */}
+      {/* ✅ CONTENEDOR DE TOASTS */}
       <div className="fixed top-4 right-4 z-100 space-y-2 pointer-events-none max-w-sm w-full">
         {toasts.map((toast) => {
           const config = toastConfig[toast.type];

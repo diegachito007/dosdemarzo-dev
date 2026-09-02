@@ -1,4 +1,4 @@
-import { useState, useEffect, startTransition, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   collection,
   query,
@@ -13,7 +13,8 @@ import {
 } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
-import type { Estudiante, Grado, AnioLectivo } from '../types';
+import { useData } from '../context/DataContext';
+import type { Estudiante } from '../types';
 import Layout from '../components/Layout';
 import {
   FaEdit,
@@ -34,7 +35,6 @@ import {
   FaSpinner
 } from 'react-icons/fa';
 
-// ✅ Función para formatear texto: MAYÚSCULAS, sin tildes y sin números
 const formatText = (text: string): string => {
   if (!text) return '';
   return text
@@ -71,10 +71,10 @@ interface EstudianteParseado {
 
 export default function Estudiantes() {
   const { user, userData } = useAuth();
+  const { grados, anioActivo, ready } = useData();
+  
   const [estudiantes, setEstudiantes] = useState<Estudiante[]>([]);
-  const [grados, setGrados] = useState<Grado[]>([]);
-  const [aniosLectivos, setAniosLectivos] = useState<AnioLectivo[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loadingEstudiantes, setLoadingEstudiantes] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedGradoId, setSelectedGradoId] = useState<string | null>(null);
@@ -87,7 +87,6 @@ export default function Estudiantes() {
   });
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
 
-  // ✅ Estados para ingreso masivo (simplificado: sin vista previa)
   const [showMassiveForm, setShowMassiveForm] = useState(false);
   const [massiveData, setMassiveData] = useState("");
   const [isSavingMassive, setIsSavingMassive] = useState(false);
@@ -102,12 +101,31 @@ export default function Estudiantes() {
     onCancel: () => {},
   });
 
+  const gradosFiltrados = (() => {
+    if (
+      userData?.role === 'docente' &&
+      userData?.gradosAsignados &&
+      userData.gradosAsignados.length > 0
+    ) {
+      const asignados = new Set(userData.gradosAsignados);
+      return grados.filter((g) => asignados.has(g.id));
+    }
+    return grados;
+  })();
+
+  const gradoEfectivoId = selectedGradoId || (gradosFiltrados.length > 0 ? gradosFiltrados[0].id : null);
+
   const docenteSinGrados = userData?.role === 'docente' && (!userData?.gradosAsignados || userData.gradosAsignados.length === 0);
   const esAdmin = userData?.role === 'super_admin';
-  const anioActivo = aniosLectivos.find(a => a.activo);
 
-  // ==================== HELPERS DE NOTIFICACIÓN ====================
+  const tutorDeAnioActivo = (() => {
+    if (!userData?.tutorDe) return [];
+    return gradosFiltrados
+      .filter(g => userData.tutorDe?.includes(g.id))
+      .map(g => g.id);
+  })();
 
+  // ✅ Helpers de notificación (useCallback está bien aquí porque no dependen de valores derivados)
   const mostrarToast = useCallback((
     type: Toast['type'],
     title: string,
@@ -157,24 +175,17 @@ export default function Estudiantes() {
     });
   }, []);
 
-  // ==================== LÓGICA PRINCIPAL ====================
-
-  const tutorDeAnioActivo = useMemo(() => {
-    if (!userData?.tutorDe) return [];
-    return grados.filter(g => userData.tutorDe?.includes(g.id)).map(g => g.id);
-  }, [grados, userData]);
-
-  const puedeGestionarEstudiantes = useCallback((gradoId: string): boolean => {
+  const puedeGestionarEstudiantes = (gradoId: string): boolean => {
     if (esAdmin) return true;
     if (userData?.role === 'docente') {
       return userData?.tutorDe?.includes(gradoId) || false;
     }
     return false;
-  }, [esAdmin, userData?.role, userData?.tutorDe]);
+  };
 
-  const puedeRegistrar = (esAdmin || (userData?.role === 'docente' && selectedGradoId && tutorDeAnioActivo.includes(selectedGradoId))) && !!selectedGradoId;
+  const puedeRegistrar = (esAdmin || (userData?.role === 'docente' && gradoEfectivoId && tutorDeAnioActivo.includes(gradoEfectivoId))) && !!gradoEfectivoId;
 
-  const resetForm = useCallback(() => {
+  const resetForm = () => {
     setFormData({
       apellidos: '',
       nombres: '',
@@ -183,138 +194,25 @@ export default function Estudiantes() {
     });
     setEditingId(null);
     setValidationErrors([]);
-  }, []);
+  };
 
-  const cargarAniosLectivos = useCallback(async () => {
-    try {
-      const q = query(collection(db, 'aniosLectivos'), where('activo', '==', true));
-      const snap = await getDocs(q);
-      const data = snap.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      } as AnioLectivo));
-      startTransition(() => {
-        setAniosLectivos(data);
-      });
-    } catch (error) {
-      console.error('Error cargando años lectivos:', error);
-    }
-  }, []);
-
-  const cargarGrados = useCallback(async () => {
-    try {
-      let q;
-      if (userData?.role === 'docente' && userData?.gradosAsignados && userData.gradosAsignados.length > 0) {
-        q = query(
-          collection(db, 'grados'),
-          where('__name__', 'in', userData.gradosAsignados),
-          where('activo', '==', true),
-          orderBy('orden', 'asc')
-        );
-      } else if (userData?.role === 'docente') {
-        startTransition(() => {
-          setGrados([]);
-        });
-        return;
-      } else {
-        q = query(
-          collection(db, 'grados'),
-          where('activo', '==', true),
-          orderBy('orden', 'asc')
-        );
-      }
-      const snap = await getDocs(q);
-      const data = snap.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      } as Grado));
-      startTransition(() => {
-        setGrados(data);
-        if (userData?.role === 'docente' && data.length > 0 && !selectedGradoId) {
-          setSelectedGradoId(data[0].id);
-        }
-      });
-    } catch (error) {
-      console.error('Error cargando grados:', error);
-    }
-  }, [userData, selectedGradoId]);
-
-  const cargarEstudiantes = useCallback(async () => {
-    if (userData?.role === 'docente' && !selectedGradoId) {
-      startTransition(() => {
-        setEstudiantes([]);
-        setLoading(false);
-      });
+  // ✅ Cargar estudiantes cuando cambia el grado
+  useEffect(() => {
+    if (!ready) return;
+    
+    // Si es docente sin grado seleccionado, no cargar nada (valor derivado maneja UI)
+    if (userData?.role === 'docente' && !gradoEfectivoId) {
       return;
     }
 
-    let q;
-    if (userData?.role === 'docente' && selectedGradoId) {
-      q = query(
-        collection(db, 'estudiantes'),
-        where('gradoId', '==', selectedGradoId),
-        orderBy('apellidos', 'asc')
-      );
-    } else if (esAdmin && selectedGradoId) {
-      q = query(
-        collection(db, 'estudiantes'),
-        where('gradoId', '==', selectedGradoId),
-        orderBy('apellidos', 'asc')
-      );
-    } else {
-      q = query(
-        collection(db, 'estudiantes'),
-        orderBy('apellidos', 'asc')
-      );
-    }
-    
-    try {
-      const snap = await getDocs(q);
-      const data = snap.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      } as Estudiante));
-      startTransition(() => {
-        setEstudiantes(data);
-      });
-    } catch (error) {
-      console.error('Error cargando estudiantes:', error);
-    } finally {
-      startTransition(() => {
-        setLoading(false);
-      });
-    }
-  }, [userData, selectedGradoId, esAdmin]);
-
-  useEffect(() => {
-    let isMounted = true;
-
     const fetchEstudiantes = async () => {
-      if (!selectedGradoId && !esAdmin) {
-        if (isMounted) {
-          startTransition(() => {
-            setEstudiantes([]);
-            setLoading(false);
-          });
-        }
-        return;
-      }
-
-      if (isMounted) {
-        setLoading(true);
-      }
-
+      setLoadingEstudiantes(true);
+      
       let q;
-      if (userData?.role === 'docente' && selectedGradoId) {
+      if ((userData?.role === 'docente' || esAdmin) && gradoEfectivoId) {
         q = query(
           collection(db, 'estudiantes'),
-          where('gradoId', '==', selectedGradoId),
-          orderBy('apellidos', 'asc')
-        );
-      } else if (esAdmin && selectedGradoId) {
-        q = query(
-          collection(db, 'estudiantes'),
-          where('gradoId', '==', selectedGradoId),
+          where('gradoId', '==', gradoEfectivoId),
           orderBy('apellidos', 'asc')
         );
       } else {
@@ -330,31 +228,51 @@ export default function Estudiantes() {
           id: doc.id,
           ...doc.data()
         } as Estudiante));
-        if (isMounted) {
-          startTransition(() => {
-            setEstudiantes(data);
-            setLoading(false);
-          });
-        }
+        setEstudiantes(data);
       } catch (error) {
         console.error('Error cargando estudiantes:', error);
-        if (isMounted) {
-          startTransition(() => {
-            setLoading(false);
-          });
-        }
+      } finally {
+        setLoadingEstudiantes(false);
       }
     };
 
     fetchEstudiantes();
+  }, [gradoEfectivoId, esAdmin, userData?.role, ready]);
 
-    return () => {
-      isMounted = false;
-    };
-  }, [selectedGradoId, esAdmin, userData?.role]);
+  // ✅ Función para recargar estudiantes después de guardar/editar/eliminar
+  async function recargarEstudiantes() {
+    if (userData?.role === 'docente' && !gradoEfectivoId) {
+      setEstudiantes([]);
+      return;
+    }
 
-  // ✅ PARSEO PURO: valida y devuelve { students, errors } sin tocar el estado
-  const parsearListaMasiva = useCallback((data: string): { students: EstudianteParseado[]; errors: string[] } => {
+    let q;
+    if ((userData?.role === 'docente' || esAdmin) && gradoEfectivoId) {
+      q = query(
+        collection(db, 'estudiantes'),
+        where('gradoId', '==', gradoEfectivoId),
+        orderBy('apellidos', 'asc')
+      );
+    } else {
+      q = query(
+        collection(db, 'estudiantes'),
+        orderBy('apellidos', 'asc')
+      );
+    }
+    
+    try {
+      const snap = await getDocs(q);
+      const data = snap.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      } as Estudiante));
+      setEstudiantes(data);
+    } catch (error) {
+      console.error('Error recargando estudiantes:', error);
+    }
+  }
+
+  const parsearListaMasiva = (data: string): { students: EstudianteParseado[]; errors: string[] } => {
     const lines = data.trim().split('\n');
     const students: EstudianteParseado[] = [];
     const errors: string[] = [];
@@ -414,15 +332,14 @@ export default function Estudiantes() {
     });
 
     return { students, errors };
-  }, []);
+  };
 
-  // ✅ GUARDAR = VALIDAR + GUARDAR en un solo paso
-  const guardarEstudiantesMasivos = useCallback(async () => {
+  async function guardarEstudiantesMasivos() {
     if (!anioActivo) {
       mostrarToast('warning', 'Sin año lectivo', 'No hay un año lectivo activo.');
       return;
     }
-    if (!selectedGradoId) {
+    if (!gradoEfectivoId) {
       mostrarToast('warning', 'Sin grado seleccionado', 'Debe seleccionar un grado primero.');
       return;
     }
@@ -431,7 +348,6 @@ export default function Estudiantes() {
       return;
     }
 
-    // 1️⃣ Validar formato
     const { students, errors } = parsearListaMasiva(massiveData);
     if (errors.length > 0) {
       setValidationErrors(errors);
@@ -442,7 +358,6 @@ export default function Estudiantes() {
       return;
     }
 
-    // 2️⃣ Validar duplicados internos en la lista
     const cedulasVistas = new Set<string>();
     const duplicadosInternos: string[] = [];
     students.forEach(s => {
@@ -458,10 +373,9 @@ export default function Estudiantes() {
       return;
     }
 
-    // 3️⃣ Todo OK → guardar directamente
     setIsSavingMassive(true);
     try {
-      const q = query(collection(db, 'estudiantes'), where('gradoId', '==', selectedGradoId));
+      const q = query(collection(db, 'estudiantes'), where('gradoId', '==', gradoEfectivoId));
       const snap = await getDocs(q);
       const existentes = new Set(snap.docs.map(doc => doc.data().cedula));
 
@@ -478,7 +392,7 @@ export default function Estudiantes() {
           cedula: est.cedula,
           apellidos: est.apellidos,
           nombres: est.nombres,
-          gradoId: selectedGradoId,
+          gradoId: gradoEfectivoId,
           anioLectivoId: anioActivo.id,
           activo: true,
           createdAt: serverTimestamp(),
@@ -497,16 +411,16 @@ export default function Estudiantes() {
       setMassiveData("");
       setValidationErrors([]);
       setShowMassiveForm(false);
-      await cargarEstudiantes();
+      await recargarEstudiantes();
     } catch (error) {
       console.error('Error guardando estudiantes masivos:', error);
       mostrarToast('error', 'Error al guardar', 'No se pudieron registrar los estudiantes.');
     } finally {
       setIsSavingMassive(false);
     }
-  }, [massiveData, selectedGradoId, anioActivo, user, cargarEstudiantes, mostrarToast, parsearListaMasiva]);
+  }
 
-  const validarEstudiante = useCallback((cedula: string, apellidos: string, nombres: string, excludeId?: string): string[] => {
+  const validarEstudiante = (cedula: string, apellidos: string, nombres: string, excludeId?: string): string[] => {
     const errors: string[] = [];
     if (!cedula || cedula.trim() === '') {
       errors.push('La cédula/código es obligatorio');
@@ -528,9 +442,9 @@ export default function Estudiantes() {
       }
     }
     return errors;
-  }, [estudiantes]);
+  };
 
-  const guardarEstudianteIndividual = useCallback(async () => {
+  async function guardarEstudianteIndividual() {
     const errors = validarEstudiante(formData.cedula, formData.apellidos, formData.nombres, editingId || undefined);
     if (errors.length > 0) {
       setValidationErrors(errors);
@@ -547,20 +461,20 @@ export default function Estudiantes() {
         });
       }
       resetForm();
-      await cargarEstudiantes();
+      await recargarEstudiantes();
       mostrarToast('success', 'Estudiante actualizado', `"${formData.apellidos} ${formData.nombres}" se actualizó correctamente.`);
     } catch (error) {
       console.error('Error guardando estudiante:', error);
       mostrarToast('error', 'Error al guardar', 'No se pudo actualizar el estudiante.');
     }
-  }, [formData, editingId, resetForm, cargarEstudiantes, validarEstudiante, mostrarToast]);
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     await guardarEstudianteIndividual();
   };
 
-  const handleEdit = useCallback((estudiante: Estudiante) => {
+  const handleEdit = (estudiante: Estudiante) => {
     if (!puedeGestionarEstudiantes(estudiante.gradoId)) {
       mostrarToast('error', 'Sin permisos', 'No tienes permisos para editar estudiantes de este grado.');
       return;
@@ -574,9 +488,9 @@ export default function Estudiantes() {
     setEditingId(estudiante.id);
     setValidationErrors([]);
     window.scrollTo({ top: 0, behavior: 'smooth' });
-  }, [puedeGestionarEstudiantes, mostrarToast]);
+  };
 
-  const handleDelete = useCallback(async (id: string) => {
+  async function handleDelete(id: string) {
     const estudiante = estudiantes.find(e => e.id === id);
     if (!estudiante) return;
     if (!puedeGestionarEstudiantes(estudiante.gradoId)) {
@@ -586,7 +500,7 @@ export default function Estudiantes() {
     
     const confirmado = await confirmar(
       `Eliminar a ${estudiante.apellidos} ${estudiante.nombres}`,
-      `¿Estás seguro de eliminar a este estudiante?\n\nCédula: ${estudiante.cedula || 'Sin cédula'}\nGrado: ${grados.find(g => g.id === estudiante.gradoId)?.nombre || 'Desconocido'}\n\nEsta acción no se puede deshacer.`,
+      `¿Estás seguro de eliminar a este estudiante?\n\nCédula: ${estudiante.cedula || 'Sin cédula'}\nGrado: ${gradosFiltrados.find(g => g.id === estudiante.gradoId)?.nombre || 'Desconocido'}\n\nEsta acción no se puede deshacer.`,
       {
         confirmText: "Sí, eliminar",
         cancelText: "Cancelar",
@@ -599,14 +513,14 @@ export default function Estudiantes() {
     try {
       await deleteDoc(doc(db, 'estudiantes', id));
       mostrarToast('success', 'Estudiante eliminado', `"${estudiante.apellidos} ${estudiante.nombres}" fue eliminado correctamente.`);
-      await cargarEstudiantes();
+      await recargarEstudiantes();
     } catch (error) {
       console.error('Error eliminando:', error);
       mostrarToast('error', 'Error al eliminar', 'No se pudo eliminar el estudiante.');
     }
-  }, [cargarEstudiantes, estudiantes, puedeGestionarEstudiantes, confirmar, mostrarToast, grados]);
+  }
 
-  const handleToggleActivo = useCallback(async (id: string, estadoActual: boolean) => {
+  async function handleToggleActivo(id: string, estadoActual: boolean) {
     const estudiante = estudiantes.find(e => e.id === id);
     if (!estudiante) return;
     if (!puedeGestionarEstudiantes(estudiante.gradoId)) {
@@ -617,17 +531,12 @@ export default function Estudiantes() {
       await updateDoc(doc(db, 'estudiantes', id), {
         activo: !estadoActual
       });
-      await cargarEstudiantes();
+      await recargarEstudiantes();
     } catch (error) {
       console.error('Error actualizando estado:', error);
       mostrarToast('error', 'Error al actualizar', 'No se pudo cambiar el estado del estudiante.');
     }
-  }, [cargarEstudiantes, estudiantes, puedeGestionarEstudiantes, mostrarToast]);
-
-  useEffect(() => {
-    cargarAniosLectivos();
-    cargarGrados();
-  }, [cargarAniosLectivos, cargarGrados]);
+  }
 
   const estudiantesFiltrados = estudiantes.filter(est => {
     const searchText = searchTerm.toLowerCase();
@@ -637,6 +546,9 @@ export default function Estudiantes() {
       (est.cedula && est.cedula.includes(searchTerm))
     );
   });
+
+  // ✅ Valor derivado: estudiantes a mostrar (vacío si docente sin grado)
+  const estudiantesAMostrar = (userData?.role === 'docente' && !gradoEfectivoId) ? [] : estudiantesFiltrados;
 
   const toastConfig = {
     success: {
@@ -671,13 +583,13 @@ export default function Estudiantes() {
 
   const ConfirmIcon = confirmModal.icon || FaQuestionCircle;
 
-  if (loading) {
+  if (!ready) {
     return (
       <Layout>
         <div className="flex items-center justify-center py-20">
           <div className="text-center">
             <div className="animate-spin rounded-full h-10 w-10 border-2 border-blue-600 border-t-transparent mx-auto mb-3"></div>
-            <p className="text-slate-600 text-sm font-medium">Cargando estudiantes...</p>
+            <p className="text-slate-600 text-sm font-medium">Cargando...</p>
           </div>
         </div>
       </Layout>
@@ -720,8 +632,7 @@ export default function Estudiantes() {
         </div>
       )}
 
-      {/* ✅ Botones de grados asignados para docentes */}
-      {!docenteSinGrados && grados.length > 0 && (
+      {!docenteSinGrados && gradosFiltrados.length > 0 && (
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 mb-6 p-4">
           <h3 className="text-sm font-semibold text-slate-700 mb-3 flex items-center gap-2">
             <FaBookOpen className="text-blue-600" />
@@ -732,7 +643,7 @@ export default function Estudiantes() {
               <button
                 onClick={() => setSelectedGradoId(null)}
                 className={`px-4 py-2 rounded-lg text-sm font-medium transition-all border-2 ${
-                  selectedGradoId === null
+                  gradoEfectivoId === null
                     ? 'bg-blue-600 text-white border-blue-600'
                     : 'bg-white text-slate-700 border-slate-200 hover:border-blue-400'
                 }`}
@@ -740,14 +651,14 @@ export default function Estudiantes() {
                 Todos los grados
               </button>
             )}
-            {grados.map((grado) => {
+            {gradosFiltrados.map((grado) => {
               const esTutor = tutorDeAnioActivo.includes(grado.id);
               return (
                 <button
                   key={grado.id}
                   onClick={() => setSelectedGradoId(grado.id)}
                   className={`px-4 py-2 rounded-lg text-sm font-medium transition-all border-2 flex items-center gap-2 ${
-                    selectedGradoId === grado.id
+                    gradoEfectivoId === grado.id
                       ? 'bg-blue-600 text-white border-blue-600'
                       : 'bg-white text-slate-700 border-slate-200 hover:border-blue-400'
                   }`}
@@ -765,7 +676,6 @@ export default function Estudiantes() {
         </div>
       )}
 
-      {/* ✅ Formulario de edición individual */}
       {editingId && (
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 mb-6 overflow-hidden">
           <div className="bg-linear-to-r from-blue-600 to-blue-700 px-5 py-3 flex items-center justify-between">
@@ -855,7 +765,6 @@ export default function Estudiantes() {
         </div>
       )}
 
-      {/* ✅ Formulario de Registro Masivo (UN SOLO PASO: pegar y guardar) */}
       {showMassiveForm && puedeRegistrar && (
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 mb-6 overflow-hidden">
           <div className="bg-linear-to-r from-green-600 to-green-700 px-5 py-3 flex items-center justify-between">
@@ -910,7 +819,6 @@ export default function Estudiantes() {
               </div>
             </div>
 
-            {/* ✅ UN SOLO BOTÓN: valida y guarda en un paso */}
             <div className="flex gap-2 pt-3 border-t border-slate-200">
               <button
                 onClick={guardarEstudiantesMasivos}
@@ -937,7 +845,7 @@ export default function Estudiantes() {
 
       {!docenteSinGrados && (
         <>
-          {userData?.role === 'docente' && !selectedGradoId && (
+          {userData?.role === 'docente' && !gradoEfectivoId && (
             <div className="bg-slate-50 border border-slate-200 rounded-xl p-8 text-center mb-6">
               <FaBookOpen className="text-4xl text-slate-400 mx-auto mb-3" />
               <p className="text-slate-600 font-medium mb-1">Selecciona un grado para ver los estudiantes</p>
@@ -945,7 +853,7 @@ export default function Estudiantes() {
             </div>
           )}
 
-          {(selectedGradoId || esAdmin) && (
+          {(gradoEfectivoId || esAdmin) && (
             <>
               <div className="bg-white rounded-xl shadow-sm border border-slate-200 mb-6 p-4 flex flex-col sm:flex-row justify-between items-center gap-4">
                 <div className="relative w-full sm:w-96">
@@ -987,7 +895,16 @@ export default function Estudiantes() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-200">
-                      {estudiantesFiltrados.length === 0 ? (
+                      {loadingEstudiantes ? (
+                        <tr>
+                          <td colSpan={4} className="px-5 py-16 text-center">
+                            <div className="flex flex-col items-center">
+                              <div className="animate-spin rounded-full h-10 w-10 border-2 border-blue-600 border-t-transparent mx-auto mb-3"></div>
+                              <p className="text-slate-600 text-sm font-medium">Cargando estudiantes...</p>
+                            </div>
+                          </td>
+                        </tr>
+                      ) : estudiantesAMostrar.length === 0 ? (
                         <tr>
                           <td colSpan={4} className="px-5 py-16 text-center">
                             <div className="flex flex-col items-center">
@@ -1006,8 +923,8 @@ export default function Estudiantes() {
                           </td>
                         </tr>
                       ) : (
-                        estudiantesFiltrados.map((est) => {
-                          const grado = grados.find(g => g.id === est.gradoId);
+                        estudiantesAMostrar.map((est) => {
+                          const grado = gradosFiltrados.find(g => g.id === est.gradoId);
                           const puedeEditar = puedeGestionarEstudiantes(est.gradoId);
                           
                           return (
@@ -1109,10 +1026,10 @@ export default function Estudiantes() {
                   </table>
                 </div>
                 
-                {estudiantesFiltrados.length > 0 && (
+                {estudiantesAMostrar.length > 0 && !loadingEstudiantes && (
                   <div className="bg-slate-50 px-5 py-3 border-t border-slate-200">
                     <div className="flex items-center justify-between text-xs text-slate-600">
-                      <span>Mostrando <strong>{estudiantesFiltrados.length}</strong> estudiante{estudiantesFiltrados.length !== 1 ? 's' : ''}{searchTerm && ` de ${estudiantes.length}`}</span>
+                      <span>Mostrando <strong>{estudiantesAMostrar.length}</strong> estudiante{estudiantesAMostrar.length !== 1 ? 's' : ''}{searchTerm && ` de ${estudiantes.length}`}</span>
                       <span>{estudiantes.filter(e => e.activo).length} activo{estudiantes.filter(e => e.activo).length !== 1 ? 's' : ''}</span>
                     </div>
                   </div>
