@@ -428,7 +428,6 @@ export default function Calificaciones() {
     ? materiaEfectivaId
     : ambitoEfectivoId;
 
-  // ✅ CORREGIDO: declarada ANTES de usarse en handlers (guardarCalificaciones, aplicarNotaATodos, etc.)
   const actividadSeleccionada = actividades.find(
     (a) => a.id === selectedActividadId,
   );
@@ -1389,7 +1388,6 @@ export default function Calificaciones() {
     );
   }
 
-  // ✅ REMOVIDO: ya no se declara aquí (está arriba, línea ~415)
   const gradoActual = gradosFiltrados.find((g) => g.id === gradoEfectivoId);
   const ConfirmIcon = confirmModal.icon || FaQuestionCircle;
 
@@ -1602,7 +1600,7 @@ export default function Calificaciones() {
 
           {gradoEfectivoId &&
             (gradoTieneMateriasConfiguradas || esGradoInicialActual) && (
-              <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+              <div className="bg-white rounded-xl shadow-sm border border-slate-200">
                 <div className="border-b border-slate-200 p-3">
                   <div className="flex flex-col gap-3">
                     <div className="flex gap-2 w-full">
@@ -1874,14 +1872,35 @@ export default function Calificaciones() {
                     </div>
                   ) : activeTab === "calificaciones" && destrezaEfectivaId ? (
                     <>
-                      <div className="mb-4">
-                        <div className="flex items-center justify-between mb-3">
-                          <h4 className="text-sm font-bold text-slate-800 flex items-center gap-2">
-                            Actividades de Evaluación
-                            <span className="text-xs font-normal text-slate-500">
-                              ({actividades.length})
+                      {/* ✅ BARRA STICKY DE ACTIVIDAD (Opción A) */}
+                      <div className="sticky top-0 z-30 -mx-4 px-4 py-2 bg-white/95 backdrop-blur border-b border-slate-200 mb-3">
+                        <div className="flex items-center gap-2">
+                          <select
+                            value={selectedActividadId}
+                            onChange={(e) => {
+                              setSelectedActividadId(e.target.value);
+                              setCalificaciones({});
+                            }}
+                            className="flex-1 min-w-0 border border-slate-300 rounded-lg px-2 py-2 text-xs font-medium focus:ring-2 focus:ring-blue-500 bg-white"
+                          >
+                            <option value="">
+                              {actividades.length === 0
+                                ? "Sin actividades — crea una con ＋"
+                                : "Seleccionar actividad..."}
+                            </option>
+                            {actividades.map((a) => (
+                              <option key={a.id} value={a.id || ""}>
+                                {a.tipo} · {a.detalle} · {a.fecha}
+                              </option>
+                            ))}
+                          </select>
+
+                          {actividadSeleccionada && (
+                            <span className="shrink-0 text-[10px] font-bold px-2 py-1 rounded bg-blue-100 text-blue-700 whitespace-nowrap">
+                              {calificacionesRegistradas}/{estudiantes.length}
                             </span>
-                          </h4>
+                          )}
+
                           <button
                             onClick={() => {
                               setShowActividadModal(true);
@@ -1893,187 +1912,69 @@ export default function Calificaciones() {
                                 estrategiaNota: "promediar",
                               });
                             }}
-                            className="inline-flex items-center gap-2 bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded-lg text-xs font-semibold transition-all"
+                            title="Nueva actividad"
+                            className="shrink-0 p-2 bg-green-600 hover:bg-green-700 text-white rounded-lg transition-all"
                           >
                             <FaPlus className="text-xs" />
-                            Nueva Actividad
                           </button>
-                        </div>
 
-                        {actividades.length === 0 ? (
-                          <div className="text-center py-8 text-slate-400 border-2 border-dashed border-slate-300 rounded-lg">
-                            <FaTasks className="text-3xl mx-auto mb-2" />
-                            <p className="text-sm">
-                              No hay actividades creadas
-                            </p>
-                            <p className="text-xs mt-1">
-                              Crea una actividad para comenzar a calificar
-                            </p>
-                          </div>
-                        ) : selectedActividadId ? (
-                          /* ✅ MODO COMPACTO: franja horizontal scrollable */
-                          <div className="flex gap-2 overflow-x-auto pb-2 -mx-1 px-1">
-                            {actividades.map((actividad) => {
-                              const isSelected =
-                                selectedActividadId === actividad.id;
-                              return (
-                                <button
-                                  key={actividad.id}
-                                  onClick={() =>
-                                    setSelectedActividadId(actividad.id || "")
-                                  }
-                                  className={`shrink-0 w-44 px-3 py-2 rounded-lg border-2 text-left transition-all ${
-                                    isSelected
-                                      ? "border-blue-500 bg-blue-50 shadow-sm"
-                                      : "border-slate-200 bg-white hover:border-blue-300"
-                                  }`}
-                                >
-                                  <div className="flex items-center gap-1.5 mb-1">
-                                    <span className="px-1.5 py-0.5 bg-purple-100 text-purple-700 rounded text-[10px] font-semibold shrink-0">
-                                      {actividad.tipo}
-                                    </span>
-                                    <span className="text-[10px] text-slate-500">
-                                      {actividad.fecha}
-                                    </span>
-                                  </div>
-                                  <div
-                                    className={`text-xs font-semibold truncate ${
-                                      isSelected
-                                        ? "text-blue-800"
-                                        : "text-slate-700"
-                                    }`}
-                                  >
-                                    {actividad.detalle}
-                                  </div>
-                                </button>
-                              );
-                            })}
-                          </div>
-                        ) : (
-                          /* MODO GRID: solo cuando NO hay actividad seleccionada */
-                          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                            {actividades.map((actividad) => {
-                              const isSelected =
-                                selectedActividadId === actividad.id;
-                              return (
-                                <div
-                                  key={actividad.id}
-                                  onClick={() =>
-                                    setSelectedActividadId(actividad.id || "")
-                                  }
-                                  className={`p-3 rounded-lg border-2 cursor-pointer transition-all ${
-                                    isSelected
-                                      ? "border-blue-500 bg-blue-50 shadow-md"
-                                      : "border-slate-200 hover:border-blue-300 hover:bg-slate-50"
-                                  }`}
-                                >
-                                  <div className="flex items-start justify-between mb-2">
-                                    <div className="flex-1">
-                                      <div className="flex items-center gap-2 mb-1">
-                                        <span className="px-2 py-0.5 bg-purple-100 text-purple-700 rounded text-xs font-semibold">
-                                          {actividad.tipo}
-                                        </span>
-                                        <span className="text-xs text-slate-500">
-                                          {actividad.fecha}
-                                        </span>
-                                      </div>
-                                      <p className="text-sm font-semibold text-slate-800 line-clamp-2">
-                                        {actividad.detalle}
-                                      </p>
-                                    </div>
-                                  </div>
-                                  <div className="flex items-center justify-between mt-2 pt-2 border-t border-slate-200">
-                                    <span className="text-xs text-slate-500">
-                                      {esGradoInicialActual ? (
-                                        "Calificación directa"
-                                      ) : (
-                                        <>
-                                          Estrategia:{" "}
-                                          {
-                                            ESTRATEGIAS_NOTA.find(
-                                              (e) =>
-                                                e.value ===
-                                                actividad.estrategiaNota,
-                                            )?.label.split(" ")[0]
-                                          }
-                                        </>
-                                      )}
-                                    </span>
-                                    <div className="flex gap-1">
-                                      <button
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          setEditingActividadId(
-                                            actividad.id || null,
-                                          );
-                                          setActividadForm({
-                                            tipo: actividad.tipo,
-                                            detalle: actividad.detalle,
-                                            fecha: actividad.fecha,
-                                            estrategiaNota:
-                                              actividad.estrategiaNota,
-                                          });
-                                          setShowActividadModal(true);
-                                        }}
-                                        className="p-1.5 text-blue-600 hover:bg-blue-50 rounded transition-all"
-                                        title="Editar"
-                                      >
-                                        <FaEdit className="text-xs" />
-                                      </button>
-                                      <button
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          eliminarActividad(actividad.id || "");
-                                        }}
-                                        className="p-1.5 text-red-600 hover:bg-red-50 rounded transition-all"
-                                        title="Eliminar"
-                                      >
-                                        <FaTrash className="text-xs" />
-                                      </button>
-                                    </div>
-                                  </div>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
+                          {actividadSeleccionada && (
+                            <>
+                              <button
+                                onClick={() => {
+                                  setEditingActividadId(
+                                    actividadSeleccionada.id || null,
+                                  );
+                                  setActividadForm({
+                                    tipo: actividadSeleccionada.tipo,
+                                    detalle: actividadSeleccionada.detalle,
+                                    fecha: actividadSeleccionada.fecha,
+                                    estrategiaNota:
+                                      actividadSeleccionada.estrategiaNota,
+                                  });
+                                  setShowActividadModal(true);
+                                }}
+                                title="Editar actividad"
+                                className="shrink-0 p-2 bg-blue-50 hover:bg-blue-100 text-blue-600 rounded-lg transition-all"
+                              >
+                                <FaEdit className="text-xs" />
+                              </button>
+                              <button
+                                onClick={() =>
+                                  eliminarActividad(selectedActividadId)
+                                }
+                                title="Eliminar actividad"
+                                className="shrink-0 p-2 bg-red-50 hover:bg-red-100 text-red-600 rounded-lg transition-all"
+                              >
+                                <FaTrash className="text-xs" />
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setSelectedActividadId("");
+                                  setCalificaciones({});
+                                }}
+                                title="Cerrar actividad"
+                                className="shrink-0 p-2 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg transition-all"
+                              >
+                                <FaTimes className="text-xs" />
+                              </button>
+                            </>
+                          )}
+                        </div>
                       </div>
 
-                      {selectedActividadId && actividadSeleccionada && (
+                      {!selectedActividadId || !actividadSeleccionada ? (
+                        <div className="text-center py-10 text-slate-500">
+                          <FaTasks className="text-3xl mx-auto mb-2 text-slate-300" />
+                          <p className="font-medium text-sm">
+                            Selecciona una actividad del selector de arriba
+                          </p>
+                          <p className="text-xs mt-1">
+                            o crea una nueva con el botón verde ＋
+                          </p>
+                        </div>
+                      ) : (
                         <>
-                          {/* ✅ Encabezado de actividad seleccionada + botón cerrar */}
-                          <div className="mb-3 bg-purple-50 border border-purple-200 rounded-lg px-3 py-2 flex items-center gap-2">
-                            <FaTasks className="text-purple-600 shrink-0" />
-                            <div className="flex-1 min-w-0">
-                              <div className="text-xs font-semibold text-purple-900 truncate">
-                                {actividadSeleccionada.tipo}:{" "}
-                                {actividadSeleccionada.detalle}
-                              </div>
-                              <div className="text-[10px] text-purple-600">
-                                {actividadSeleccionada.fecha}
-                                {!esGradoInicialActual && (
-                                  <>
-                                    {" · Estrategia: "}
-                                    {
-                                      ESTRATEGIAS_NOTA.find(
-                                        (e) =>
-                                          e.value ===
-                                          actividadSeleccionada.estrategiaNota,
-                                      )?.label.split(" ")[0]
-                                    }
-                                  </>
-                                )}
-                              </div>
-                            </div>
-                            <button
-                              onClick={() => setSelectedActividadId("")}
-                              className="shrink-0 p-1.5 text-purple-400 hover:text-purple-700 hover:bg-purple-100 rounded transition-all"
-                              title="Cerrar actividad y ver todas"
-                            >
-                              <FaTimes className="text-xs" />
-                            </button>
-                          </div>
-
                           {actividadSeleccionada && (
                             <div className="mb-4 bg-blue-50 border border-blue-200 rounded-lg p-3">
                               <div className="flex items-start gap-2">
