@@ -539,14 +539,21 @@ export default function Calificaciones() {
       where("activo", "==", true),
     );
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const data = snapshot.docs.map(
-        (d) => ({ id: d.id, ...d.data() }) as AsignaturaDocente,
-      );
-      setAsignaturasDocente(data);
-    });
+    const cargarAsignaturas = async () => {
+      try {
+        const snapshot = await getDocs(q);
 
-    return () => unsubscribe();
+        const data = snapshot.docs.map(
+          (d) => ({ id: d.id, ...d.data() }) as AsignaturaDocente,
+        );
+
+        setAsignaturasDocente(data);
+      } catch (error) {
+        console.error("Error cargando asignaturas del docente:", error);
+      }
+    };
+
+    cargarAsignaturas();
   }, [user?.uid, anioActivo?.id]);
 
   const cargarActividades = useCallback(async (destrezaId: string) => {
@@ -1176,8 +1183,8 @@ export default function Calificaciones() {
         );
 
         setEstudiantes(data);
-        // No limpiar asistencias aquí.
-        // El listener onSnapshot mantiene el estado sincronizado con Firebase.
+        // Mantener sincronización mediante onSnapshot.
+        // No limpiar asistencias aquí para evitar perder la carga inicial.
         setActiveTab("asistencia");
       } catch (error) {
         console.error("Error cargando estudiantes:", error);
@@ -1266,14 +1273,19 @@ export default function Calificaciones() {
 
   // ✅ Listener de asistencias - MISMA ESTRUCTURA QUE EL CÓDIGO VIEJO
   useEffect(() => {
+    if (activeTab !== "asistencia") return;
+
     if (!gradoEfectivoId || !fechaAsistencia) {
       return;
     }
 
+    const gradoInicialActual = esGradoInicial(gradoEfectivoNombre);
+    const gradoBachilleratoActual = esBachillerato(gradoEfectivoNombre);
+
     let ambitoIdParaBuscar: string;
-    if (esGradoInicialActual) {
+    if (gradoInicialActual) {
       ambitoIdParaBuscar = "general";
-    } else if (esGradoBachillerato) {
+    } else if (gradoBachilleratoActual) {
       if (!materiaEfectivaId) return;
       ambitoIdParaBuscar = materiaEfectivaId;
     } else {
@@ -1325,16 +1337,19 @@ export default function Calificaciones() {
 
     return () => unsubscribe();
   }, [
+    activeTab,
     gradoEfectivoId,
     fechaAsistencia,
     materiaEfectivaId,
     ambitoEfectivoId,
-    esGradoBachillerato,
-    esGradoInicialActual,
+    gradoEfectivoNombre,
   ]);
 
   // ✅ Listener de asistencias del día de la actividad - MISMA ESTRUCTURA
   useEffect(() => {
+
+    if (activeTab !== "calificaciones") return;
+
     const actividad = actividades.find((a) => a.id === selectedActividadId);
     if (!actividad || !gradoEfectivoId || !selectedActividadId) {
       const limpiar = async () => {
@@ -1386,11 +1401,13 @@ export default function Calificaciones() {
 
     return () => unsubscribe();
   }, [
+    activeTab,
     selectedActividadId,
     actividades,
     gradoEfectivoId,
-    esGradoInicialActual,
+    gradoEfectivoNombre,
     esGradoBachillerato,
+    esGradoInicialActual,
   ]);
 
   const toastConfig = {
