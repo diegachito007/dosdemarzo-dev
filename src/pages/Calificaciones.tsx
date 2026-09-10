@@ -1176,7 +1176,8 @@ export default function Calificaciones() {
         );
 
         setEstudiantes(data);
-        setAsistencias({});
+        // No limpiar asistencias aquí.
+        // El listener onSnapshot mantiene el estado sincronizado con Firebase.
         setActiveTab("asistencia");
       } catch (error) {
         console.error("Error cargando estudiantes:", error);
@@ -1265,7 +1266,7 @@ export default function Calificaciones() {
 
   // ✅ Listener de asistencias - MISMA ESTRUCTURA QUE EL CÓDIGO VIEJO
   useEffect(() => {
-    if (!gradoEfectivoId || !fechaAsistencia || estudiantes.length === 0) {
+    if (!gradoEfectivoId || !fechaAsistencia) {
       return;
     }
 
@@ -1324,15 +1325,12 @@ export default function Calificaciones() {
 
     return () => unsubscribe();
   }, [
-    activeTab,
     gradoEfectivoId,
     fechaAsistencia,
     materiaEfectivaId,
     ambitoEfectivoId,
     esGradoBachillerato,
     esGradoInicialActual,
-    destrezaEfectivaId,
-    estudiantes.length,
   ]);
 
   // ✅ Listener de asistencias del día de la actividad - MISMA ESTRUCTURA
@@ -1707,7 +1705,6 @@ export default function Calificaciones() {
                             onChange={(e) => {
                               const materiaId = e.target.value;
                               setSelectedMateriaId(materiaId);
-                              setAsistencias({});
 
                               if (materiaId) {
                                 const materia = materiasDelGradoDocente.find(
@@ -1740,7 +1737,6 @@ export default function Calificaciones() {
                               setSelectedActividadId("");
                               setCalificaciones({});
                               setActividades([]);
-                              setAsistencias({});
                             }}
                             className="col-span-1 w-full border border-slate-300 rounded-lg px-2 py-2 text-xs focus:ring-2 focus:ring-blue-500 truncate"
                           >
@@ -1757,7 +1753,6 @@ export default function Calificaciones() {
                           value={fechaAsistencia}
                           onChange={(e) => {
                             setFechaAsistencia(e.target.value);
-                            setAsistencias({});
                           }}
                           className="col-span-1 w-full border border-slate-300 rounded-lg px-2 py-2 text-xs focus:ring-2 focus:ring-blue-500"
                         />
