@@ -64,7 +64,7 @@ interface AsistenciaData {
   periodoId: string;
   fecha: string;
   ambitoId?: string;
-  estado: EstadoAsistencia | string;
+  estado: string;
   v2?: boolean;
   observacion?: string;
   registradoPor?: string;
@@ -365,6 +365,7 @@ export default function Calificaciones() {
   const esGradoBachillerato = esBachillerato(gradoEfectivoNombre);
   const esGradoInicialActual = esGradoInicial(gradoEfectivoNombre);
 
+  // ✅ ¿El docente es tutor del grado actual?
   const esTutorDelGradoActual = gradoEfectivoId
     ? (userData?.tutorDe || []).includes(gradoEfectivoId)
     : false;
@@ -648,9 +649,11 @@ export default function Calificaciones() {
       estudiantes.forEach((est) => {
         const asistencia = asistencias[est.id];
         if (!asistencia || !asistencia.estado) return;
+        // No permitir modificar estado tutor-only si no soy tutor
         if (asistencia.esTutorOnly && !esTutorDelGradoActual) return;
 
         const existente = existentesMap.get(est.id);
+        // Si el estado existente es tutor-only (J) y no soy tutor, no modificar
         const estadoExistenteNormalizado = normalizarEstado(
           existente?.data.estado,
           existente?.data.v2,
@@ -872,6 +875,7 @@ export default function Calificaciones() {
           calificacion.nota.trim() === ""
         )
           return;
+        // ✅ Usa estadoBloqueaNota (I y F bloquean)
         const estadoEseDia = asistenciasDiaActividad[est.id];
         if (estadoBloqueaNota(estadoEseDia) && actividadEsHoy) return;
         const notaNum = parseFloat(calificacion.nota);
@@ -1000,7 +1004,9 @@ export default function Calificaciones() {
     estado: EstadoAsistencia,
   ) => {
     const actual = asistencias[estudianteId];
+    // No permitir modificar estado tutor-only si no soy tutor
     if (actual?.esTutorOnly && !esTutorDelGradoActual) return;
+    // No permitir que docente asigne estado tutor-only
     const config = estadoConfig(estado);
     if (config?.quien === "tutor" && !esTutorDelGradoActual) return;
 
@@ -1016,6 +1022,7 @@ export default function Calificaciones() {
   };
 
   const marcarTodosAsistencia = (estado: EstadoAsistencia) => {
+    // No permitir marcar todos con estados tutor-only (J)
     const config = estadoConfig(estado);
     if (config?.quien === "tutor") return;
 
@@ -1023,6 +1030,7 @@ export default function Calificaciones() {
       const nuevas: typeof prev = {};
       estudiantes.forEach((est) => {
         const actual = prev[est.id];
+        // Respetar estados tutor-only previos
         if (actual?.esTutorOnly) {
           nuevas[est.id] = actual;
         } else {
@@ -1043,6 +1051,7 @@ export default function Calificaciones() {
       const nuevas: typeof prev = {};
       estudiantes.forEach((est) => {
         const actual = prev[est.id];
+        // Respetar estados tutor-only (J) al limpiar
         if (actual?.esTutorOnly) {
           nuevas[est.id] = actual;
         }
@@ -1064,6 +1073,7 @@ export default function Calificaciones() {
   const actualizarCalificacion = (estudianteId: string, valor: string) => {
     const estadoEseDia = asistenciasDiaActividad[estudianteId];
     const actividadEsHoy = esFechaHoy(actividadSeleccionada?.fecha || "");
+    // ✅ Usa estadoBloqueaNota
     if (estadoBloqueaNota(estadoEseDia) && actividadEsHoy) return;
 
     if (valor === "") {
@@ -1108,7 +1118,9 @@ export default function Calificaciones() {
       const nuevas = { ...prev };
       estudiantes.forEach((est) => {
         const estadoEseDia = asistenciasDiaActividad[est.id];
+        // ✅ Usa estadoBloqueaNota
         if (estadoBloqueaNota(estadoEseDia) && actividadEsHoy) return;
+        // No sobrescribir notas que ya tienen refuerzo aplicado
         if (calificaciones[est.id]?.refuerzo) return;
 
         nuevas[est.id] = {
@@ -1144,6 +1156,8 @@ export default function Calificaciones() {
       }
     }
   };
+
+  // ==================== EFFECTS ====================
 
   useEffect(() => {
     if (!gradoEfectivoId) return;
@@ -1249,6 +1263,7 @@ export default function Calificaciones() {
     fetchCalificaciones();
   }, [selectedActividadId]);
 
+  // ✅ Listener de asistencias - MISMA ESTRUCTURA QUE EL CÓDIGO VIEJO
   useEffect(() => {
     if (!gradoEfectivoId || !fechaAsistencia || estudiantes.length === 0) {
       return;
@@ -1288,6 +1303,7 @@ export default function Calificaciones() {
         > = {};
         snapshot.docs.forEach((docSnap) => {
           const data = docSnap.data() as AsistenciaData;
+          // ✅ Normalizar códigos legacy (T→A, A→I)
           const estadoNormalizado = normalizarEstado(data.estado, data.v2);
           const config = estadoConfig(estadoNormalizado);
           asistenciasMap[data.estudianteId] = {
@@ -1319,6 +1335,7 @@ export default function Calificaciones() {
     estudiantes.length,
   ]);
 
+  // ✅ Listener de asistencias del día de la actividad - MISMA ESTRUCTURA
   useEffect(() => {
     const actividad = actividades.find((a) => a.id === selectedActividadId);
     if (!actividad || !gradoEfectivoId || !selectedActividadId) {
@@ -1356,6 +1373,7 @@ export default function Calificaciones() {
         const mapa: Record<string, EstadoAsistencia | undefined> = {};
         snapshot.docs.forEach((docSnap) => {
           const data = docSnap.data() as AsistenciaData;
+          // ✅ Normalizar códigos legacy
           mapa[data.estudianteId] = normalizarEstado(data.estado, data.v2);
         });
         setAsistenciasDiaActividad(mapa);
@@ -1613,8 +1631,7 @@ export default function Calificaciones() {
 
           {gradoEfectivoId &&
             !gradoTieneMateriasConfiguradas &&
-            !esGradoInicialActual &&
-            !esTutorDelGradoActual && (
+            !esGradoInicialActual && (
               <div className="bg-orange-50 border-2 border-orange-300 rounded-xl p-6 mb-4">
                 <div className="flex items-start gap-4">
                   <div className="bg-orange-100 p-3 rounded-full shrink-0">
@@ -1646,9 +1663,7 @@ export default function Calificaciones() {
             )}
 
           {gradoEfectivoId &&
-            (gradoTieneMateriasConfiguradas ||
-              esGradoInicialActual ||
-              esTutorDelGradoActual) && (
+            (gradoTieneMateriasConfiguradas || esGradoInicialActual) && (
               <div className="bg-white rounded-xl shadow-sm border border-slate-200">
                 <div className="border-b border-slate-200 p-3">
                   <div className="flex flex-col gap-3">
@@ -1881,9 +1896,7 @@ export default function Calificaciones() {
                   {activeTab === "asistencia" &&
                     !todosConAsistencia &&
                     estudiantes.length > 0 &&
-                    (esGradoInicialActual ||
-                      materiaSeleccionadaEfectiva ||
-                      esTutorDelGradoActual) && (
+                    (esGradoInicialActual || materiaSeleccionadaEfectiva) && (
                       <div className="mb-4 bg-yellow-50 border border-yellow-200 rounded-lg px-3 py-2">
                         <div className="flex items-center gap-2 text-yellow-800">
                           <FaExclamationTriangle className="text-sm shrink-0" />
@@ -1913,8 +1926,7 @@ export default function Calificaciones() {
                     </div>
                   ) : activeTab === "asistencia" &&
                     esGradoBachillerato &&
-                    !materiaEfectivaId &&
-                    !esTutorDelGradoActual ? (
+                    !materiaEfectivaId ? (
                     <div className="text-center py-12 text-slate-500">
                       <FaBook className="text-4xl mx-auto mb-3 text-slate-300" />
                       <p className="font-medium mb-1">Selecciona una materia</p>
@@ -1924,7 +1936,8 @@ export default function Calificaciones() {
                     </div>
                   ) : activeTab === "calificaciones" && destrezaEfectivaId ? (
                     <>
-                      <div className="sticky top-22 z-30 -mx-4 px-4 py-2 bg-white/95 backdrop-blur border-b border-slate-200 mb-3">
+                      {/* Barra sticky de actividad */}
+                      <div className="sticky top-0 z-30 -mx-4 px-4 py-2 bg-white/95 backdrop-blur border-b border-slate-200 mb-3">
                         <div className="flex items-center gap-2">
                           <select
                             value={selectedActividadId}
@@ -2089,6 +2102,7 @@ export default function Calificaciones() {
                               const estadoAsistencia =
                                 asistenciasDiaActividad[est.id];
 
+                              // ✅ Usa estadoBloqueaNota y estadoEsAusencia
                               const ausenciaQueBloquea =
                                 estadoBloqueaNota(estadoAsistencia);
                               const bloqueadoPorAusenciaHoy =
@@ -2368,6 +2382,7 @@ export default function Calificaciones() {
                         const esDeOtroDocente =
                           asistencia?.registradoPor &&
                           asistencia.registradoPor !== user?.uid;
+                        // ✅ Un estado es "tutor-only" si su config tiene quien === "tutor"
                         const esTutorOnly =
                           !!asistencia?.esTutorOnly ||
                           (estado ? estadoEsTutorOnly(estado) : false);
@@ -2557,6 +2572,7 @@ export default function Calificaciones() {
         </>
       )}
 
+      {/* Barra sticky asistencia */}
       {mostrarBarraSticky && (
         <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] p-3 z-40">
           <div className="max-w-7xl mx-auto flex items-center justify-between gap-3">
@@ -2616,6 +2632,7 @@ export default function Calificaciones() {
         </div>
       )}
 
+      {/* Barra sticky calificaciones */}
       {mostrarBarraStickyCalificaciones && (
         <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] z-40">
           <div className="border-b border-slate-100 px-3 py-2">
