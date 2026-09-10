@@ -33,7 +33,14 @@ import {
   FaTimes,
   FaPrint,
   FaTimesCircle,
+  FaSignOutAlt,
 } from "react-icons/fa";
+import {
+  type EstadoAsistencia,
+  ESTADOS_ASISTENCIA,
+  normalizarEstado,
+  estadoConfig,
+} from "../utils/asistencia";
 
 interface AsistenciaData {
   id: string;
@@ -41,7 +48,8 @@ interface AsistenciaData {
   gradoId: string;
   fecha: string;
   ambitoId?: string;
-  estado: "P" | "T" | "A" | "J";
+  estado: string; // ✅ admite legacy durante la transición
+  v2?: boolean; // ✅ flag de migración
   observacion?: string;
   registradoPor?: string;
 }
@@ -147,7 +155,17 @@ const NOMBRES_MESES = [
   "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre",
 ];
 
-const ESTADO_CONFIG = {
+// ✅ CONFIGURACIÓN DE LOS 6 ESTADOS (usa `ESTADOS_ASISTENCIA` como fuente única)
+const ESTADO_CONFIG: Record<
+  EstadoAsistencia,
+  {
+    label: string;
+    color: string;
+    textColor: string;
+    bgColor: string;
+    icon: React.ComponentType<{ className?: string }>;
+  }
+> = {
   P: {
     label: "Presente",
     color: "bg-green-500",
@@ -155,19 +173,26 @@ const ESTADO_CONFIG = {
     bgColor: "bg-green-100",
     icon: FaCheckCircle,
   },
-  T: {
-    label: "Tardanza",
+  A: {
+    label: "Atraso",
     color: "bg-yellow-500",
     textColor: "text-yellow-700",
     bgColor: "bg-yellow-100",
     icon: FaClock,
   },
-  A: {
-    label: "Ausente",
+  I: {
+    label: "Inas. injustificada",
     color: "bg-red-500",
     textColor: "text-red-700",
     bgColor: "bg-red-100",
     icon: FaUserTimes,
+  },
+  F: {
+    label: "Abandono injustificado",
+    color: "bg-rose-600",
+    textColor: "text-rose-700",
+    bgColor: "bg-rose-100",
+    icon: FaSignOutAlt,
   },
   J: {
     label: "Justificado",
@@ -176,6 +201,13 @@ const ESTADO_CONFIG = {
     bgColor: "bg-blue-100",
     icon: FaUserCheck,
   },
+  PI: {
+    label: "Permiso inspección",
+    color: "bg-teal-500",
+    textColor: "text-teal-700",
+    bgColor: "bg-teal-100",
+    icon: FaFileSignature,
+  },
 };
 
 // ==================== COMPONENTE ====================
@@ -183,7 +215,6 @@ const ESTADO_CONFIG = {
 export default function ReporteAsistencias() {
   const { user, userData } = useAuth();
 
-  // ✅ Datos maestros desde el Context (cargados UNA sola vez)
   const {
     grados,
     ambitos,
@@ -222,7 +253,6 @@ export default function ReporteAsistencias() {
 
   const periodoInicializado = useRef(false);
 
-  // ✅ Cargar estudiantes (única lectura necesaria al entrar)
   useEffect(() => {
     if (!ready) return;
 
@@ -286,15 +316,12 @@ export default function ReporteAsistencias() {
     return vistaActiva;
   }, [vistaActiva, esTutor, gradosDocente]);
 
-  // ✅ Inicializar período seleccionado (desde datos del Context)
   useEffect(() => {
     if (periodos.length > 0 && !periodoInicializado.current) {
       setPeriodoSeleccionado(periodos[0].id);
       periodoInicializado.current = true;
     }
   }, [periodos]);
-
-  // ==================== HELPERS DE NOTIFICACIÓN ====================
 
   const mostrarToast = useCallback((
     type: Toast["type"],
@@ -314,8 +341,7 @@ export default function ReporteAsistencias() {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
 
-  // ==================== LISTENER DE ASISTENCIAS (único necesario) ====================
-
+  // ✅ Listener con normalización de códigos legacy → nuevos
   useEffect(() => {
     let isMounted = true;
     let fechasAFiltrar: string[] = [];
@@ -338,6 +364,24 @@ export default function ReporteAsistencias() {
       return;
     }
 
+    const normalizarDocs = (
+      docs: { id: string; data: () => Record<string, unknown> }[],
+    ): AsistenciaData[] => {
+      return docs.map((d) => {
+        const raw = d.data();
+        // ✅ Normalizar el estado: T→A, A→I si no es v2
+        const estadoNormalizado = normalizarEstado(
+          raw.estado as string | undefined,
+          raw.v2 as boolean | undefined,
+        );
+        return {
+          ...(raw as Record<string, unknown>),
+          id: d.id,
+          estado: estadoNormalizado || (raw.estado as string),
+        } as AsistenciaData;
+      });
+    };
+
     if (fechasAFiltrar.length <= 30) {
       const q = query(
         collection(db, "asistencias"),
@@ -346,9 +390,7 @@ export default function ReporteAsistencias() {
 
       const unsub = onSnapshot(q, (snap) => {
         if (!isMounted) return;
-        setAsistencias(
-          snap.docs.map((d) => ({ id: d.id, ...d.data() }) as AsistenciaData),
-        );
+        setAsistencias(normalizarDocs(snap.docs));
       });
 
       return () => {
@@ -366,11 +408,7 @@ export default function ReporteAsistencias() {
           where("fecha", "in", chunk),
         );
         const snap = await getDocs(q);
-        todas.push(
-          ...snap.docs.map(
-            (d) => ({ id: d.id, ...d.data() }) as AsistenciaData,
-          ),
-        );
+        todas.push(...normalizarDocs(snap.docs));
       }
       if (isMounted) setAsistencias(todas);
     };
@@ -462,6 +500,7 @@ export default function ReporteAsistencias() {
     });
   }, [asistencias, gradoTutorEfectivo, ambitos, destrezas]);
 
+  // ✅ Matriz con estados ya normalizados (6 estados)
   const matrizTutor = useMemo(() => {
     const mapa: Record<
       string,
@@ -470,7 +509,7 @@ export default function ReporteAsistencias() {
         Record<
           string,
           {
-            estado: "P" | "T" | "A" | "J";
+            estado: EstadoAsistencia;
             observacion?: string;
             asistenciaId: string;
           }
@@ -480,11 +519,13 @@ export default function ReporteAsistencias() {
     asistencias
       .filter((a) => a.gradoId === gradoTutorEfectivo)
       .forEach((a) => {
+        const estado = a.estado as EstadoAsistencia;
+        if (!estadoConfig(estado)) return; // ignorar estados desconocidos
         if (!mapa[a.estudianteId]) mapa[a.estudianteId] = {};
         if (!mapa[a.estudianteId][a.fecha]) mapa[a.estudianteId][a.fecha] = {};
         const materiaId = a.ambitoId || "sin_materia";
         mapa[a.estudianteId][a.fecha][materiaId] = {
-          estado: a.estado,
+          estado,
           observacion: a.observacion,
           asistenciaId: a.id,
         };
@@ -492,13 +533,14 @@ export default function ReporteAsistencias() {
     return mapa;
   }, [asistencias, gradoTutorEfectivo]);
 
+  // ✅ Ausencias INJUSTIFICADAS (I y F) — las que requieren justificación
   const ausenciasPorEstudiante = useMemo(() => {
     const conteo: Record<string, number> = {};
     Object.entries(matrizTutor).forEach(([estId, fechas]) => {
       let total = 0;
       Object.values(fechas).forEach((materias) => {
         Object.values(materias).forEach((reg) => {
-          if (reg.estado === "A") total++;
+          if (reg.estado === "I" || reg.estado === "F") total++;
         });
       });
       conteo[estId] = total;
@@ -506,6 +548,7 @@ export default function ReporteAsistencias() {
     return conteo;
   }, [matrizTutor]);
 
+  // ✅ Ausencias injustificadas por día (I y F)
   const ausenciasPorEstudiantePorDia = useMemo(() => {
     const conteo: Record<string, Record<string, number>> = {};
     Object.entries(matrizTutor).forEach(([estId, fechas]) => {
@@ -513,7 +556,7 @@ export default function ReporteAsistencias() {
       Object.entries(fechas).forEach(([fecha, materias]) => {
         let ausencias = 0;
         Object.values(materias).forEach((reg) => {
-          if (reg.estado === "A") ausencias++;
+          if (reg.estado === "I" || reg.estado === "F") ausencias++;
         });
         if (ausencias > 0) conteo[estId][fecha] = ausencias;
       });
@@ -541,32 +584,35 @@ export default function ReporteAsistencias() {
     });
   }, [asistenciasDocente, ambitos, destrezas]);
 
+  // ✅ Matriz docente con los 6 estados
   const matrizDocente = useMemo(() => {
     const mapa: Record<
       string,
       Record<
         string,
-        { P: number; T: number; A: number; J: number; total: number }
+        { P: number; A: number; I: number; F: number; J: number; PI: number; total: number }
       >
     > = {};
     asistenciasDocente.forEach((a) => {
+      const estado = a.estado as EstadoAsistencia;
+      if (!estadoConfig(estado)) return;
       const materiaId = a.ambitoId || "sin_materia";
       if (!mapa[materiaId]) mapa[materiaId] = {};
       if (!mapa[materiaId][a.fecha]) {
-        mapa[materiaId][a.fecha] = { P: 0, T: 0, A: 0, J: 0, total: 0 };
+        mapa[materiaId][a.fecha] = { P: 0, A: 0, I: 0, F: 0, J: 0, PI: 0, total: 0 };
       }
-      mapa[materiaId][a.fecha][a.estado]++;
+      (mapa[materiaId][a.fecha] as Record<string, number>)[estado]++;
       mapa[materiaId][a.fecha].total++;
     });
     return mapa;
   }, [asistenciasDocente]);
 
   const renderCeldaEstado = (
-    estado?: "P" | "T" | "A" | "J",
+    estado?: EstadoAsistencia,
     observacion?: string,
     materiaNombre?: string,
   ) => {
-    if (!estado) {
+    if (!estado || !ESTADO_CONFIG[estado]) {
       return (
         <div className="w-full h-full flex items-center justify-center text-slate-300 text-xs">
           —
@@ -624,6 +670,7 @@ export default function ReporteAsistencias() {
     );
   };
 
+  // ✅ Justifica I y F → J
   async function justificarDiasSeleccionados() {
     if (!estudianteJustificarId || diasJustificar.size === 0) {
       mostrarToast("warning", "Selección requerida", "Debes seleccionar al menos un día para justificar.");
@@ -638,12 +685,14 @@ export default function ReporteAsistencias() {
       diasJustificar.forEach((fechaISO) => {
         const regsDelDia = regsEstudiante[fechaISO] || {};
         Object.values(regsDelDia).forEach((reg) => {
-          if (reg.estado === "A") asistenciasAActualizar.push(reg.asistenciaId);
+          if (reg.estado === "I" || reg.estado === "F") {
+            asistenciasAActualizar.push(reg.asistenciaId);
+          }
         });
       });
 
       if (asistenciasAActualizar.length === 0) {
-        mostrarToast("info", "Sin ausencias", "No hay ausencias para justificar en los días seleccionados.");
+        mostrarToast("info", "Sin ausencias injustificadas", "No hay inasistencias ni abandonos para justificar en los días seleccionados.");
         setIsJustificando(false);
         return;
       }
@@ -655,6 +704,7 @@ export default function ReporteAsistencias() {
       const batch = asistenciasAActualizar.map((asistenciaId) =>
         updateDoc(doc(db, "asistencias", asistenciaId), {
           estado: "J",
+          v2: true,
           observacion,
           justificadoPor: user?.uid,
           justificadoEl: serverTimestamp(),
@@ -740,7 +790,7 @@ export default function ReporteAsistencias() {
               <td class="num">${idx + 1}</td>
               <td class="name">${est.apellidos} ${est.nombres}</td>
               ${celdas}
-              <td class="${aus > 0 ? "st-A" : ""}">${aus}</td>
+              <td class="${aus > 0 ? "st-I" : ""}">${aus}</td>
             </tr>`;
           })
           .join("");
@@ -752,7 +802,7 @@ export default function ReporteAsistencias() {
                 <th class="num">#</th>
                 <th class="name">Estudiante</th>
                 ${encabezados}
-                <th>Aus.</th>
+                <th>Inas.</th>
               </tr>
             </thead>
             <tbody>${filas}</tbody>
@@ -760,24 +810,28 @@ export default function ReporteAsistencias() {
       } else {
         const filas = estudiantesGradoTutor
           .map((est, idx) => {
-            let P = 0, T = 0, A = 0, J = 0;
+            let P = 0, A = 0, I = 0, F = 0, J = 0, PI = 0;
             Object.values(matrizTutor[est.id] || {}).forEach((mats) =>
               Object.values(mats).forEach((r) => {
                 if (r.estado === "P") P++;
-                else if (r.estado === "T") T++;
                 else if (r.estado === "A") A++;
-                else J++;
+                else if (r.estado === "I") I++;
+                else if (r.estado === "F") F++;
+                else if (r.estado === "J") J++;
+                else if (r.estado === "PI") PI++;
               }),
             );
-            const total = P + T + A + J;
-            const pct = total > 0 ? Math.round(((P + T + J) / total) * 100) : 0;
+            const total = P + A + I + F + J + PI;
+            const pct = total > 0 ? Math.round(((P + A + J + PI) / total) * 100) : 0;
             return `<tr>
               <td class="num">${idx + 1}</td>
               <td class="name">${est.apellidos} ${est.nombres}</td>
               <td class="st-P">${P}</td>
-              <td class="st-T">${T}</td>
               <td class="st-A">${A}</td>
+              <td class="st-I">${I}</td>
+              <td class="st-F">${F}</td>
               <td class="st-J">${J}</td>
+              <td class="st-PI">${PI}</td>
               <td><strong>${pct}%</strong></td>
             </tr>`;
           })
@@ -789,10 +843,12 @@ export default function ReporteAsistencias() {
               <tr>
                 <th class="num">#</th>
                 <th class="name">Estudiante</th>
-                <th>Presentes</th>
-                <th>Tardanzas</th>
-                <th>Ausencias</th>
-                <th>Justificados</th>
+                <th>Pres.</th>
+                <th>Atrasos</th>
+                <th>Inas.</th>
+                <th>Aband.</th>
+                <th>Justif.</th>
+                <th>Perm.Insp.</th>
                 <th>% Asist.</th>
               </tr>
             </thead>
@@ -816,9 +872,11 @@ export default function ReporteAsistencias() {
                 if (!d || d.total === 0) return `<td class="sin">—</td>`;
                 const partes = [];
                 if (d.P) partes.push(`<span class="st-P">${d.P}P</span>`);
-                if (d.T) partes.push(`<span class="st-T">${d.T}T</span>`);
-                if (d.A) partes.push(`<span class="st-A">${d.A}A</span>`);
-                if (d.J) partes.push(`<span class="st-J">${d.J}J</span>`);
+                if (d.A) partes.push(`<span class="st-A">${d.A}a</span>`);
+                if (d.I) partes.push(`<span class="st-I">${d.I}i</span>`);
+                if (d.F) partes.push(`<span class="st-F">${d.F}f</span>`);
+                if (d.J) partes.push(`<span class="st-J">${d.J}j</span>`);
+                if (d.PI) partes.push(`<span class="st-PI">${d.PI}pi</span>`);
                 return `<td>${partes.join(" ")}</td>`;
               })
               .join("");
@@ -839,21 +897,25 @@ export default function ReporteAsistencias() {
       } else {
         const filas = materiasDocenteGrado
           .map((m) => {
-            let P = 0, T = 0, A = 0, J = 0, sesiones = 0;
+            let P = 0, A = 0, I = 0, F = 0, J = 0, PI = 0, sesiones = 0;
             Object.values(matrizDocente[m.id] || {}).forEach((d) => {
               P += d.P;
-              T += d.T;
               A += d.A;
+              I += d.I;
+              F += d.F;
               J += d.J;
+              PI += d.PI;
               if (d.total > 0) sesiones++;
             });
             return `<tr>
               <td class="name">${m.nombre}</td>
               <td>${sesiones}</td>
               <td class="st-P">${P}</td>
-              <td class="st-T">${T}</td>
               <td class="st-A">${A}</td>
+              <td class="st-I">${I}</td>
+              <td class="st-F">${F}</td>
               <td class="st-J">${J}</td>
+              <td class="st-PI">${PI}</td>
             </tr>`;
           })
           .join("");
@@ -864,10 +926,12 @@ export default function ReporteAsistencias() {
               <tr>
                 <th class="name">Materia</th>
                 <th>Días reg.</th>
-                <th>Presentes</th>
-                <th>Tardanzas</th>
-                <th>Ausencias</th>
-                <th>Justificados</th>
+                <th>Pres.</th>
+                <th>Atrasos</th>
+                <th>Inas.</th>
+                <th>Aband.</th>
+                <th>Justif.</th>
+                <th>Perm.Insp.</th>
               </tr>
             </thead>
             <tbody>${filas}</tbody>
@@ -901,12 +965,14 @@ export default function ReporteAsistencias() {
   td.num, th.num { width: 22px; color: #6b7280; }
   td.sin { color: #d1d5db; }
   tr { page-break-inside: avoid; }
-  .st-P { color: #15803d; font-weight: bold; }
-  .st-T { color: #a16207; font-weight: bold; }
-  .st-A { color: #b91c1c; font-weight: bold; }
-  .st-J { color: #1d4ed8; font-weight: bold; }
+  .st-P  { color: #15803d; font-weight: bold; }
+  .st-A  { color: #a16207; font-weight: bold; }
+  .st-I  { color: #b91c1c; font-weight: bold; }
+  .st-F  { color: #9f1239; font-weight: bold; }
+  .st-J  { color: #1d4ed8; font-weight: bold; }
+  .st-PI { color: #0f766e; font-weight: bold; }
   .legend { margin-top: 10px; font-size: 9px; color: #374151; }
-  .legend span { margin-right: 12px; }
+  .legend span { margin-right: 10px; }
   .signatures { display: flex; justify-content: space-around; margin-top: 55px; }
   .sig { width: 220px; text-align: center; border-top: 1px solid #1f2937; padding-top: 4px; font-size: 10px; }
   .sig .rol { font-weight: bold; }
@@ -931,9 +997,11 @@ export default function ReporteAsistencias() {
   <div class="legend">
     <strong>Estados:</strong>
     <span class="st-P">P = Presente</span>
-    <span class="st-T">T = Tardanza</span>
-    <span class="st-A">A = Ausente</span>
-    <span class="st-J">J = Justificado</span>
+    <span class="st-A">a = Atraso</span>
+    <span class="st-I">i = Inasistencia injustificada</span>
+    <span class="st-F">f = Abandono injustificado</span>
+    <span class="st-J">j = Justificado</span>
+    <span class="st-PI">pi = Permiso de inspección</span>
   </div>
   <div class="signatures">
     <div class="sig">
@@ -1006,7 +1074,6 @@ export default function ReporteAsistencias() {
     },
   };
 
-  // ✅ Loading global: espera a que el Context cargue los datos maestros
   if (!ready || loadingEstudiantes) {
     return (
       <Layout>
@@ -1167,20 +1234,22 @@ export default function ReporteAsistencias() {
         )}
       </div>
 
+      {/* ✅ Leyenda con los 6 estados */}
       <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4 mb-6">
         <div className="flex flex-wrap items-center gap-4 text-xs">
           <span className="font-semibold text-slate-700">Estados:</span>
-          {Object.entries(ESTADO_CONFIG).map(([key, cfg]) => {
+          {ESTADOS_ASISTENCIA.map((e) => {
+            const cfg = ESTADO_CONFIG[e.value];
             const Icon = cfg.icon;
             return (
-              <div key={key} className="flex items-center gap-1.5">
+              <div key={e.value} className="flex items-center gap-1.5">
                 <div
                   className={`w-5 h-5 rounded ${cfg.bgColor} flex items-center justify-center`}
                 >
                   <Icon className={`text-xs ${cfg.textColor}`} />
                 </div>
                 <span className="text-slate-600">
-                  <strong>{key}</strong> = {cfg.label}
+                  <strong>{e.codigo || e.value}</strong> = {cfg.label}
                 </span>
               </div>
             );
@@ -1324,7 +1393,7 @@ export default function ReporteAsistencias() {
                         </th>
                       )}
                       <th className="text-center px-3 py-3 font-semibold text-slate-700 min-w-17.5">
-                        Aus.
+                        Inas.
                       </th>
                       <th className="text-center px-3 py-3 font-semibold text-slate-700 min-w-20">
                         Acción
@@ -1376,6 +1445,7 @@ export default function ReporteAsistencias() {
                                       .map(([materiaId, reg]) => {
                                         const config =
                                           ESTADO_CONFIG[reg.estado];
+                                        if (!config) return null;
                                         const Icon = config.icon;
                                         const materiaNombre =
                                           materiasGradoTutor.find(
@@ -1415,7 +1485,7 @@ export default function ReporteAsistencias() {
                               <button
                                 onClick={() => abrirModalJustificar(est.id)}
                                 className="inline-flex items-center gap-1 px-2 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold transition-all shadow-sm"
-                                title="Justificar ausencias"
+                                title="Justificar inasistencias y abandonos"
                               >
                                 <FaFileSignature className="text-[10px]" />
                                 Justificar
@@ -1435,7 +1505,7 @@ export default function ReporteAsistencias() {
                 <FaInfoCircle className="inline mr-1" />
                 <strong>Nota:</strong>{" "}
                 {tipoReporte === "semanal"
-                  ? "Vista detallada de la semana."
+                  ? "Vista detallada de la semana. La columna «Inas.» cuenta solo inasistencias injustificadas (i) y abandonos (f)."
                   : `Mostrando primeros ${diasVisibles.length} días de ${diasAMostrar.length} días hábiles del período.`}{" "}
                 {tipoReporte !== "semanal" &&
                   "La justificación solo está disponible en vista semanal."}
@@ -1573,22 +1643,34 @@ export default function ReporteAsistencias() {
                                         {datos.P}
                                       </span>
                                     )}
-                                    {datos.T > 0 && (
+                                    {datos.A > 0 && (
                                       <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 bg-yellow-100 text-yellow-700 rounded text-xs font-bold">
                                         <FaClock className="text-[9px]" />
-                                        {datos.T}
+                                        {datos.A}
                                       </span>
                                     )}
-                                    {datos.A > 0 && (
+                                    {datos.I > 0 && (
                                       <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 bg-red-100 text-red-700 rounded text-xs font-bold">
                                         <FaUserTimes className="text-[9px]" />
-                                        {datos.A}
+                                        {datos.I}
+                                      </span>
+                                    )}
+                                    {datos.F > 0 && (
+                                      <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 bg-rose-100 text-rose-700 rounded text-xs font-bold">
+                                        <FaSignOutAlt className="text-[9px]" />
+                                        {datos.F}
                                       </span>
                                     )}
                                     {datos.J > 0 && (
                                       <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded text-xs font-bold">
                                         <FaUserCheck className="text-[9px]" />
                                         {datos.J}
+                                      </span>
+                                    )}
+                                    {datos.PI > 0 && (
+                                      <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 bg-teal-100 text-teal-700 rounded text-xs font-bold">
+                                        <FaFileSignature className="text-[9px]" />
+                                        {datos.PI}
                                       </span>
                                     )}
                                   </div>
@@ -1667,7 +1749,7 @@ export default function ReporteAsistencias() {
                 {estudianteJustificar.apellidos} {estudianteJustificar.nombres}
               </p>
               <p className="text-xs text-purple-600 mt-1">
-                Total de ausencias esta semana:{" "}
+                Total de ausencias injustificadas (i + f) esta semana:{" "}
                 <strong>
                   {ausenciasPorEstudiante[estudianteJustificar.id] ?? 0}
                 </strong>
@@ -1731,7 +1813,7 @@ export default function ReporteAsistencias() {
                         </span>
                       ) : (
                         <span className="text-xs text-slate-400 italic">
-                          Sin ausencias
+                          Sin ausencias injustificadas
                         </span>
                       )}
                     </label>
@@ -1758,7 +1840,7 @@ export default function ReporteAsistencias() {
             {diasJustificar.size > 0 && (
               <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg text-xs text-blue-800">
                 <FaInfoCircle className="inline mr-1" />
-                Se justificarán todas las ausencias de{" "}
+                Se justificarán todas las inasistencias (i) y abandonos (f) de{" "}
                 <strong>{diasJustificar.size} día(s)</strong> en{" "}
                 <strong>todas las materias</strong> registradas.
               </div>
