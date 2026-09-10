@@ -64,8 +64,8 @@ interface AsistenciaData {
   periodoId: string;
   fecha: string;
   ambitoId?: string;
-  estado: EstadoAsistencia | string; // admite legacy durante la transición
-  v2?: boolean; // ✅ flag de migración
+  estado: EstadoAsistencia | string;
+  v2?: boolean;
   observacion?: string;
   registradoPor?: string;
   editadoPor?: string;
@@ -274,7 +274,6 @@ export default function Calificaciones() {
     new Date().toISOString().split("T")[0],
   );
 
-  // ✅ Estados de asistencia con nueva nomenclatura
   const [asistencias, setAsistencias] = useState<
     Record<
       string,
@@ -284,7 +283,7 @@ export default function Calificaciones() {
         registradoPor?: string;
         editadoPor?: string;
         justificadoPor?: string;
-        esTutorOnly?: boolean; // bloqueado para docente
+        esTutorOnly?: boolean;
       }
     >
   >({});
@@ -366,18 +365,12 @@ export default function Calificaciones() {
   const esGradoBachillerato = esBachillerato(gradoEfectivoNombre);
   const esGradoInicialActual = esGradoInicial(gradoEfectivoNombre);
 
-  // ✅ ¿El docente es tutor del grado actual?
   const esTutorDelGradoActual = gradoEfectivoId
     ? (userData?.tutorDe || []).includes(gradoEfectivoId)
     : false;
 
-  // ✅ Estados visibles según rol para este grado
-  const estadosVisibles = useMemo(() => {
-    return ESTADOS_ASISTENCIA.filter((e) => {
-      if (e.quien === "tutor") return esTutorDelGradoActual;
-      return true; // P, A, I, F siempre visibles para docente
-    });
-  }, [esTutorDelGradoActual]);
+  // ✅ Todos los estados visibles (J se mostrará bloqueado)
+  const estadosVisibles = useMemo(() => ESTADOS_ASISTENCIA, []);
 
   const nombreDocente = (uid?: string) =>
     uid ? nombresDocentes[uid] || "Docente" : "";
@@ -655,7 +648,6 @@ export default function Calificaciones() {
       estudiantes.forEach((est) => {
         const asistencia = asistencias[est.id];
         if (!asistencia || !asistencia.estado) return;
-        // ✅ No permitir que un docente modifique un estado tutor-only
         if (asistencia.esTutorOnly && !esTutorDelGradoActual) return;
 
         const existente = existentesMap.get(est.id);
@@ -664,7 +656,6 @@ export default function Calificaciones() {
           existente?.data.v2,
         );
         const configExistente = estadoConfig(estadoExistenteNormalizado);
-        // Si el estado existente es tutor-only y el usuario no es tutor, no modificar
         if (configExistente?.quien === "tutor" && !esTutorDelGradoActual)
           return;
 
@@ -676,7 +667,7 @@ export default function Calificaciones() {
           fecha: fechaAsistencia,
           ambitoId: ambitoIdParaGuardar,
           estado: asistencia.estado,
-          v2: true, // ✅ marca el registro como nueva nomenclatura
+          v2: true,
           observacion: asistencia.observacion || "",
           updatedAt: serverTimestamp(),
         };
@@ -881,7 +872,6 @@ export default function Calificaciones() {
           calificacion.nota.trim() === ""
         )
           return;
-        // ✅ Usa estadoBloqueaNota en lugar de comparar contra "A"
         const estadoEseDia = asistenciasDiaActividad[est.id];
         if (estadoBloqueaNota(estadoEseDia) && actividadEsHoy) return;
         const notaNum = parseFloat(calificacion.nota);
@@ -1010,9 +1000,7 @@ export default function Calificaciones() {
     estado: EstadoAsistencia,
   ) => {
     const actual = asistencias[estudianteId];
-    // No permitir modificar estado tutor-only si no soy tutor
     if (actual?.esTutorOnly && !esTutorDelGradoActual) return;
-    // No permitir que docente asigne estado tutor-only
     const config = estadoConfig(estado);
     if (config?.quien === "tutor" && !esTutorDelGradoActual) return;
 
@@ -1028,7 +1016,6 @@ export default function Calificaciones() {
   };
 
   const marcarTodosAsistencia = (estado: EstadoAsistencia) => {
-    // ✅ No permitir marcar todos con estados tutor-only (J, PI)
     const config = estadoConfig(estado);
     if (config?.quien === "tutor") return;
 
@@ -1036,7 +1023,6 @@ export default function Calificaciones() {
       const nuevas: typeof prev = {};
       estudiantes.forEach((est) => {
         const actual = prev[est.id];
-        // Respetar estados tutor-only previos
         if (actual?.esTutorOnly) {
           nuevas[est.id] = actual;
         } else {
@@ -1057,7 +1043,6 @@ export default function Calificaciones() {
       const nuevas: typeof prev = {};
       estudiantes.forEach((est) => {
         const actual = prev[est.id];
-        // ✅ Respetar estados tutor-only (J, PI) al limpiar
         if (actual?.esTutorOnly) {
           nuevas[est.id] = actual;
         }
@@ -1079,7 +1064,6 @@ export default function Calificaciones() {
   const actualizarCalificacion = (estudianteId: string, valor: string) => {
     const estadoEseDia = asistenciasDiaActividad[estudianteId];
     const actividadEsHoy = esFechaHoy(actividadSeleccionada?.fecha || "");
-    // ✅ Usa estadoBloqueaNota
     if (estadoBloqueaNota(estadoEseDia) && actividadEsHoy) return;
 
     if (valor === "") {
@@ -1124,9 +1108,7 @@ export default function Calificaciones() {
       const nuevas = { ...prev };
       estudiantes.forEach((est) => {
         const estadoEseDia = asistenciasDiaActividad[est.id];
-        // ✅ Usa estadoBloqueaNota
         if (estadoBloqueaNota(estadoEseDia) && actividadEsHoy) return;
-        // ✅ No sobrescribir notas que ya tienen refuerzo aplicado
         if (calificaciones[est.id]?.refuerzo) return;
 
         nuevas[est.id] = {
@@ -1162,8 +1144,6 @@ export default function Calificaciones() {
       }
     }
   };
-
-  // ==================== EFFECTS ====================
 
   useEffect(() => {
     if (!gradoEfectivoId) return;
@@ -1269,7 +1249,6 @@ export default function Calificaciones() {
     fetchCalificaciones();
   }, [selectedActividadId]);
 
-  // ✅ Efecto con normalizador de códigos legacy → nuevos
   useEffect(() => {
     if (!gradoEfectivoId || !fechaAsistencia || estudiantes.length === 0) {
       return;
@@ -1309,7 +1288,6 @@ export default function Calificaciones() {
         > = {};
         snapshot.docs.forEach((docSnap) => {
           const data = docSnap.data() as AsistenciaData;
-          // ✅ Normalizar códigos legacy (T→A, A→I)
           const estadoNormalizado = normalizarEstado(data.estado, data.v2);
           const config = estadoConfig(estadoNormalizado);
           asistenciasMap[data.estudianteId] = {
@@ -1341,7 +1319,6 @@ export default function Calificaciones() {
     estudiantes.length,
   ]);
 
-  // ✅ Efecto asistencias del día de la actividad con normalizador
   useEffect(() => {
     const actividad = actividades.find((a) => a.id === selectedActividadId);
     if (!actividad || !gradoEfectivoId || !selectedActividadId) {
@@ -1379,7 +1356,6 @@ export default function Calificaciones() {
         const mapa: Record<string, EstadoAsistencia | undefined> = {};
         snapshot.docs.forEach((docSnap) => {
           const data = docSnap.data() as AsistenciaData;
-          // ✅ Normalizar códigos legacy
           mapa[data.estudianteId] = normalizarEstado(data.estado, data.v2);
         });
         setAsistenciasDiaActividad(mapa);
@@ -1948,7 +1924,6 @@ export default function Calificaciones() {
                     </div>
                   ) : activeTab === "calificaciones" && destrezaEfectivaId ? (
                     <>
-                      {/* ✅ BARRA STICKY DE ACTIVIDAD (Opción A) */}
                       <div className="sticky top-22 z-30 -mx-4 px-4 py-2 bg-white/95 backdrop-blur border-b border-slate-200 mb-3">
                         <div className="flex items-center gap-2">
                           <select
@@ -2060,7 +2035,7 @@ export default function Calificaciones() {
                                     <>
                                       La actividad es <strong>de hoy</strong>.
                                       Los estudiantes con inasistencia
-                                      injustificada o abandono{" "}
+                                      injustificada o fuga{" "}
                                       <strong>NO podrán recibir nota</strong>{" "}
                                       hasta que el tutor justifique su falta.
                                     </>
@@ -2104,7 +2079,6 @@ export default function Calificaciones() {
                                 notaOriginal !== undefined
                                   ? notaALetra(notaFinal)
                                   : "";
-                              // ✅ Si hay refuerzo, la caja muestra la NOTA FINAL
                               const tieneRefuerzo = !!calificacion?.refuerzo;
                               const notaMostrada = tieneRefuerzo
                                 ? String(round2(notaFinal))
@@ -2115,7 +2089,6 @@ export default function Calificaciones() {
                               const estadoAsistencia =
                                 asistenciasDiaActividad[est.id];
 
-                              // ✅ Usa estadoBloqueaNota y estadoEsAusencia
                               const ausenciaQueBloquea =
                                 estadoBloqueaNota(estadoAsistencia);
                               const bloqueadoPorAusenciaHoy =
@@ -2176,13 +2149,7 @@ export default function Calificaciones() {
                                       {estadoAsistencia &&
                                         estadoEsTutorOnly(estadoAsistencia) &&
                                         !bloqueadoPorAusenciaHoy && (
-                                          <div
-                                            className={`inline-flex items-center gap-1 mt-1 px-2 py-0.5 rounded text-[10px] font-bold ${
-                                              estadoAsistencia === "J"
-                                                ? "bg-blue-100 border border-blue-300 text-blue-700"
-                                                : "bg-teal-100 border border-teal-300 text-teal-700"
-                                            }`}
-                                          >
+                                          <div className="inline-flex items-center gap-1 mt-1 px-2 py-0.5 rounded text-[10px] font-bold bg-blue-100 border border-blue-300 text-blue-700">
                                             <FaUserCheck className="text-[9px]" />
                                             {configEstadoAsistencia?.label}
                                           </div>
@@ -2218,7 +2185,7 @@ export default function Calificaciones() {
                                       {bloqueadoPorAusenciaHoy ? (
                                         <span
                                           className="px-3 py-1.5 rounded text-xs font-bold bg-red-100 border-2 border-red-300 text-red-700"
-                                          title="Estudiante con inasistencia/abandono hoy: no puede recibir nota hasta que el tutor justifique"
+                                          title="Estudiante con inasistencia/fuga hoy: no puede recibir nota hasta que el tutor justifique"
                                         >
                                           Sin nota
                                         </span>
@@ -2388,7 +2355,7 @@ export default function Calificaciones() {
                           <button
                             onClick={limpiarAsistencias}
                             className="px-3 py-1.5 bg-slate-200 text-slate-700 hover:bg-slate-300 rounded-md text-xs font-bold transition-colors flex items-center gap-1.5 ml-auto"
-                            title="Limpiar asistencias (respeta J/PI del tutor)"
+                            title="Limpiar asistencias (respeta J del tutor)"
                           >
                             <FaUndo /> Limpiar
                           </button>
@@ -2401,7 +2368,6 @@ export default function Calificaciones() {
                         const esDeOtroDocente =
                           asistencia?.registradoPor &&
                           asistencia.registradoPor !== user?.uid;
-                        // ✅ Un estado es "tutor-only" si su config tiene quien === "tutor"
                         const esTutorOnly =
                           !!asistencia?.esTutorOnly ||
                           (estado ? estadoEsTutorOnly(estado) : false);
@@ -2412,9 +2378,7 @@ export default function Calificaciones() {
                             key={est.id}
                             className={`border rounded-lg p-3 transition-colors ${
                               esTutorOnly
-                                ? estado === "J"
-                                  ? "border-blue-300 bg-blue-50/50"
-                                  : "border-teal-300 bg-teal-50/50"
+                                ? "border-blue-300 bg-blue-50/50"
                                 : "border-slate-200 hover:border-blue-300"
                             }`}
                           >
@@ -2429,13 +2393,7 @@ export default function Calificaciones() {
                                   </div>
                                 )}
                                 {esTutorOnly && (
-                                  <div
-                                    className={`inline-flex items-center gap-1 mt-1 px-2 py-0.5 rounded text-[10px] font-bold ${
-                                      estado === "J"
-                                        ? "bg-blue-100 border border-blue-300 text-blue-700"
-                                        : "bg-teal-100 border border-teal-300 text-teal-700"
-                                    }`}
-                                  >
+                                  <div className="inline-flex items-center gap-1 mt-1 px-2 py-0.5 rounded text-[10px] font-bold bg-blue-100 border border-blue-300 text-blue-700">
                                     <FaLock className="text-[9px]" />
                                     {configEstado?.label}
                                     {!esTutorDelGradoActual && (
@@ -2473,53 +2431,96 @@ export default function Calificaciones() {
                                     </div>
                                   )}
                               </div>
-                              <div className="flex gap-1 shrink-0 flex-wrap justify-end max-w-[60%]">
+                              <div className="flex gap-1 shrink-0 flex-wrap justify-end">
                                 {estadosVisibles.map((estadoConf) => {
                                   const estaSeleccionado =
                                     estado === estadoConf.value;
-
-                                  // Si el estado actual es tutor-only y el docente no es tutor, bloquear todos los botones
-                                  if (esTutorOnly && !esTutorDelGradoActual) {
-                                    return (
-                                      <button
-                                        key={estadoConf.value}
-                                        disabled
-                                        title="Estado bloqueado por tutor"
-                                        className={`h-9 px-2 rounded-lg text-[10px] font-bold transition-all ${
-                                          estaSeleccionado
-                                            ? `${estadoConf.colorSel} ring-2 ring-offset-1 ring-blue-300 cursor-not-allowed`
-                                            : "bg-slate-100 text-slate-300 cursor-not-allowed opacity-50"
-                                        }`}
-                                      >
-                                        {estadoConf.label}
-                                      </button>
-                                    );
-                                  }
+                                  const esEstadoTutor =
+                                    estadoConf.quien === "tutor";
+                                  const bloqueadoPorTutoria =
+                                    esTutorOnly && !esTutorDelGradoActual;
+                                  const disabled =
+                                    esEstadoTutor || bloqueadoPorTutoria;
 
                                   return (
                                     <button
                                       key={estadoConf.value}
                                       onClick={() =>
+                                        !disabled &&
                                         actualizarAsistencia(
                                           est.id,
                                           estadoConf.value,
                                         )
                                       }
-                                      className={`h-9 px-2 rounded-lg text-[10px] font-bold transition-all ${
+                                      disabled={disabled}
+                                      title={
+                                        esEstadoTutor
+                                          ? `${estadoConf.label} — solo el tutor en Reporte de Asistencias`
+                                          : bloqueadoPorTutoria
+                                            ? "Estado definido por el tutor (bloqueado)"
+                                            : estadoConf.label
+                                      }
+                                      className={`h-9 min-w-9 px-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-0.5 ${
                                         estaSeleccionado
-                                          ? estadoConf.colorSel
-                                          : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                                          ? `${estadoConf.colorSel} ${
+                                              disabled
+                                                ? "opacity-70 cursor-not-allowed ring-1 ring-slate-300"
+                                                : ""
+                                            }`
+                                          : disabled
+                                            ? "bg-slate-100 text-slate-400 cursor-not-allowed opacity-60"
+                                            : "bg-slate-100 text-slate-700 hover:bg-slate-200"
                                       }`}
-                                      title={estadoConf.label}
                                     >
-                                      {estadoConf.label}
+                                      {estadoConf.value}
+                                      {esEstadoTutor && (
+                                        <FaLock className="text-[8px] opacity-70" />
+                                      )}
                                     </button>
                                   );
                                 })}
                               </div>
                             </div>
                             {estado && (
-                              <div className="mt-2">
+                              <div className="mt-2 space-y-1.5">
+                                {/* ✅ Observaciones predefinidas (solo si es P o A) */}
+                                {(estado === "P" || estado === "A") &&
+                                  !esTutorOnly && (
+                                    <div className="flex gap-1.5 flex-wrap">
+                                      <span className="text-[10px] text-slate-500 self-center mr-1">
+                                        Marcar:
+                                      </span>
+                                      {[
+                                        { value: "", label: "Sin observación" },
+                                        {
+                                          value: "Permiso de inspección",
+                                          label: "📋 Permiso de inspección",
+                                        },
+                                        {
+                                          value: "Llamado por dirección",
+                                          label: "🏢 Llamado por dirección",
+                                        },
+                                      ].map((opt) => (
+                                        <button
+                                          key={opt.value}
+                                          onClick={() =>
+                                            actualizarObservacionAsistencia(
+                                              est.id,
+                                              opt.value,
+                                            )
+                                          }
+                                          className={`px-2 py-0.5 rounded text-[10px] font-medium transition-all ${
+                                            (asistencia?.observacion || "") ===
+                                            opt.value
+                                              ? "bg-blue-100 text-blue-700 border border-blue-300"
+                                              : "bg-slate-100 text-slate-600 hover:bg-slate-200 border border-transparent"
+                                          }`}
+                                        >
+                                          {opt.label}
+                                        </button>
+                                      ))}
+                                    </div>
+                                  )}
                                 <input
                                   type="text"
                                   value={asistencia?.observacion || ""}
@@ -2532,7 +2533,7 @@ export default function Calificaciones() {
                                   placeholder={
                                     esTutorOnly && !esTutorDelGradoActual
                                       ? "Observación del tutor (no editable)"
-                                      : "Observación (opcional)..."
+                                      : "Observación libre (opcional)..."
                                   }
                                   disabled={
                                     esTutorOnly && !esTutorDelGradoActual
@@ -2556,7 +2557,6 @@ export default function Calificaciones() {
         </>
       )}
 
-      {/* ✅ BARRA STICKY ASISTENCIA */}
       {mostrarBarraSticky && (
         <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] p-3 z-40">
           <div className="max-w-7xl mx-auto flex items-center justify-between gap-3">
@@ -2616,7 +2616,6 @@ export default function Calificaciones() {
         </div>
       )}
 
-      {/* ✅ BARRA STICKY CALIFICACIONES */}
       {mostrarBarraStickyCalificaciones && (
         <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] z-40">
           <div className="border-b border-slate-100 px-3 py-2">
@@ -3005,7 +3004,7 @@ export default function Calificaciones() {
                 disabled={
                   isSaving || refuerzoForm.nota <= 0 || refuerzoForm.nota > 10
                 }
-                className="flex-1 bg-orange-600 hover:bg-orange-700 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-all flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed"
+                className="flex-1 bg-orange-600 hover:bg-orange-700 text-white px-4 py-2.5 rounded-lg text-sm font-semibold transition-all flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed"
               >
                 {isSaving ? (
                   <FaSpinner className="animate-spin" />
@@ -3019,7 +3018,7 @@ export default function Calificaciones() {
                   setShowRefuerzoModal(false);
                   setRefuerzoEstudianteId(null);
                 }}
-                className="flex-1 bg-slate-200 hover:bg-slate-300 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold transition-all"
+                className="flex-1 bg-slate-200 hover:bg-slate-300 text-slate-700 px-4 py-2.5 rounded-lg text-sm font-semibold transition-all"
               >
                 Cancelar
               </button>
