@@ -48,8 +48,8 @@ interface AsistenciaData {
   gradoId: string;
   fecha: string;
   ambitoId?: string;
-  estado: string; // ✅ admite legacy durante la transición
-  v2?: boolean; // ✅ flag de migración
+  estado: string; // admite legacy durante la transición
+  v2?: boolean;
   observacion?: string;
   registradoPor?: string;
 }
@@ -155,7 +155,7 @@ const NOMBRES_MESES = [
   "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre",
 ];
 
-// ✅ CONFIGURACIÓN DE LOS 6 ESTADOS (usa `ESTADOS_ASISTENCIA` como fuente única)
+// ✅ Configuración de los 5 estados (sin PI)
 const ESTADO_CONFIG: Record<
   EstadoAsistencia,
   {
@@ -188,7 +188,7 @@ const ESTADO_CONFIG: Record<
     icon: FaUserTimes,
   },
   F: {
-    label: "Abandono injustificado",
+    label: "Fuga/abandono",
     color: "bg-rose-600",
     textColor: "text-rose-700",
     bgColor: "bg-rose-100",
@@ -200,13 +200,6 @@ const ESTADO_CONFIG: Record<
     textColor: "text-blue-700",
     bgColor: "bg-blue-100",
     icon: FaUserCheck,
-  },
-  PI: {
-    label: "Permiso inspección",
-    color: "bg-teal-500",
-    textColor: "text-teal-700",
-    bgColor: "bg-teal-100",
-    icon: FaFileSignature,
   },
 };
 
@@ -341,7 +334,6 @@ export default function ReporteAsistencias() {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
 
-  // ✅ Listener con normalización de códigos legacy → nuevos
   useEffect(() => {
     let isMounted = true;
     let fechasAFiltrar: string[] = [];
@@ -369,7 +361,6 @@ export default function ReporteAsistencias() {
     ): AsistenciaData[] => {
       return docs.map((d) => {
         const raw = d.data();
-        // ✅ Normalizar el estado: T→A, A→I si no es v2
         const estadoNormalizado = normalizarEstado(
           raw.estado as string | undefined,
           raw.v2 as boolean | undefined,
@@ -500,7 +491,6 @@ export default function ReporteAsistencias() {
     });
   }, [asistencias, gradoTutorEfectivo, ambitos, destrezas]);
 
-  // ✅ Matriz con estados ya normalizados (6 estados)
   const matrizTutor = useMemo(() => {
     const mapa: Record<
       string,
@@ -520,7 +510,7 @@ export default function ReporteAsistencias() {
       .filter((a) => a.gradoId === gradoTutorEfectivo)
       .forEach((a) => {
         const estado = a.estado as EstadoAsistencia;
-        if (!estadoConfig(estado)) return; // ignorar estados desconocidos
+        if (!estadoConfig(estado)) return;
         if (!mapa[a.estudianteId]) mapa[a.estudianteId] = {};
         if (!mapa[a.estudianteId][a.fecha]) mapa[a.estudianteId][a.fecha] = {};
         const materiaId = a.ambitoId || "sin_materia";
@@ -533,7 +523,6 @@ export default function ReporteAsistencias() {
     return mapa;
   }, [asistencias, gradoTutorEfectivo]);
 
-  // ✅ Ausencias INJUSTIFICADAS (I y F) — las que requieren justificación
   const ausenciasPorEstudiante = useMemo(() => {
     const conteo: Record<string, number> = {};
     Object.entries(matrizTutor).forEach(([estId, fechas]) => {
@@ -548,7 +537,6 @@ export default function ReporteAsistencias() {
     return conteo;
   }, [matrizTutor]);
 
-  // ✅ Ausencias injustificadas por día (I y F)
   const ausenciasPorEstudiantePorDia = useMemo(() => {
     const conteo: Record<string, Record<string, number>> = {};
     Object.entries(matrizTutor).forEach(([estId, fechas]) => {
@@ -584,13 +572,13 @@ export default function ReporteAsistencias() {
     });
   }, [asistenciasDocente, ambitos, destrezas]);
 
-  // ✅ Matriz docente con los 6 estados
+  // ✅ Matriz docente con los 5 estados (sin PI)
   const matrizDocente = useMemo(() => {
     const mapa: Record<
       string,
       Record<
         string,
-        { P: number; A: number; I: number; F: number; J: number; PI: number; total: number }
+        { P: number; A: number; I: number; F: number; J: number; total: number }
       >
     > = {};
     asistenciasDocente.forEach((a) => {
@@ -599,7 +587,7 @@ export default function ReporteAsistencias() {
       const materiaId = a.ambitoId || "sin_materia";
       if (!mapa[materiaId]) mapa[materiaId] = {};
       if (!mapa[materiaId][a.fecha]) {
-        mapa[materiaId][a.fecha] = { P: 0, A: 0, I: 0, F: 0, J: 0, PI: 0, total: 0 };
+        mapa[materiaId][a.fecha] = { P: 0, A: 0, I: 0, F: 0, J: 0, total: 0 };
       }
       (mapa[materiaId][a.fecha] as Record<string, number>)[estado]++;
       mapa[materiaId][a.fecha].total++;
@@ -670,7 +658,6 @@ export default function ReporteAsistencias() {
     );
   };
 
-  // ✅ Justifica I y F → J
   async function justificarDiasSeleccionados() {
     if (!estudianteJustificarId || diasJustificar.size === 0) {
       mostrarToast("warning", "Selección requerida", "Debes seleccionar al menos un día para justificar.");
@@ -692,7 +679,7 @@ export default function ReporteAsistencias() {
       });
 
       if (asistenciasAActualizar.length === 0) {
-        mostrarToast("info", "Sin ausencias injustificadas", "No hay inasistencias ni abandonos para justificar en los días seleccionados.");
+        mostrarToast("info", "Sin ausencias injustificadas", "No hay inasistencias ni fugas para justificar en los días seleccionados.");
         setIsJustificando(false);
         return;
       }
@@ -810,7 +797,7 @@ export default function ReporteAsistencias() {
       } else {
         const filas = estudiantesGradoTutor
           .map((est, idx) => {
-            let P = 0, A = 0, I = 0, F = 0, J = 0, PI = 0;
+            let P = 0, A = 0, I = 0, F = 0, J = 0;
             Object.values(matrizTutor[est.id] || {}).forEach((mats) =>
               Object.values(mats).forEach((r) => {
                 if (r.estado === "P") P++;
@@ -818,11 +805,10 @@ export default function ReporteAsistencias() {
                 else if (r.estado === "I") I++;
                 else if (r.estado === "F") F++;
                 else if (r.estado === "J") J++;
-                else if (r.estado === "PI") PI++;
               }),
             );
-            const total = P + A + I + F + J + PI;
-            const pct = total > 0 ? Math.round(((P + A + J + PI) / total) * 100) : 0;
+            const total = P + A + I + F + J;
+            const pct = total > 0 ? Math.round(((P + A + J) / total) * 100) : 0;
             return `<tr>
               <td class="num">${idx + 1}</td>
               <td class="name">${est.apellidos} ${est.nombres}</td>
@@ -831,7 +817,6 @@ export default function ReporteAsistencias() {
               <td class="st-I">${I}</td>
               <td class="st-F">${F}</td>
               <td class="st-J">${J}</td>
-              <td class="st-PI">${PI}</td>
               <td><strong>${pct}%</strong></td>
             </tr>`;
           })
@@ -846,9 +831,8 @@ export default function ReporteAsistencias() {
                 <th>Pres.</th>
                 <th>Atrasos</th>
                 <th>Inas.</th>
-                <th>Aband.</th>
+                <th>Fugas</th>
                 <th>Justif.</th>
-                <th>Perm.Insp.</th>
                 <th>% Asist.</th>
               </tr>
             </thead>
@@ -876,7 +860,6 @@ export default function ReporteAsistencias() {
                 if (d.I) partes.push(`<span class="st-I">${d.I}i</span>`);
                 if (d.F) partes.push(`<span class="st-F">${d.F}f</span>`);
                 if (d.J) partes.push(`<span class="st-J">${d.J}j</span>`);
-                if (d.PI) partes.push(`<span class="st-PI">${d.PI}pi</span>`);
                 return `<td>${partes.join(" ")}</td>`;
               })
               .join("");
@@ -897,14 +880,13 @@ export default function ReporteAsistencias() {
       } else {
         const filas = materiasDocenteGrado
           .map((m) => {
-            let P = 0, A = 0, I = 0, F = 0, J = 0, PI = 0, sesiones = 0;
+            let P = 0, A = 0, I = 0, F = 0, J = 0, sesiones = 0;
             Object.values(matrizDocente[m.id] || {}).forEach((d) => {
               P += d.P;
               A += d.A;
               I += d.I;
               F += d.F;
               J += d.J;
-              PI += d.PI;
               if (d.total > 0) sesiones++;
             });
             return `<tr>
@@ -915,7 +897,6 @@ export default function ReporteAsistencias() {
               <td class="st-I">${I}</td>
               <td class="st-F">${F}</td>
               <td class="st-J">${J}</td>
-              <td class="st-PI">${PI}</td>
             </tr>`;
           })
           .join("");
@@ -929,9 +910,8 @@ export default function ReporteAsistencias() {
                 <th>Pres.</th>
                 <th>Atrasos</th>
                 <th>Inas.</th>
-                <th>Aband.</th>
+                <th>Fugas</th>
                 <th>Justif.</th>
-                <th>Perm.Insp.</th>
               </tr>
             </thead>
             <tbody>${filas}</tbody>
@@ -970,7 +950,6 @@ export default function ReporteAsistencias() {
   .st-I  { color: #b91c1c; font-weight: bold; }
   .st-F  { color: #9f1239; font-weight: bold; }
   .st-J  { color: #1d4ed8; font-weight: bold; }
-  .st-PI { color: #0f766e; font-weight: bold; }
   .legend { margin-top: 10px; font-size: 9px; color: #374151; }
   .legend span { margin-right: 10px; }
   .signatures { display: flex; justify-content: space-around; margin-top: 55px; }
@@ -999,9 +978,8 @@ export default function ReporteAsistencias() {
     <span class="st-P">P = Presente</span>
     <span class="st-A">a = Atraso</span>
     <span class="st-I">i = Inasistencia injustificada</span>
-    <span class="st-F">f = Abandono injustificado</span>
+    <span class="st-F">f = Fuga/abandono injustificado</span>
     <span class="st-J">j = Justificado</span>
-    <span class="st-PI">pi = Permiso de inspección</span>
   </div>
   <div class="signatures">
     <div class="sig">
@@ -1234,7 +1212,7 @@ export default function ReporteAsistencias() {
         )}
       </div>
 
-      {/* ✅ Leyenda con los 6 estados */}
+      {/* ✅ Leyenda con los 5 estados */}
       <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4 mb-6">
         <div className="flex flex-wrap items-center gap-4 text-xs">
           <span className="font-semibold text-slate-700">Estados:</span>
@@ -1485,7 +1463,7 @@ export default function ReporteAsistencias() {
                               <button
                                 onClick={() => abrirModalJustificar(est.id)}
                                 className="inline-flex items-center gap-1 px-2 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold transition-all shadow-sm"
-                                title="Justificar inasistencias y abandonos"
+                                title="Justificar inasistencias y fugas"
                               >
                                 <FaFileSignature className="text-[10px]" />
                                 Justificar
@@ -1505,7 +1483,7 @@ export default function ReporteAsistencias() {
                 <FaInfoCircle className="inline mr-1" />
                 <strong>Nota:</strong>{" "}
                 {tipoReporte === "semanal"
-                  ? "Vista detallada de la semana. La columna «Inas.» cuenta solo inasistencias injustificadas (i) y abandonos (f)."
+                  ? "Vista detallada de la semana. La columna «Inas.» cuenta solo inasistencias injustificadas (i) y fugas (f)."
                   : `Mostrando primeros ${diasVisibles.length} días de ${diasAMostrar.length} días hábiles del período.`}{" "}
                 {tipoReporte !== "semanal" &&
                   "La justificación solo está disponible en vista semanal."}
@@ -1665,12 +1643,6 @@ export default function ReporteAsistencias() {
                                       <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded text-xs font-bold">
                                         <FaUserCheck className="text-[9px]" />
                                         {datos.J}
-                                      </span>
-                                    )}
-                                    {datos.PI > 0 && (
-                                      <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 bg-teal-100 text-teal-700 rounded text-xs font-bold">
-                                        <FaFileSignature className="text-[9px]" />
-                                        {datos.PI}
                                       </span>
                                     )}
                                   </div>
@@ -1840,7 +1812,7 @@ export default function ReporteAsistencias() {
             {diasJustificar.size > 0 && (
               <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg text-xs text-blue-800">
                 <FaInfoCircle className="inline mr-1" />
-                Se justificarán todas las inasistencias (i) y abandonos (f) de{" "}
+                Se justificarán todas las inasistencias (i) y fugas (f) de{" "}
                 <strong>{diasJustificar.size} día(s)</strong> en{" "}
                 <strong>todas las materias</strong> registradas.
               </div>

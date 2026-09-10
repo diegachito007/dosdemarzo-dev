@@ -1,8 +1,8 @@
-export type EstadoAsistencia = "P" | "A" | "I" | "J" | "PI" | "F";
+export type EstadoAsistencia = "P" | "A" | "I" | "F" | "J";
 
 export interface EstadoConfig {
   value: EstadoAsistencia;
-  codigo: string; // código oficial del reporte (i, j, a, pi, f)
+  codigo: string; // código oficial del reporte (i, j, a, f)
   label: string;
   quien: "docente" | "tutor";
   bloquea: boolean; // bloquea nota si es ausencia del mismo día
@@ -11,12 +11,11 @@ export interface EstadoConfig {
 }
 
 export const ESTADOS_ASISTENCIA: EstadoConfig[] = [
-  { value: "P",  codigo: "",   label: "Presente",                   quien: "docente", bloquea: false, ausencia: false, colorSel: "bg-green-600 text-white shadow-md" },
-  { value: "A",  codigo: "a",  label: "Atraso",                     quien: "docente", bloquea: false, ausencia: false, colorSel: "bg-yellow-600 text-white shadow-md" },
-  { value: "I",  codigo: "i",  label: "Inasistencia injustificada", quien: "docente", bloquea: true,  ausencia: true,  colorSel: "bg-red-600 text-white shadow-md" },
-  { value: "F",  codigo: "f",  label: "Abandono injustificado",     quien: "docente", bloquea: true,  ausencia: true,  colorSel: "bg-rose-700 text-white shadow-md" },
-  { value: "J",  codigo: "j",  label: "Inasistencia justificada",   quien: "tutor",   bloquea: false, ausencia: true,  colorSel: "bg-blue-600 text-white shadow-md" },
-  { value: "PI", codigo: "pi", label: "Permiso de inspección",      quien: "tutor",   bloquea: false, ausencia: true,  colorSel: "bg-teal-600 text-white shadow-md" },
+  { value: "P", codigo: "",  label: "Presente",                   quien: "docente", bloquea: false, ausencia: false, colorSel: "bg-green-600 text-white shadow-md" },
+  { value: "A", codigo: "a", label: "Atraso",                     quien: "docente", bloquea: false, ausencia: false, colorSel: "bg-yellow-600 text-white shadow-md" },
+  { value: "I", codigo: "i", label: "Inasistencia injustificada", quien: "docente", bloquea: true,  ausencia: true,  colorSel: "bg-red-600 text-white shadow-md" },
+  { value: "F", codigo: "f", label: "Fuga/abandono injustificado", quien: "docente", bloquea: true,  ausencia: true,  colorSel: "bg-rose-700 text-white shadow-md" },
+  { value: "J", codigo: "j", label: "Inasistencia justificada",   quien: "tutor",   bloquea: false, ausencia: true,  colorSel: "bg-blue-600 text-white shadow-md" },
 ];
 
 // Mapeo de códigos LEGACY (antes de la migración) → nuevos
