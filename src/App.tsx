@@ -20,6 +20,7 @@ import MiHorario from './pages/MiHorario';
 import ReporteAsistencias from './pages/ReporteAsistencias';
 import ReporteNotas from './pages/ReporteNotas'; // ✅ NUEVO
 import ArchivedAccount from './pages/ArchivedAccount';
+import MigracionAsistencia from './pages/MigracionAsistencia'; // ✅ NUEVO
 
 // Formulario público y Panel de administración
 import Matricula from './pages/Matricula';
@@ -144,6 +145,16 @@ function AppRoutes() {
         element={
           <PrivateRoute>
             <AdminRoute><GestionUsuarios /></AdminRoute>
+          </PrivateRoute>
+        }
+      />
+
+      {/* ✅ RUTA ADMIN: Migración de nomenclatura de asistencia (Solo super_admin) */}
+      <Route
+        path="/migracion-asistencia"
+        element={
+          <PrivateRoute>
+            <AdminRoute><MigracionAsistencia /></AdminRoute>
           </PrivateRoute>
         }
       />
