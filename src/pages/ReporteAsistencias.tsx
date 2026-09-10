@@ -8,6 +8,7 @@ import {
   doc,
   serverTimestamp,
   getDocs,
+  Timestamp,
 } from "firebase/firestore";
 import { db } from "../lib/firebase";
 import { useAuth } from "../context/AuthContext";
@@ -48,10 +49,14 @@ interface AsistenciaData {
   gradoId: string;
   fecha: string;
   ambitoId?: string;
-  estado: string; // admite legacy durante la transición
+  estado: string;
   v2?: boolean;
   observacion?: string;
   registradoPor?: string;
+  representanteAsistio?: boolean;
+  representanteNota?: string;
+  representantePor?: string;
+  representanteEl?: Timestamp | Date;
 }
 
 type TipoReporte = "semanal" | "mensual" | "trimestral";
@@ -155,7 +160,6 @@ const NOMBRES_MESES = [
   "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre",
 ];
 
-// ✅ Configuración de los 5 estados (sin PI)
 const ESTADO_CONFIG: Record<
   EstadoAsistencia,
   {
@@ -189,9 +193,9 @@ const ESTADO_CONFIG: Record<
   },
   F: {
     label: "Fuga/abandono",
-    color: "bg-rose-600",
-    textColor: "text-rose-700",
-    bgColor: "bg-rose-100",
+    color: "bg-purple-600",
+    textColor: "text-purple-700",
+    bgColor: "bg-purple-100",
     icon: FaSignOutAlt,
   },
   J: {
@@ -241,6 +245,16 @@ export default function ReporteAsistencias() {
   const [diasJustificar, setDiasJustificar] = useState<Set<string>>(new Set());
   const [motivoJustificacion, setMotivoJustificacion] = useState("");
   const [isJustificando, setIsJustificando] = useState(false);
+
+  // ✅ Modal de acta de compromiso (fugas)
+  const [showActaModal, setShowActaModal] = useState(false);
+  const [estudianteActaId, setEstudianteActaId] = useState<string | null>(null);
+  const [fugasSeleccionadas, setFugasSeleccionadas] = useState<Set<string>>(
+    new Set(),
+  );
+  // ✅ Una observación por cada fuga (no global)
+  const [notasPorFuga, setNotasPorFuga] = useState<Record<string, string>>({});
+  const [isGuardandoActa, setIsGuardandoActa] = useState(false);
 
   const [toasts, setToasts] = useState<Toast[]>([]);
 
@@ -502,6 +516,8 @@ export default function ReporteAsistencias() {
             estado: EstadoAsistencia;
             observacion?: string;
             asistenciaId: string;
+            representanteAsistio?: boolean;
+            representanteNota?: string;
           }
         >
       >
@@ -518,18 +534,21 @@ export default function ReporteAsistencias() {
           estado,
           observacion: a.observacion,
           asistenciaId: a.id,
+          representanteAsistio: a.representanteAsistio,
+          representanteNota: a.representanteNota,
         };
       });
     return mapa;
   }, [asistencias, gradoTutorEfectivo]);
 
+  // ✅ Solo inasistencias injustificadas (I) — las que SÍ se justifican
   const ausenciasPorEstudiante = useMemo(() => {
     const conteo: Record<string, number> = {};
     Object.entries(matrizTutor).forEach(([estId, fechas]) => {
       let total = 0;
       Object.values(fechas).forEach((materias) => {
         Object.values(materias).forEach((reg) => {
-          if (reg.estado === "I" || reg.estado === "F") total++;
+          if (reg.estado === "I") total++;
         });
       });
       conteo[estId] = total;
@@ -544,10 +563,39 @@ export default function ReporteAsistencias() {
       Object.entries(fechas).forEach(([fecha, materias]) => {
         let ausencias = 0;
         Object.values(materias).forEach((reg) => {
-          if (reg.estado === "I" || reg.estado === "F") ausencias++;
+          if (reg.estado === "I") ausencias++;
         });
         if (ausencias > 0) conteo[estId][fecha] = ausencias;
       });
+    });
+    return conteo;
+  }, [matrizTutor]);
+
+  // ✅ Fugas (F) — NO se justifican, se deja constancia del acta
+  const fugasPorEstudiante = useMemo(() => {
+    const conteo: Record<string, number> = {};
+    Object.entries(matrizTutor).forEach(([estId, fechas]) => {
+      let total = 0;
+      Object.values(fechas).forEach((materias) => {
+        Object.values(materias).forEach((reg) => {
+          if (reg.estado === "F") total++;
+        });
+      });
+      conteo[estId] = total;
+    });
+    return conteo;
+  }, [matrizTutor]);
+
+  const fugasConActa = useMemo(() => {
+    const conteo: Record<string, number> = {};
+    Object.entries(matrizTutor).forEach(([estId, fechas]) => {
+      let total = 0;
+      Object.values(fechas).forEach((materias) => {
+        Object.values(materias).forEach((reg) => {
+          if (reg.estado === "F" && reg.representanteAsistio) total++;
+        });
+      });
+      conteo[estId] = total;
     });
     return conteo;
   }, [matrizTutor]);
@@ -572,7 +620,6 @@ export default function ReporteAsistencias() {
     });
   }, [asistenciasDocente, ambitos, destrezas]);
 
-  // ✅ Matriz docente con los 5 estados (sin PI)
   const matrizDocente = useMemo(() => {
     const mapa: Record<
       string,
@@ -599,6 +646,7 @@ export default function ReporteAsistencias() {
     estado?: EstadoAsistencia,
     observacion?: string,
     materiaNombre?: string,
+    representanteAsistio?: boolean,
   ) => {
     if (!estado || !ESTADO_CONFIG[estado]) {
       return (
@@ -611,8 +659,12 @@ export default function ReporteAsistencias() {
     const Icon = config.icon;
     return (
       <div
-        className={`w-full h-full flex items-center justify-center ${config.bgColor} ${config.textColor} rounded-md`}
-        title={`${config.label}${materiaNombre ? ` • ${materiaNombre}` : ""}${observacion ? ` • ${observacion}` : ""}`}
+        className={`w-full h-full flex items-center justify-center ${config.bgColor} ${config.textColor} rounded-md ${
+          representanteAsistio ? "ring-2 ring-green-400" : ""
+        }`}
+        title={`${config.label}${materiaNombre ? ` • ${materiaNombre}` : ""}${observacion ? ` • ${observacion}` : ""}${
+          representanteAsistio ? " • ✔ Acta de compromiso firmada" : ""
+        }`}
       >
         <Icon className="text-sm" />
       </div>
@@ -658,6 +710,7 @@ export default function ReporteAsistencias() {
     );
   };
 
+  // ✅ Solo justifica inasistencias (I). Las fugas NO se justifican.
   async function justificarDiasSeleccionados() {
     if (!estudianteJustificarId || diasJustificar.size === 0) {
       mostrarToast("warning", "Selección requerida", "Debes seleccionar al menos un día para justificar.");
@@ -672,14 +725,14 @@ export default function ReporteAsistencias() {
       diasJustificar.forEach((fechaISO) => {
         const regsDelDia = regsEstudiante[fechaISO] || {};
         Object.values(regsDelDia).forEach((reg) => {
-          if (reg.estado === "I" || reg.estado === "F") {
+          if (reg.estado === "I") {
             asistenciasAActualizar.push(reg.asistenciaId);
           }
         });
       });
 
       if (asistenciasAActualizar.length === 0) {
-        mostrarToast("info", "Sin ausencias injustificadas", "No hay inasistencias ni fugas para justificar en los días seleccionados.");
+        mostrarToast("info", "Sin inasistencias injustificadas", "No hay inasistencias (i) para justificar en los días seleccionados. Recuerda: las fugas (f) no se justifican.");
         setIsJustificando(false);
         return;
       }
@@ -703,7 +756,7 @@ export default function ReporteAsistencias() {
       mostrarToast(
         "success",
         "Justificación completada",
-        `Se justificaron ${asistenciasAActualizar.length} ausencia(s) correctamente.`,
+        `Se justificaron ${asistenciasAActualizar.length} inasistencia(s) correctamente.`,
         5000,
       );
       setShowJustificarModal(false);
@@ -715,6 +768,146 @@ export default function ReporteAsistencias() {
       mostrarToast("error", "Error al justificar", "No se pudieron justificar las asistencias.");
     } finally {
       setIsJustificando(false);
+    }
+  }
+
+  // ==================== ACTA DE COMPROMISO (FUGAS) ====================
+
+  const registrosFugas = useMemo(() => {
+    if (!estudianteActaId) return [];
+    const regs = matrizTutor[estudianteActaId] || {};
+    const lista: {
+      fecha: string;
+      materiaNombre: string;
+      asistenciaId: string;
+      representanteAsistio: boolean;
+      representanteNota?: string;
+    }[] = [];
+    Object.entries(regs).forEach(([fecha, materias]) => {
+      Object.entries(materias).forEach(([materiaId, reg]) => {
+        if (reg.estado === "F") {
+          lista.push({
+            fecha,
+            materiaNombre:
+              materiasGradoTutor.find((m) => m.id === materiaId)?.nombre ||
+              "Materia",
+            asistenciaId: reg.asistenciaId,
+            representanteAsistio: !!reg.representanteAsistio,
+            representanteNota: reg.representanteNota,
+          });
+        }
+      });
+    });
+    return lista.sort((a, b) => a.fecha.localeCompare(b.fecha));
+  }, [estudianteActaId, matrizTutor, materiasGradoTutor]);
+
+  const abrirModalActa = (estudianteId: string) => {
+    setEstudianteActaId(estudianteId);
+    const regs = matrizTutor[estudianteId] || {};
+    const preseleccion = new Set<string>();
+    const notasIniciales: Record<string, string> = {};
+    Object.values(regs).forEach((materias) => {
+      Object.values(materias).forEach((reg) => {
+        if (reg.estado === "F") {
+          notasIniciales[reg.asistenciaId] = reg.representanteNota || "";
+          if (!reg.representanteAsistio) {
+            preseleccion.add(reg.asistenciaId);
+          }
+        }
+      });
+    });
+    setFugasSeleccionadas(preseleccion);
+    setNotasPorFuga(notasIniciales);
+    setShowActaModal(true);
+  };
+
+  const toggleFugaSeleccion = (asistenciaId: string) => {
+    setFugasSeleccionadas((prev) => {
+      const nuevo = new Set(prev);
+      if (nuevo.has(asistenciaId)) {
+        nuevo.delete(asistenciaId);
+      } else {
+        nuevo.add(asistenciaId);
+      }
+      return nuevo;
+    });
+  };
+
+  // ✅ Guarda acta de compromiso individual por cada fuga
+  async function guardarActaCompromiso() {
+    if (!estudianteActaId) return;
+
+    setIsGuardandoActa(true);
+    try {
+      const marcar = registrosFugas
+        .filter(
+          (f) => fugasSeleccionadas.has(f.asistenciaId) && !f.representanteAsistio,
+        )
+        .map((f) => {
+          const nota = (notasPorFuga[f.asistenciaId] || "").trim() ||
+            "Acta de compromiso firmada con el representante";
+          return updateDoc(doc(db, "asistencias", f.asistenciaId), {
+            representanteAsistio: true,
+            representanteNota: nota,
+            representantePor: user?.uid || "",
+            representanteEl: serverTimestamp(),
+          });
+        });
+
+      const desmarcar = registrosFugas
+        .filter(
+          (f) => !fugasSeleccionadas.has(f.asistenciaId) && f.representanteAsistio,
+        )
+        .map((f) =>
+          updateDoc(doc(db, "asistencias", f.asistenciaId), {
+            representanteAsistio: false,
+            representanteNota: "",
+            representantePor: null,
+            representanteEl: null,
+          }),
+        );
+
+      const actualizarNota = registrosFugas
+        .filter(
+          (f) =>
+            fugasSeleccionadas.has(f.asistenciaId) &&
+            f.representanteAsistio &&
+            (notasPorFuga[f.asistenciaId] || "") !== (f.representanteNota || ""),
+        )
+        .map((f) => {
+          const nota = (notasPorFuga[f.asistenciaId] || "").trim() ||
+            "Acta de compromiso firmada con el representante";
+          return updateDoc(doc(db, "asistencias", f.asistenciaId), {
+            representanteNota: nota,
+            representantePor: user?.uid || "",
+            representanteEl: serverTimestamp(),
+          });
+        });
+
+      const totalOps = marcar.length + desmarcar.length + actualizarNota.length;
+      if (totalOps === 0) {
+        mostrarToast("info", "Sin cambios", "No hay cambios que guardar.");
+        setIsGuardandoActa(false);
+        return;
+      }
+
+      await Promise.all([...marcar, ...desmarcar, ...actualizarNota]);
+
+      mostrarToast(
+        "success",
+        "Acta(s) registrada(s)",
+        `Se actualizaron ${totalOps} registro(s) de acta de compromiso.`,
+        5000,
+      );
+      setShowActaModal(false);
+      setEstudianteActaId(null);
+      setFugasSeleccionadas(new Set());
+      setNotasPorFuga({});
+    } catch (error) {
+      console.error("Error guardando acta de compromiso:", error);
+      mostrarToast("error", "Error al guardar", "No se pudo registrar el acta de compromiso.");
+    } finally {
+      setIsGuardandoActa(false);
     }
   }
 
@@ -768,16 +961,23 @@ export default function ReporteAsistencias() {
                 );
                 if (regs.length === 0) return `<td class="sin">—</td>`;
                 return `<td>${regs
-                  .map((r) => `<span class="st-${r.estado}">${r.estado}</span>`)
+                  .map(
+                    (r) =>
+                      `<span class="st-${r.estado}">${r.estado}${
+                        r.estado === "F" && r.representanteAsistio ? "✓" : ""
+                      }</span>`,
+                  )
                   .join(" / ")}</td>`;
               })
               .join("");
             const aus = ausenciasPorEstudiante[est.id] ?? 0;
+            const fug = fugasPorEstudiante[est.id] ?? 0;
             return `<tr>
               <td class="num">${idx + 1}</td>
               <td class="name">${est.apellidos} ${est.nombres}</td>
               ${celdas}
               <td class="${aus > 0 ? "st-I" : ""}">${aus}</td>
+              <td class="${fug > 0 ? "st-F" : ""}">${fug}</td>
             </tr>`;
           })
           .join("");
@@ -790,6 +990,7 @@ export default function ReporteAsistencias() {
                 <th class="name">Estudiante</th>
                 ${encabezados}
                 <th>Inas.</th>
+                <th>Fugas</th>
               </tr>
             </thead>
             <tbody>${filas}</tbody>
@@ -797,14 +998,16 @@ export default function ReporteAsistencias() {
       } else {
         const filas = estudiantesGradoTutor
           .map((est, idx) => {
-            let P = 0, A = 0, I = 0, F = 0, J = 0;
+            let P = 0, A = 0, I = 0, F = 0, J = 0, actas = 0;
             Object.values(matrizTutor[est.id] || {}).forEach((mats) =>
               Object.values(mats).forEach((r) => {
                 if (r.estado === "P") P++;
                 else if (r.estado === "A") A++;
                 else if (r.estado === "I") I++;
-                else if (r.estado === "F") F++;
-                else if (r.estado === "J") J++;
+                else if (r.estado === "F") {
+                  F++;
+                  if (r.representanteAsistio) actas++;
+                } else if (r.estado === "J") J++;
               }),
             );
             const total = P + A + I + F + J;
@@ -815,7 +1018,7 @@ export default function ReporteAsistencias() {
               <td class="st-P">${P}</td>
               <td class="st-A">${A}</td>
               <td class="st-I">${I}</td>
-              <td class="st-F">${F}</td>
+              <td class="st-F">${F}${actas > 0 ? ` (${actas}✓)` : ""}</td>
               <td class="st-J">${J}</td>
               <td><strong>${pct}%</strong></td>
             </tr>`;
@@ -948,7 +1151,7 @@ export default function ReporteAsistencias() {
   .st-P  { color: #15803d; font-weight: bold; }
   .st-A  { color: #a16207; font-weight: bold; }
   .st-I  { color: #b91c1c; font-weight: bold; }
-  .st-F  { color: #9f1239; font-weight: bold; }
+  .st-F  { color: #7e22ce; font-weight: bold; }
   .st-J  { color: #1d4ed8; font-weight: bold; }
   .legend { margin-top: 10px; font-size: 9px; color: #374151; }
   .legend span { margin-right: 10px; }
@@ -978,7 +1181,8 @@ export default function ReporteAsistencias() {
     <span class="st-P">P = Presente</span>
     <span class="st-A">a = Atraso</span>
     <span class="st-I">i = Inasistencia injustificada</span>
-    <span class="st-F">f = Fuga/abandono injustificado</span>
+    <span class="st-F">f = Fuga/abandono (no se justifica)</span>
+    <span class="st-F">f✓ = Fuga con acta de compromiso firmada</span>
     <span class="st-J">j = Justificado</span>
   </div>
   <div class="signatures">
@@ -1064,6 +1268,9 @@ export default function ReporteAsistencias() {
 
   const estudianteJustificar = estudiantes.find(
     (e) => e.id === estudianteJustificarId,
+  );
+  const estudianteActa = estudiantes.find(
+    (e) => e.id === estudianteActaId,
   );
 
   return (
@@ -1212,7 +1419,6 @@ export default function ReporteAsistencias() {
         )}
       </div>
 
-      {/* ✅ Leyenda con los 5 estados */}
       <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4 mb-6">
         <div className="flex flex-wrap items-center gap-4 text-xs">
           <span className="font-semibold text-slate-700">Estados:</span>
@@ -1238,6 +1444,12 @@ export default function ReporteAsistencias() {
             </div>
             <span className="text-slate-600">Sin registro</span>
           </div>
+        </div>
+        <div className="mt-2 text-[11px] text-slate-500 flex items-center gap-1">
+          <FaInfoCircle className="text-[10px]" />
+          Las fugas (f) <strong>no se justifican</strong>: se levanta acta de
+          compromiso física firmada con el representante. Celda con borde verde
+          = acta firmada.
         </div>
       </div>
 
@@ -1373,15 +1585,20 @@ export default function ReporteAsistencias() {
                       <th className="text-center px-3 py-3 font-semibold text-slate-700 min-w-17.5">
                         Inas.
                       </th>
-                      <th className="text-center px-3 py-3 font-semibold text-slate-700 min-w-20">
+                      <th className="text-center px-3 py-3 font-semibold text-purple-700 min-w-17.5">
+                        Fugas
+                      </th>
+                      <th className="text-center px-3 py-3 font-semibold text-slate-700 min-w-25">
                         Acción
                       </th>
                     </tr>
                   </thead>
                   <tbody>
                     {estudiantesGradoTutor.map((est) => {
-                      const tieneAusencias =
+                      const tieneInasistencias =
                         (ausenciasPorEstudiante[est.id] ?? 0) > 0;
+                      const tieneFugas = (fugasPorEstudiante[est.id] ?? 0) > 0;
+                      const actasFirmadas = fugasConActa[est.id] ?? 0;
                       return (
                         <tr
                           key={est.id}
@@ -1415,6 +1632,8 @@ export default function ReporteAsistencias() {
                                     materiasGradoTutor.find(
                                       (m) => m.id === registrosMaterias[0][0],
                                     )?.nombre,
+                                    registrosMaterias[0][1]
+                                      .representanteAsistio,
                                   )
                                 ) : (
                                   <div className="grid grid-cols-2 gap-0.5 h-full">
@@ -1432,8 +1651,16 @@ export default function ReporteAsistencias() {
                                         return (
                                           <div
                                             key={materiaId}
-                                            className={`flex items-center justify-center ${config.bgColor} ${config.textColor} rounded`}
-                                            title={`${materiaNombre || "Materia"}: ${config.label}${reg.observacion ? ` • ${reg.observacion}` : ""}`}
+                                            className={`flex items-center justify-center ${config.bgColor} ${config.textColor} rounded ${
+                                              reg.representanteAsistio
+                                                ? "ring-2 ring-green-400"
+                                                : ""
+                                            }`}
+                                            title={`${materiaNombre || "Materia"}: ${config.label}${reg.observacion ? ` • ${reg.observacion}` : ""}${
+                                              reg.representanteAsistio
+                                                ? " • ✔ Acta de compromiso firmada"
+                                                : ""
+                                            }`}
                                           >
                                             <Icon className="text-[10px]" />
                                           </div>
@@ -1450,7 +1677,7 @@ export default function ReporteAsistencias() {
                             </td>
                           )}
                           <td className="px-3 py-2 text-center">
-                            {tieneAusencias ? (
+                            {tieneInasistencias ? (
                               <span className="inline-flex items-center justify-center w-7 h-7 bg-red-100 text-red-700 rounded-full text-xs font-bold">
                                 {ausenciasPorEstudiante[est.id]}
                               </span>
@@ -1459,18 +1686,57 @@ export default function ReporteAsistencias() {
                             )}
                           </td>
                           <td className="px-3 py-2 text-center">
-                            {tieneAusencias && tipoReporte === "semanal" ? (
-                              <button
-                                onClick={() => abrirModalJustificar(est.id)}
-                                className="inline-flex items-center gap-1 px-2 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold transition-all shadow-sm"
-                                title="Justificar inasistencias y fugas"
+                            {tieneFugas ? (
+                              <span
+                                className="inline-flex items-center justify-center gap-1 w-7 h-7 bg-purple-100 text-purple-700 rounded-full text-xs font-bold"
+                                title={
+                                  actasFirmadas > 0
+                                    ? `${fugasPorEstudiante[est.id]} fuga(s), ${actasFirmadas} con acta firmada`
+                                    : `${fugasPorEstudiante[est.id]} fuga(s) sin acta`
+                                }
                               >
-                                <FaFileSignature className="text-[10px]" />
-                                Justificar
-                              </button>
+                                {fugasPorEstudiante[est.id]}
+                                {actasFirmadas > 0 && (
+                                  <FaUserCheck className="text-[9px] text-green-600" />
+                                )}
+                              </span>
                             ) : (
-                              <span className="text-slate-300 text-xs">—</span>
+                              <span className="text-slate-400 text-xs">0</span>
                             )}
+                          </td>
+                          <td className="px-3 py-2 text-center">
+                            <div className="flex flex-col gap-1 items-center">
+                              {tieneInasistencias &&
+                                tipoReporte === "semanal" && (
+                                  <button
+                                    onClick={() => abrirModalJustificar(est.id)}
+                                    className="inline-flex items-center gap-1 px-2 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold transition-all shadow-sm"
+                                    title="Justificar inasistencias injustificadas (i)"
+                                  >
+                                    <FaFileSignature className="text-[10px]" />
+                                    Justificar
+                                  </button>
+                                )}
+                              {tieneFugas && (
+                                <button
+                                  onClick={() => abrirModalActa(est.id)}
+                                  className="inline-flex items-center gap-1 px-2 py-1.5 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-xs font-semibold transition-all shadow-sm"
+                                  title="Registrar acta de compromiso firmada con el representante"
+                                >
+                                  <FaFileSignature className="text-[10px]" />
+                                  Acta
+                                </button>
+                              )}
+                              {!tieneInasistencias && !tieneFugas && (
+                                <span className="text-slate-300 text-xs">—</span>
+                              )}
+                              {tieneInasistencias &&
+                                tipoReporte !== "semanal" && (
+                                  <span className="text-[10px] text-slate-400">
+                                    (solo semanal)
+                                  </span>
+                                )}
+                            </div>
                           </td>
                         </tr>
                       );
@@ -1483,7 +1749,7 @@ export default function ReporteAsistencias() {
                 <FaInfoCircle className="inline mr-1" />
                 <strong>Nota:</strong>{" "}
                 {tipoReporte === "semanal"
-                  ? "Vista detallada de la semana. La columna «Inas.» cuenta solo inasistencias injustificadas (i) y fugas (f)."
+                  ? "Vista detallada de la semana. «Inas.» cuenta solo inasistencias injustificadas (i), que sí se justifican. «Fugas» (f) no se justifican: se deja constancia mediante acta de compromiso firmada."
                   : `Mostrando primeros ${diasVisibles.length} días de ${diasAMostrar.length} días hábiles del período.`}{" "}
                 {tipoReporte !== "semanal" &&
                   "La justificación solo está disponible en vista semanal."}
@@ -1634,7 +1900,7 @@ export default function ReporteAsistencias() {
                                       </span>
                                     )}
                                     {datos.F > 0 && (
-                                      <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 bg-rose-100 text-rose-700 rounded text-xs font-bold">
+                                      <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 bg-purple-100 text-purple-700 rounded text-xs font-bold">
                                         <FaSignOutAlt className="text-[9px]" />
                                         {datos.F}
                                       </span>
@@ -1686,6 +1952,7 @@ export default function ReporteAsistencias() {
         </div>
       )}
 
+      {/* ==================== MODAL JUSTIFICAR (solo I) ==================== */}
       {showJustificarModal && estudianteJustificar && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full p-6 max-h-[90vh] overflow-y-auto">
@@ -1696,7 +1963,7 @@ export default function ReporteAsistencias() {
                 </div>
                 <div>
                   <h3 className="text-lg font-bold text-slate-900">
-                    Justificar Ausencias
+                    Justificar Inasistencias
                   </h3>
                   <p className="text-xs text-slate-500">
                     Semana del {formatFechaCorta(diasSemana[0])} al{" "}
@@ -1721,10 +1988,19 @@ export default function ReporteAsistencias() {
                 {estudianteJustificar.apellidos} {estudianteJustificar.nombres}
               </p>
               <p className="text-xs text-purple-600 mt-1">
-                Total de ausencias injustificadas (i + f) esta semana:{" "}
+                Inasistencias injustificadas (i) esta semana:{" "}
                 <strong>
                   {ausenciasPorEstudiante[estudianteJustificar.id] ?? 0}
                 </strong>
+                {(fugasPorEstudiante[estudianteJustificar.id] ?? 0) > 0 && (
+                  <span className="ml-2 text-purple-700">
+                    • Fugas (f):{" "}
+                    <strong>
+                      {fugasPorEstudiante[estudianteJustificar.id]}
+                    </strong>{" "}
+                    (no se justifican)
+                  </span>
+                )}
               </p>
             </div>
 
@@ -1781,11 +2057,11 @@ export default function ReporteAsistencias() {
                       {tieneAusencias ? (
                         <span className="inline-flex items-center gap-1 px-2 py-1 bg-red-100 text-red-700 rounded-full text-xs font-bold">
                           <FaUserTimes className="text-[9px]" />
-                          {ausenciasDia} ausencia{ausenciasDia !== 1 ? "s" : ""}
+                          {ausenciasDia} inasistencia{ausenciasDia !== 1 ? "s" : ""}
                         </span>
                       ) : (
                         <span className="text-xs text-slate-400 italic">
-                          Sin ausencias injustificadas
+                          Sin inasistencias injustificadas
                         </span>
                       )}
                     </label>
@@ -1812,9 +2088,10 @@ export default function ReporteAsistencias() {
             {diasJustificar.size > 0 && (
               <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg text-xs text-blue-800">
                 <FaInfoCircle className="inline mr-1" />
-                Se justificarán todas las inasistencias (i) y fugas (f) de{" "}
+                Se justificarán todas las inasistencias (i) de{" "}
                 <strong>{diasJustificar.size} día(s)</strong> en{" "}
-                <strong>todas las materias</strong> registradas.
+                <strong>todas las materias</strong> registradas. Las fugas (f)
+                no se justifican aquí.
               </div>
             )}
 
@@ -1843,6 +2120,168 @@ export default function ReporteAsistencias() {
                   setEstudianteJustificarId(null);
                 }}
                 disabled={isJustificando}
+                className="flex-1 bg-slate-200 hover:bg-slate-300 text-slate-700 px-4 py-2.5 rounded-lg text-sm font-semibold transition-all disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ==================== MODAL ACTA DE COMPROMISO (FUGAS) ==================== */}
+      {showActaModal && estudianteActa && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full p-6 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-3">
+                <div className="bg-purple-100 p-2 rounded-lg">
+                  <FaFileSignature className="text-purple-600 text-xl" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-slate-900">
+                    Acta de Compromiso
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Registro de fugas — se levanta acta física firmada
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  setShowActaModal(false);
+                  setEstudianteActaId(null);
+                }}
+                disabled={isGuardandoActa}
+                className="text-slate-400 hover:text-slate-600 disabled:opacity-50"
+              >
+                <FaTimes />
+              </button>
+            </div>
+
+            <div className="mb-4 p-3 bg-purple-50 border border-purple-200 rounded-lg">
+              <p className="text-sm text-purple-800 font-semibold">
+                {estudianteActa.apellidos} {estudianteActa.nombres}
+              </p>
+              <p className="text-xs text-purple-600 mt-1">
+                Fugas en el período: <strong>{registrosFugas.length}</strong> •
+                Con acta registrada:{" "}
+                <strong>
+                  {registrosFugas.filter((f) => f.representanteAsistio).length}
+                </strong>
+              </p>
+            </div>
+
+            {registrosFugas.length === 0 ? (
+              <div className="p-6 bg-slate-50 border border-slate-200 rounded-lg text-center text-sm text-slate-500">
+                No hay fugas registradas para este estudiante en el período
+                actual.
+              </div>
+            ) : (
+              <div className="mb-4 space-y-3">
+                <label className="block text-sm font-semibold text-slate-700">
+                  Para cada fuga, marca si se levantó acta y agrega la
+                  observación
+                </label>
+                {registrosFugas.map((fuga) => {
+                  const seleccionado = fugasSeleccionadas.has(
+                    fuga.asistenciaId,
+                  );
+                  return (
+                    <div
+                      key={fuga.asistenciaId}
+                      className={`p-3 rounded-lg border-2 transition-all ${
+                        seleccionado
+                          ? "bg-purple-50 border-purple-400"
+                          : "bg-white border-slate-200"
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-3 mb-2">
+                        <label className="flex items-start gap-2 flex-1 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={seleccionado}
+                            onChange={() =>
+                              toggleFugaSeleccion(fuga.asistenciaId)
+                            }
+                            className="w-4 h-4 mt-0.5 text-purple-600 rounded focus:ring-purple-500"
+                          />
+                          <div className="flex-1">
+                            <div className="font-semibold text-slate-900 text-sm capitalize">
+                              {formatFechaCompleta(parseFechaLocal(fuga.fecha))}
+                            </div>
+                            <div className="text-xs text-slate-500">
+                              {fuga.materiaNombre}
+                            </div>
+                          </div>
+                        </label>
+                        {fuga.representanteAsistio ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-1 bg-green-100 text-green-700 rounded-full text-xs font-bold shrink-0">
+                            <FaUserCheck className="text-[9px]" />
+                            Acta firmada
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 px-2 py-1 bg-slate-100 text-slate-600 rounded-full text-xs font-bold shrink-0">
+                            <FaSignOutAlt className="text-[9px]" />
+                            Sin acta
+                          </span>
+                        )}
+                      </div>
+                      {seleccionado && (
+                        <textarea
+                          value={notasPorFuga[fuga.asistenciaId] || ""}
+                          onChange={(e) =>
+                            setNotasPorFuga((prev) => ({
+                              ...prev,
+                              [fuga.asistenciaId]: e.target.value,
+                            }))
+                          }
+                          placeholder="Ej: Se levantó acta de compromiso firmada por el representante. Se acordó..."
+                          rows={2}
+                          disabled={isGuardandoActa}
+                          className="w-full border border-purple-200 rounded-md px-2 py-1.5 text-xs focus:ring-2 focus:ring-purple-400 focus:border-purple-400 disabled:bg-slate-100"
+                        />
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {registrosFugas.length > 0 && (
+              <div className="mb-4 p-3 bg-purple-50 border border-purple-200 rounded-lg text-xs text-purple-800">
+                <FaInfoCircle className="inline mr-1" />
+                El estado <strong>F (fuga)</strong> NO cambia: sigue contando
+                como fuga. Este registro es <strong>constancia documental</strong>{" "}
+                del acta física firmada con el representante (
+                {fugasSeleccionadas.size} acta(s) marcada(s)).
+              </div>
+            )}
+
+            <div className="flex gap-2">
+              <button
+                onClick={guardarActaCompromiso}
+                disabled={isGuardandoActa || registrosFugas.length === 0}
+                className="flex-1 inline-flex items-center justify-center gap-2 bg-purple-600 hover:bg-purple-700 text-white px-4 py-2.5 rounded-lg text-sm font-semibold transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isGuardandoActa ? (
+                  <>
+                    <FaSpinner className="animate-spin text-xs" />
+                    Guardando...
+                  </>
+                ) : (
+                  <>
+                    <FaFileSignature className="text-xs" />
+                    Registrar Acta(s)
+                  </>
+                )}
+              </button>
+              <button
+                onClick={() => {
+                  setShowActaModal(false);
+                  setEstudianteActaId(null);
+                }}
+                disabled={isGuardandoActa}
                 className="flex-1 bg-slate-200 hover:bg-slate-300 text-slate-700 px-4 py-2.5 rounded-lg text-sm font-semibold transition-all disabled:opacity-50"
               >
                 Cancelar

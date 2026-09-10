@@ -14,7 +14,7 @@ export const ESTADOS_ASISTENCIA: EstadoConfig[] = [
   { value: "P", codigo: "",  label: "Presente",                   quien: "docente", bloquea: false, ausencia: false, colorSel: "bg-green-600 text-white shadow-md" },
   { value: "A", codigo: "a", label: "Atraso",                     quien: "docente", bloquea: false, ausencia: false, colorSel: "bg-yellow-600 text-white shadow-md" },
   { value: "I", codigo: "i", label: "Inasistencia injustificada", quien: "docente", bloquea: true,  ausencia: true,  colorSel: "bg-red-600 text-white shadow-md" },
-  { value: "F", codigo: "f", label: "Fuga/abandono injustificado", quien: "docente", bloquea: true,  ausencia: true,  colorSel: "bg-rose-700 text-white shadow-md" },
+  { value: "F", codigo: "f", label: "Fuga/abandono injustificado", quien: "docente", bloquea: true,  ausencia: true,  colorSel: "bg-purple-700 text-white shadow-md" },
   { value: "J", codigo: "j", label: "Inasistencia justificada",   quien: "tutor",   bloquea: false, ausencia: true,  colorSel: "bg-blue-600 text-white shadow-md" },
 ];
 
