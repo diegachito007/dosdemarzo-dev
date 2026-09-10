@@ -329,6 +329,9 @@ export default function Calificaciones() {
 
   const notaInputRefs = useRef<(HTMLInputElement | null)[]>([]);
 
+  // ✅ OPTIMIZACIÓN: Caché de estudiantes por grado en memoria
+  const estudiantesCache = useRef<Map<string, Estudiante[]>>(new Map());
+
   const [toasts, setToasts] = useState<Toast[]>([]);
 
   const [confirmModal, setConfirmModal] = useState<ConfirmModalState>({
@@ -365,12 +368,10 @@ export default function Calificaciones() {
   const esGradoBachillerato = esBachillerato(gradoEfectivoNombre);
   const esGradoInicialActual = esGradoInicial(gradoEfectivoNombre);
 
-  // ✅ ¿El docente es tutor del grado actual?
   const esTutorDelGradoActual = gradoEfectivoId
     ? (userData?.tutorDe || []).includes(gradoEfectivoId)
     : false;
 
-  // ✅ Todos los estados visibles (J se mostrará bloqueado)
   const estadosVisibles = useMemo(() => ESTADOS_ASISTENCIA, []);
 
   const nombreDocente = (uid?: string) =>
@@ -529,6 +530,7 @@ export default function Calificaciones() {
     [],
   );
 
+  // ✅ OPTIMIZACIÓN: asignaturasDocente como getDocs (una sola carga)
   useEffect(() => {
     if (!user?.uid || !anioActivo?.id) return;
 
@@ -656,11 +658,9 @@ export default function Calificaciones() {
       estudiantes.forEach((est) => {
         const asistencia = asistencias[est.id];
         if (!asistencia || !asistencia.estado) return;
-        // No permitir modificar estado tutor-only si no soy tutor
         if (asistencia.esTutorOnly && !esTutorDelGradoActual) return;
 
         const existente = existentesMap.get(est.id);
-        // Si el estado existente es tutor-only (J) y no soy tutor, no modificar
         const estadoExistenteNormalizado = normalizarEstado(
           existente?.data.estado,
           existente?.data.v2,
@@ -882,7 +882,6 @@ export default function Calificaciones() {
           calificacion.nota.trim() === ""
         )
           return;
-        // ✅ Usa estadoBloqueaNota (I y F bloquean)
         const estadoEseDia = asistenciasDiaActividad[est.id];
         if (estadoBloqueaNota(estadoEseDia) && actividadEsHoy) return;
         const notaNum = parseFloat(calificacion.nota);
@@ -1011,9 +1010,7 @@ export default function Calificaciones() {
     estado: EstadoAsistencia,
   ) => {
     const actual = asistencias[estudianteId];
-    // No permitir modificar estado tutor-only si no soy tutor
     if (actual?.esTutorOnly && !esTutorDelGradoActual) return;
-    // No permitir que docente asigne estado tutor-only
     const config = estadoConfig(estado);
     if (config?.quien === "tutor" && !esTutorDelGradoActual) return;
 
@@ -1029,7 +1026,6 @@ export default function Calificaciones() {
   };
 
   const marcarTodosAsistencia = (estado: EstadoAsistencia) => {
-    // No permitir marcar todos con estados tutor-only (J)
     const config = estadoConfig(estado);
     if (config?.quien === "tutor") return;
 
@@ -1037,7 +1033,6 @@ export default function Calificaciones() {
       const nuevas: typeof prev = {};
       estudiantes.forEach((est) => {
         const actual = prev[est.id];
-        // Respetar estados tutor-only previos
         if (actual?.esTutorOnly) {
           nuevas[est.id] = actual;
         } else {
@@ -1058,7 +1053,6 @@ export default function Calificaciones() {
       const nuevas: typeof prev = {};
       estudiantes.forEach((est) => {
         const actual = prev[est.id];
-        // Respetar estados tutor-only (J) al limpiar
         if (actual?.esTutorOnly) {
           nuevas[est.id] = actual;
         }
@@ -1080,7 +1074,6 @@ export default function Calificaciones() {
   const actualizarCalificacion = (estudianteId: string, valor: string) => {
     const estadoEseDia = asistenciasDiaActividad[estudianteId];
     const actividadEsHoy = esFechaHoy(actividadSeleccionada?.fecha || "");
-    // ✅ Usa estadoBloqueaNota
     if (estadoBloqueaNota(estadoEseDia) && actividadEsHoy) return;
 
     if (valor === "") {
@@ -1125,9 +1118,7 @@ export default function Calificaciones() {
       const nuevas = { ...prev };
       estudiantes.forEach((est) => {
         const estadoEseDia = asistenciasDiaActividad[est.id];
-        // ✅ Usa estadoBloqueaNota
         if (estadoBloqueaNota(estadoEseDia) && actividadEsHoy) return;
-        // No sobrescribir notas que ya tienen refuerzo aplicado
         if (calificaciones[est.id]?.refuerzo) return;
 
         nuevas[est.id] = {
@@ -1166,8 +1157,17 @@ export default function Calificaciones() {
 
   // ==================== EFFECTS ====================
 
+  // ✅ OPTIMIZACIÓN: Caché de estudiantes por grado
   useEffect(() => {
     if (!gradoEfectivoId) return;
+
+    // ¿Ya los tengo en caché?
+    const cached = estudiantesCache.current.get(gradoEfectivoId);
+    if (cached && cached.length > 0) {
+      setEstudiantes(cached);
+      setActiveTab("asistencia");
+      return;
+    }
 
     const fetchEstudiantes = async () => {
       try {
@@ -1182,9 +1182,9 @@ export default function Calificaciones() {
           (doc) => ({ id: doc.id, ...doc.data() }) as Estudiante,
         );
 
+        // Guardar en caché
+        estudiantesCache.current.set(gradoEfectivoId, data);
         setEstudiantes(data);
-        // Mantener sincronización mediante onSnapshot.
-        // No limpiar asistencias aquí para evitar perder la carga inicial.
         setActiveTab("asistencia");
       } catch (error) {
         console.error("Error cargando estudiantes:", error);
@@ -1271,7 +1271,7 @@ export default function Calificaciones() {
     fetchCalificaciones();
   }, [selectedActividadId]);
 
-  // ✅ Listener de asistencias - MISMA ESTRUCTURA QUE EL CÓDIGO VIEJO
+  // ✅ Listener de asistencias - SOLO en tab asistencia
   useEffect(() => {
     if (activeTab !== "asistencia") return;
 
@@ -1316,7 +1316,6 @@ export default function Calificaciones() {
         > = {};
         snapshot.docs.forEach((docSnap) => {
           const data = docSnap.data() as AsistenciaData;
-          // ✅ Normalizar códigos legacy (T→A, A→I)
           const estadoNormalizado = normalizarEstado(data.estado, data.v2);
           const config = estadoConfig(estadoNormalizado);
           asistenciasMap[data.estudianteId] = {
@@ -1345,7 +1344,7 @@ export default function Calificaciones() {
     gradoEfectivoNombre,
   ]);
 
-  // ✅ Listener de asistencias del día de la actividad - MISMA ESTRUCTURA
+  // ✅ Listener de asistencias del día de la actividad - SOLO en tab calificaciones
   useEffect(() => {
 
     if (activeTab !== "calificaciones") return;
@@ -1386,7 +1385,6 @@ export default function Calificaciones() {
         const mapa: Record<string, EstadoAsistencia | undefined> = {};
         snapshot.docs.forEach((docSnap) => {
           const data = docSnap.data() as AsistenciaData;
-          // ✅ Normalizar códigos legacy
           mapa[data.estudianteId] = normalizarEstado(data.estado, data.v2);
         });
         setAsistenciasDiaActividad(mapa);
@@ -1948,7 +1946,6 @@ export default function Calificaciones() {
                     </div>
                   ) : activeTab === "calificaciones" && destrezaEfectivaId ? (
                     <>
-                      {/* Barra sticky de actividad */}
                       <div className="sticky top-0 z-30 -mx-4 px-4 py-2 bg-white/95 backdrop-blur border-b border-slate-200 mb-3">
                         <div className="flex items-center gap-2">
                           <select
@@ -2114,7 +2111,6 @@ export default function Calificaciones() {
                               const estadoAsistencia =
                                 asistenciasDiaActividad[est.id];
 
-                              // ✅ Usa estadoBloqueaNota y estadoEsAusencia
                               const ausenciaQueBloquea =
                                 estadoBloqueaNota(estadoAsistencia);
                               const bloqueadoPorAusenciaHoy =
@@ -2394,7 +2390,6 @@ export default function Calificaciones() {
                         const esDeOtroDocente =
                           asistencia?.registradoPor &&
                           asistencia.registradoPor !== user?.uid;
-                        // ✅ Un estado es "tutor-only" si su config tiene quien === "tutor"
                         const esTutorOnly =
                           !!asistencia?.esTutorOnly ||
                           (estado ? estadoEsTutorOnly(estado) : false);
@@ -2510,7 +2505,6 @@ export default function Calificaciones() {
                             </div>
                             {estado && (
                               <div className="mt-2 space-y-1.5">
-                                {/* ✅ Observaciones predefinidas (solo si es P o A) */}
                                 {(estado === "P" || estado === "A") &&
                                   !esTutorOnly && (
                                     <div className="flex gap-1.5 flex-wrap">
@@ -2584,7 +2578,6 @@ export default function Calificaciones() {
         </>
       )}
 
-      {/* Barra sticky asistencia */}
       {mostrarBarraSticky && (
         <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] p-3 z-40">
           <div className="max-w-7xl mx-auto flex items-center justify-between gap-3">
@@ -2644,7 +2637,6 @@ export default function Calificaciones() {
         </div>
       )}
 
-      {/* Barra sticky calificaciones */}
       {mostrarBarraStickyCalificaciones && (
         <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] z-40">
           <div className="border-b border-slate-100 px-3 py-2">
