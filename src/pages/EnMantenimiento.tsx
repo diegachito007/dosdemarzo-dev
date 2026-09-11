@@ -4,7 +4,9 @@ import {
   FaMagic,
   FaRocket,
   FaSpinner,
+  FaSignOutAlt,
 } from "react-icons/fa";
+import { useAuth } from "../context/AuthContext";
 
 interface EnMantenimientoProps {
   titulo?: string;
@@ -15,6 +17,13 @@ export default function EnMantenimiento({
   titulo,
   mensaje,
 }: EnMantenimientoProps) {
+  const { logout } = useAuth();
+
+  const handleSalir = async () => {
+    await logout();
+    // Al hacer logout, useAuth pone user=null y App redirige a /login automáticamente
+  };
+
   return (
     <div className="min-h-screen bg-linear-to-br from-slate-900 via-slate-800 to-indigo-950 flex items-center justify-center p-6">
       <div className="max-w-lg w-full text-center">
@@ -52,10 +61,19 @@ export default function EnMantenimiento({
               "Estamos mejorando el sistema para ti. Nuestro equipo está trabajando en nuevas mejoras y actualizaciones. Volvemos en unos minutos."}
           </p>
 
-          <div className="flex items-center justify-center gap-2 text-slate-400 text-xs">
+          <div className="flex items-center justify-center gap-2 text-slate-400 text-xs mb-6">
             <FaRocket className="text-indigo-400" />
             <span>Gracias por tu paciencia</span>
           </div>
+
+          {/* ✅ Botón para cerrar sesión limpiamente */}
+          <button
+            onClick={handleSalir}
+            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 border border-white/20 text-white text-sm font-semibold transition-all"
+          >
+            <FaSignOutAlt className="text-xs" />
+            Cerrar sesión
+          </button>
         </div>
 
         <p className="mt-6 text-slate-500 text-xs">
