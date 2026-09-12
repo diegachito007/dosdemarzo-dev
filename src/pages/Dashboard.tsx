@@ -340,9 +340,8 @@ export default function Dashboard() {
                 </div>
               ) : (
                 <img
-                  src="/dayaniX-eduX-i.png"
-                  alt="dayaniX"
-                  className="h-16 w-auto object-contain"
+                  src="/logo.dayaniX.jpg"
+                  className="h-24 w-auto object-contain"
                   onError={() => setLogoError(true)}
                 />
               )}
