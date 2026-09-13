@@ -340,7 +340,7 @@ export default function Dashboard() {
                 </div>
               ) : (
                 <img
-                  src="/logo.eduX.jpg"
+                  src="/logo.eduX.png"
                   className="h-24 w-auto object-contain"
                   onError={() => setLogoError(true)}
                 />
@@ -564,7 +564,7 @@ export default function Dashboard() {
           <p className="text-sm text-slate-600">
             © 2026{" "}
             <span className="font-bold bg-linear-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
-              dayaniX
+              saydeX
             </span>{" "}
             · Ing. Diego Yamberla · Todos los derechos reservados
           </p>
