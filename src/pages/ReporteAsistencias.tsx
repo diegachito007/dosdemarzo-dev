@@ -419,9 +419,7 @@ export default function ReporteAsistencias() {
           );
           const snap = await getDocs(q);
           todos.push(
-            ...snap.docs.map(
-              (d) => ({ id: d.id, ...d.data() }) as Estudiante,
-            ),
+            ...snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Estudiante),
           );
         }
 
@@ -443,8 +441,7 @@ export default function ReporteAsistencias() {
   }, [ready, gradosTutor, gradosDocente]);
 
   useEffect(() => {
-    const gradoEfectivo =
-      vistaEfectiva === "tutor" ? gradoTutorEfectivo : "";
+    const gradoEfectivo = vistaEfectiva === "tutor" ? gradoTutorEfectivo : "";
 
     let isMounted = true;
     let fechasAFiltrar: string[] = [];
@@ -464,17 +461,18 @@ export default function ReporteAsistencias() {
     }
 
     const fetchAsistencias = async () => {
-      // ✅ Para vista docente, cargar asistencias de TODOS los grados del docente
+      // ✅ OPTIMIZACIÓN FINAL: Para vista docente, 1 sola query usando registradoPor
       if (vistaEfectiva === "docente") {
-        if (gradosDocente.length === 0 || fechasAFiltrar.length === 0) {
+        if (!user?.uid || fechasAFiltrar.length === 0) {
           if (isMounted) setAsistencias([]);
           return;
         }
 
-        const cacheKey = `${tipoReporte}|docente|${gradosDocente.map((g) => g.id).sort().join(",")}|${fechasAFiltrar.join(",")}`;
+        const cacheKey = `${tipoReporte}|docente|${user.uid}|${fechasAFiltrar.join(",")}`;
 
         if (cacheAsistencias.current.has(cacheKey)) {
-          if (isMounted) setAsistencias(cacheAsistencias.current.get(cacheKey)!);
+          if (isMounted)
+            setAsistencias(cacheAsistencias.current.get(cacheKey)!);
           return;
         }
 
@@ -497,27 +495,25 @@ export default function ReporteAsistencias() {
 
         const todas: AsistenciaData[] = [];
 
-        // Cargar asistencias de todos los grados del docente
-        for (const grado of gradosDocente) {
-          if (fechasAFiltrar.length <= 30) {
+        // ✅ 1 sola query en vez de N queries por grado
+        if (fechasAFiltrar.length <= 30) {
+          const q = query(
+            collection(db, "asistencias"),
+            where("registradoPor", "==", user.uid),
+            where("fecha", "in", fechasAFiltrar),
+          );
+          const snap = await getDocs(q);
+          todas.push(...normalizarDocs(snap.docs));
+        } else {
+          for (let i = 0; i < fechasAFiltrar.length; i += 30) {
+            const chunk = fechasAFiltrar.slice(i, i + 30);
             const q = query(
               collection(db, "asistencias"),
-              where("gradoId", "==", grado.id),
-              where("fecha", "in", fechasAFiltrar),
+              where("registradoPor", "==", user.uid),
+              where("fecha", "in", chunk),
             );
             const snap = await getDocs(q);
             todas.push(...normalizarDocs(snap.docs));
-          } else {
-            for (let i = 0; i < fechasAFiltrar.length; i += 30) {
-              const chunk = fechasAFiltrar.slice(i, i + 30);
-              const q = query(
-                collection(db, "asistencias"),
-                where("gradoId", "==", grado.id),
-                where("fecha", "in", chunk),
-              );
-              const snap = await getDocs(q);
-              todas.push(...normalizarDocs(snap.docs));
-            }
           }
         }
 
@@ -600,7 +596,7 @@ export default function ReporteAsistencias() {
     periodos,
     vistaEfectiva,
     gradoTutorEfectivo,
-    gradosDocente,
+    user?.uid,
   ]);
 
   const cambiarSemana = (offset: number) => {
@@ -642,7 +638,9 @@ export default function ReporteAsistencias() {
       if (tipoReporte === "semanal") {
         fechasAFiltrar = generarDiasSemana(semanaActual).map(formatFechaISO);
       } else if (tipoReporte === "mensual") {
-        fechasAFiltrar = getDiasDelMes(anioActual, mesActual).map(formatFechaISO);
+        fechasAFiltrar = getDiasDelMes(anioActual, mesActual).map(
+          formatFechaISO,
+        );
       } else if (tipoReporte === "trimestral" && periodoSeleccionado) {
         const periodo = periodos.find((p) => p.id === periodoSeleccionado);
         if (periodo) {
@@ -658,13 +656,15 @@ export default function ReporteAsistencias() {
       const cacheKey = `${tipoReporte}|${gradoEfectivo}|${fechasAFiltrar.join(",")}`;
       cacheAsistencias.current.delete(cacheKey);
     } else {
-      // Vista docente: limpiar cache de todos los grados
+      // Vista docente: limpiar cache
       let fechasAFiltrar: string[] = [];
 
       if (tipoReporte === "semanal") {
         fechasAFiltrar = generarDiasSemana(semanaActual).map(formatFechaISO);
       } else if (tipoReporte === "mensual") {
-        fechasAFiltrar = getDiasDelMes(anioActual, mesActual).map(formatFechaISO);
+        fechasAFiltrar = getDiasDelMes(anioActual, mesActual).map(
+          formatFechaISO,
+        );
       } else if (tipoReporte === "trimestral" && periodoSeleccionado) {
         const periodo = periodos.find((p) => p.id === periodoSeleccionado);
         if (periodo) {
@@ -675,9 +675,9 @@ export default function ReporteAsistencias() {
         }
       }
 
-      if (fechasAFiltrar.length === 0) return;
+      if (fechasAFiltrar.length === 0 || !user?.uid) return;
 
-      const cacheKey = `${tipoReporte}|docente|${gradosDocente.map((g) => g.id).sort().join(",")}|${fechasAFiltrar.join(",")}`;
+      const cacheKey = `${tipoReporte}|docente|${user.uid}|${fechasAFiltrar.join(",")}`;
       cacheAsistencias.current.delete(cacheKey);
     }
 
@@ -882,14 +882,24 @@ export default function ReporteAsistencias() {
       const materias = Array.from(ambitosIds).map((id) => {
         const ambito = ambitos.find((a: Ambito) => a.id === id);
         const destreza = destrezas.find((d: Destreza) => d.id === id);
-        return { id, nombre: ambito?.nombre || destreza?.nombre || "Sin nombre" };
+        return {
+          id,
+          nombre: ambito?.nombre || destreza?.nombre || "Sin nombre",
+        };
       });
 
       const matriz: Record<
         string,
         Record<
           string,
-          { P: number; A: number; I: number; F: number; J: number; total: number }
+          {
+            P: number;
+            A: number;
+            I: number;
+            F: number;
+            J: number;
+            total: number;
+          }
         >
       > = {};
 
@@ -899,7 +909,14 @@ export default function ReporteAsistencias() {
         const materiaId = a.ambitoId || "sin_materia";
         if (!matriz[materiaId]) matriz[materiaId] = {};
         if (!matriz[materiaId][a.fecha]) {
-          matriz[materiaId][a.fecha] = { P: 0, A: 0, I: 0, F: 0, J: 0, total: 0 };
+          matriz[materiaId][a.fecha] = {
+            P: 0,
+            A: 0,
+            I: 0,
+            F: 0,
+            J: 0,
+            total: 0,
+          };
         }
         (matriz[materiaId][a.fecha] as Record<string, number>)[estado]++;
         matriz[materiaId][a.fecha].total++;
@@ -1353,7 +1370,6 @@ export default function ReporteAsistencias() {
           </table>`;
       }
     } else {
-      // ✅ Vista docente consolidada: todas las tablas de grados
       cuerpoTabla = datosDocenteConsolidado
         .map(({ grado, materias, matriz }) => {
           const encabezados = diasSemana
@@ -2319,132 +2335,143 @@ export default function ReporteAsistencias() {
                 </div>
 
                 <div className="p-4 space-y-6">
-                  {datosDocenteConsolidado.map(({ grado, materias, matriz }) => (
-                    <div key={grado.id} className="border-b border-slate-200 pb-6 last:border-b-0">
-                      <h4 className="text-lg font-semibold text-slate-900 mb-3 flex items-center gap-2">
-                        <FaBook className="text-cyan-600" />
-                        {grado.nombre} - {grado.paralelo}
-                      </h4>
-                      {materias.length === 0 ? (
-                        <p className="text-slate-500 text-sm italic">
-                          Sin registros de asistencia en este grado
-                        </p>
-                      ) : (
-                        <div className="overflow-x-auto">
-                          <table className="w-full text-sm">
-                            <thead className="bg-slate-50 border-b border-slate-200">
-                              <tr>
-                                <th className="text-left px-4 py-3 font-semibold text-slate-700 min-w-50">
-                                  Materia
-                                </th>
-                                {diasVisibles.map((dia, i) => {
-                                  const esHoy = formatFechaISO(dia) === hoyISO;
-                                  return (
-                                    <th
-                                      key={i}
-                                      className={`text-center px-2 py-3 font-semibold min-w-27.5 ${
-                                        esHoy
-                                          ? "bg-blue-50 text-blue-700"
-                                          : "text-slate-700"
-                                      }`}
-                                    >
-                                      <div>{nombreDia(dia)}</div>
-                                      <div
-                                        className={`text-xs font-normal ${esHoy ? "text-blue-600" : "text-slate-500"}`}
-                                      >
-                                        {formatFechaCorta(dia)}
-                                      </div>
-                                    </th>
-                                  );
-                                })}
-                                {diasAMostrar.length > diasVisibles.length && (
-                                  <th className="text-center px-2 py-3 font-semibold text-slate-500 text-xs">
-                                    +{diasAMostrar.length - diasVisibles.length} días
+                  {datosDocenteConsolidado.map(
+                    ({ grado, materias, matriz }) => (
+                      <div
+                        key={grado.id}
+                        className="border-b border-slate-200 pb-6 last:border-b-0"
+                      >
+                        <h4 className="text-lg font-semibold text-slate-900 mb-3 flex items-center gap-2">
+                          <FaBook className="text-cyan-600" />
+                          {grado.nombre} - {grado.paralelo}
+                        </h4>
+                        {materias.length === 0 ? (
+                          <p className="text-slate-500 text-sm italic">
+                            Sin registros de asistencia en este grado
+                          </p>
+                        ) : (
+                          <div className="overflow-x-auto">
+                            <table className="w-full text-sm">
+                              <thead className="bg-slate-50 border-b border-slate-200">
+                                <tr>
+                                  <th className="text-left px-4 py-3 font-semibold text-slate-700 min-w-50">
+                                    Materia
                                   </th>
-                                )}
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {materias.map((materia) => (
-                                <tr
-                                  key={materia.id}
-                                  className="border-b border-slate-100 hover:bg-slate-50"
-                                >
-                                  <td className="px-4 py-3">
-                                    <div className="font-semibold text-slate-900 text-sm">
-                                      {materia.nombre}
-                                    </div>
-                                  </td>
                                   {diasVisibles.map((dia, i) => {
-                                    const fechaISO = formatFechaISO(dia);
-                                    const datos =
-                                      matriz[materia.id]?.[fechaISO];
-                                    if (!datos || datos.total === 0) {
-                                      return (
-                                        <td
-                                          key={i}
-                                          className="px-2 py-3 text-center text-slate-300 text-xs"
-                                        >
-                                          —
-                                        </td>
-                                      );
-                                    }
+                                    const esHoy =
+                                      formatFechaISO(dia) === hoyISO;
                                     return (
-                                      <td key={i} className="px-2 py-3">
-                                        <div className="flex flex-wrap justify-center gap-1">
-                                          {datos.P > 0 && (
-                                            <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 bg-green-100 text-green-700 rounded text-xs font-bold">
-                                              <FaCheckCircle className="text-[9px]" />
-                                              {datos.P}
-                                            </span>
-                                          )}
-                                          {datos.A > 0 && (
-                                            <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 bg-yellow-100 text-yellow-700 rounded text-xs font-bold">
-                                              <FaClock className="text-[9px]" />
-                                              {datos.A}
-                                            </span>
-                                          )}
-                                          {datos.I > 0 && (
-                                            <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 bg-red-100 text-red-700 rounded text-xs font-bold">
-                                              <FaUserTimes className="text-[9px]" />
-                                              {datos.I}
-                                            </span>
-                                          )}
-                                          {datos.F > 0 && (
-                                            <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 bg-purple-100 text-purple-700 rounded text-xs font-bold">
-                                              <FaSignOutAlt className="text-[9px]" />
-                                              {datos.F}
-                                            </span>
-                                          )}
-                                          {datos.J > 0 && (
-                                            <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded text-xs font-bold">
-                                              <FaUserCheck className="text-[9px]" />
-                                              {datos.J}
-                                            </span>
-                                          )}
+                                      <th
+                                        key={i}
+                                        className={`text-center px-2 py-3 font-semibold min-w-27.5 ${
+                                          esHoy
+                                            ? "bg-blue-50 text-blue-700"
+                                            : "text-slate-700"
+                                        }`}
+                                      >
+                                        <div>{nombreDia(dia)}</div>
+                                        <div
+                                          className={`text-xs font-normal ${esHoy ? "text-blue-600" : "text-slate-500"}`}
+                                        >
+                                          {formatFechaCorta(dia)}
                                         </div>
-                                      </td>
+                                      </th>
                                     );
                                   })}
-                                  {diasAMostrar.length > diasVisibles.length && (
-                                    <td className="px-2 py-3 text-center text-slate-400 text-xs">
-                                      ...
-                                    </td>
+                                  {diasAMostrar.length >
+                                    diasVisibles.length && (
+                                    <th className="text-center px-2 py-3 font-semibold text-slate-500 text-xs">
+                                      +
+                                      {diasAMostrar.length -
+                                        diasVisibles.length}{" "}
+                                      días
+                                    </th>
                                   )}
                                 </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      )}
-                    </div>
-                  ))}
+                              </thead>
+                              <tbody>
+                                {materias.map((materia) => (
+                                  <tr
+                                    key={materia.id}
+                                    className="border-b border-slate-100 hover:bg-slate-50"
+                                  >
+                                    <td className="px-4 py-3">
+                                      <div className="font-semibold text-slate-900 text-sm">
+                                        {materia.nombre}
+                                      </div>
+                                    </td>
+                                    {diasVisibles.map((dia, i) => {
+                                      const fechaISO = formatFechaISO(dia);
+                                      const datos =
+                                        matriz[materia.id]?.[fechaISO];
+                                      if (!datos || datos.total === 0) {
+                                        return (
+                                          <td
+                                            key={i}
+                                            className="px-2 py-3 text-center text-slate-300 text-xs"
+                                          >
+                                            —
+                                          </td>
+                                        );
+                                      }
+                                      return (
+                                        <td key={i} className="px-2 py-3">
+                                          <div className="flex flex-wrap justify-center gap-1">
+                                            {datos.P > 0 && (
+                                              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 bg-green-100 text-green-700 rounded text-xs font-bold">
+                                                <FaCheckCircle className="text-[9px]" />
+                                                {datos.P}
+                                              </span>
+                                            )}
+                                            {datos.A > 0 && (
+                                              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 bg-yellow-100 text-yellow-700 rounded text-xs font-bold">
+                                                <FaClock className="text-[9px]" />
+                                                {datos.A}
+                                              </span>
+                                            )}
+                                            {datos.I > 0 && (
+                                              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 bg-red-100 text-red-700 rounded text-xs font-bold">
+                                                <FaUserTimes className="text-[9px]" />
+                                                {datos.I}
+                                              </span>
+                                            )}
+                                            {datos.F > 0 && (
+                                              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 bg-purple-100 text-purple-700 rounded text-xs font-bold">
+                                                <FaSignOutAlt className="text-[9px]" />
+                                                {datos.F}
+                                              </span>
+                                            )}
+                                            {datos.J > 0 && (
+                                              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded text-xs font-bold">
+                                                <FaUserCheck className="text-[9px]" />
+                                                {datos.J}
+                                              </span>
+                                            )}
+                                          </div>
+                                        </td>
+                                      );
+                                    })}
+                                    {diasAMostrar.length >
+                                      diasVisibles.length && (
+                                      <td className="px-2 py-3 text-center text-slate-400 text-xs">
+                                        ...
+                                      </td>
+                                    )}
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
+                      </div>
+                    ),
+                  )}
                 </div>
 
                 <div className="p-4 bg-slate-50 border-t border-slate-200 text-xs text-slate-600">
                   <FaInfoCircle className="inline mr-1" />
-                  Los números muestran cuántos estudiantes tuvieron cada
-                  estado en esa materia y día.{" "}
+                  Los números muestran cuántos estudiantes tuvieron cada estado
+                  en esa materia y día.{" "}
                   {tipoReporte !== "semanal" &&
                     `Mostrando primeros ${diasVisibles.length} días de ${diasAMostrar.length} días hábiles en total.`}
                 </div>
