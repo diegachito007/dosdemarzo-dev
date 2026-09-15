@@ -62,6 +62,9 @@ export default function Grados() {
   const [selectedNiveles, setSelectedNiveles] = useState<string[]>([]);
   const [selectedParalelos, setSelectedParalelos] = useState<string[]>([]);
   const [activo, setActivo] = useState(true);
+  
+  // ✅ NUEVO: Toggle para mostrar/ocultar grados inactivos
+  const [mostrarInactivos, setMostrarInactivos] = useState(true);
 
   const [toasts, setToasts] = useState<Toast[]>([]);
 
@@ -100,6 +103,12 @@ export default function Grados() {
       const asignados = new Set(userData.gradosAsignados);
       filtered = filtered.filter((g) => asignados.has(g.id));
     }
+    
+    // ✅ 3. Filtrar inactivos si el toggle está apagado
+    if (!mostrarInactivos) {
+      filtered = filtered.filter((g) => g.activo);
+    }
+    
     return filtered;
   })();
 
@@ -180,17 +189,42 @@ export default function Grados() {
       return;
     }
 
-    // ✅ Verificación contra datos locales del Context (sin lectura a Firestore)
-    const combinacionesExistentes = combinaciones.filter(comb => {
-      return gradosFiltrados.some(g =>
-        g.nombre === comb.nombre &&
-        g.paralelo === comb.paralelo
-      );
-    });
+    // ✅ Verificación contra TODOS los grados del año activo (incluyendo inactivos)
+    const todosGradosAnio = anioActivo
+      ? grados.filter(g => g.anioLectivoId === anioActivo.id)
+      : [];
+
+    const combinacionesExistentes = combinaciones
+      .map(comb => {
+        const existente = todosGradosAnio.find(
+          g => g.nombre === comb.nombre && g.paralelo === comb.paralelo
+        );
+        return existente ? { comb, existente } : null;
+      })
+      .filter(Boolean) as { comb: { nombre: string; paralelo: string }; existente: Grado }[];
 
     if (combinacionesExistentes.length > 0) {
-      const mensajes = combinacionesExistentes.map(c => `${c.nombre} - ${c.paralelo}`).join('\n');
-      mostrarToast('warning', 'Grados ya existentes', `Los siguientes grados ya existen:\n${mensajes}`, 6000);
+      const activos = combinacionesExistentes.filter(c => c.existente.activo);
+      const inactivos = combinacionesExistentes.filter(c => !c.existente.activo);
+
+      const lineas: string[] = [];
+      if (activos.length > 0) {
+        lineas.push(
+          `🟢 ACTIVOS (${activos.length}):\n${activos.map(c => `  • ${c.comb.nombre} - ${c.comb.paralelo}`).join('\n')}`
+        );
+      }
+      if (inactivos.length > 0) {
+        lineas.push(
+          `⚪ INACTIVOS (${inactivos.length}):\n${inactivos.map(c => `  • ${c.comb.nombre} - ${c.comb.paralelo} → usa "Reactivar"`).join('\n')}`
+        );
+      }
+
+      mostrarToast(
+        'warning',
+        'Grados ya existentes',
+        `Los siguientes grados ya existen en este año lectivo:\n\n${lineas.join('\n\n')}`,
+        8000
+      );
       return;
     }
 
@@ -515,11 +549,29 @@ export default function Grados() {
       {/* Tabla de Grados */}
       {!docenteSinGrados && (
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-          <div className="flex items-center p-4 border-b border-slate-200">
+          <div className="flex items-center justify-between p-4 border-b border-slate-200 flex-wrap gap-3">
             <h3 className="text-base font-bold text-slate-800 flex items-center gap-2">
               <FaGraduationCap className="text-blue-600" />
               Grados del Año Lectivo
             </h3>
+            {puedeGestionar && (
+              <label className="inline-flex items-center gap-2 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={mostrarInactivos}
+                  onChange={(e) => setMostrarInactivos(e.target.checked)}
+                  className="w-4 h-4 text-blue-600 border-slate-300 rounded focus:ring-blue-500"
+                />
+                <span className="text-xs font-medium text-slate-600">
+                  Mostrar inactivos
+                </span>
+                {grados.filter(g => g.anioLectivoId === anioActivo?.id && !g.activo).length > 0 && (
+                  <span className="text-[10px] px-1.5 py-0.5 bg-slate-200 text-slate-700 rounded-full font-bold">
+                    {grados.filter(g => g.anioLectivoId === anioActivo?.id && !g.activo).length}
+                  </span>
+                )}
+              </label>
+            )}
           </div>
           <div className="overflow-x-auto">
             <table className="w-full">
@@ -557,7 +609,12 @@ export default function Grados() {
                   </tr>
                 ) : (
                   gradosFiltrados.map((grado) => (
-                    <tr key={grado.id} className="hover:bg-slate-50 transition-colors">
+                    <tr 
+                      key={grado.id} 
+                      className={`hover:bg-slate-50 transition-colors ${
+                        !grado.activo ? 'bg-slate-50/50 opacity-75' : ''
+                      }`}
+                    >
                       <td className="px-5 py-3">
                         <div className="flex items-center gap-3">
                           <div className="bg-linear-to-br from-blue-500 to-purple-600 text-white rounded-lg w-10 h-10 flex items-center justify-center font-bold text-sm shadow-sm">
@@ -585,6 +642,15 @@ export default function Grados() {
                       {puedeGestionar && (
                         <td className="px-5 py-3">
                           <div className="flex justify-center gap-1">
+                            {!grado.activo && (
+                              <button 
+                                onClick={() => handleToggleActivo(grado.id, grado.activo)}
+                                className="p-1.5 text-green-600 hover:bg-green-50 rounded transition-all" 
+                                title="Reactivar este grado"
+                              >
+                                <FaCheckCircle className="text-sm" />
+                              </button>
+                            )}
                             <button onClick={() => handleEdit(grado)} className="p-1.5 text-blue-600 hover:bg-blue-50 rounded transition-all" title="Editar">
                               <FaEdit className="text-sm" />
                             </button>
