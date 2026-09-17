@@ -7,8 +7,7 @@ import {
   query,
   orderBy,
   where,
-  addDoc,
-  serverTimestamp,
+  writeBatch,
 } from "firebase/firestore";
 import { db } from "../lib/firebase";
 import { useAuth } from "../context/AuthContext";
@@ -26,24 +25,14 @@ import {
   FaGraduationCap,
   FaPlus,
   FaUserTie,
-  FaExchangeAlt,
   FaSpinner,
-  FaChalkboardTeacher,
   FaArchive,
   FaExclamationTriangle,
   FaInfoCircle,
   FaQuestionCircle,
   FaTimes as FaXmark,
+  FaChalkboardTeacher,
 } from "react-icons/fa";
-
-interface AsignaturaDocente {
-  id: string;
-  docenteId: string;
-  gradoId: string;
-  destrezaId: string;
-  anioLectivoId: string;
-  activo: boolean;
-}
 
 interface Toast {
   id: string;
@@ -67,8 +56,7 @@ interface ConfirmModalState {
 export default function GestionUsuarios() {
   const { canDeleteUser } = useAuth();
 
-  // ✅ Grados frescos desde el Context (auto-refrescado vía evento eduX:refreshData)
-  const { grados, destrezas, ready, reload } = useData();
+  const { grados, ready, reload } = useData();
 
   const [users, setUsers] = useState<AppUser[]>([]);
   const [filter, setFilter] = useState<
@@ -80,17 +68,6 @@ export default function GestionUsuarios() {
   const [gradosSeleccionados, setGradosSeleccionados] = useState<string[]>([]);
   const [tutorDe, setTutorDe] = useState<string[]>([]);
 
-  const [showTransferModal, setShowTransferModal] = useState(false);
-  const [transferSource, setTransferSource] = useState<AppUser | null>(null);
-  const [transferDestId, setTransferDestId] = useState("");
-  const [transferMaterias, setTransferMaterias] = useState<AsignaturaDocente[]>(
-    [],
-  );
-  const [transferAlsoGrados, setTransferAlsoGrados] = useState(true);
-  const [transferArchivar, setTransferArchivar] = useState(true);
-  const [loadingTransfer, setLoadingTransfer] = useState(false);
-  const [isTransferring, setIsTransferring] = useState(false);
-
   const [toasts, setToasts] = useState<Toast[]>([]);
 
   const [confirmModal, setConfirmModal] = useState<ConfirmModalState>({
@@ -101,7 +78,6 @@ export default function GestionUsuarios() {
     onCancel: () => {},
   });
 
-  // ✅ Solo grados activos se pueden asignar
   const gradosActivos = grados.filter((g) => g.activo);
 
   // ==================== HELPERS DE NOTIFICACIÓN ====================
@@ -229,14 +205,48 @@ export default function GestionUsuarios() {
     }
   }
 
+  // ✅ GUARDAR ASIGNACIÓN CON CASCADA: al quitar un grado, se desactivan
+  // automáticamente sus materias en "asignaturasDocente"
   async function guardarAsignacion() {
     if (!selectedUserForGrados) return;
     try {
+      // Detectar grados que se están QUITANDO en esta edición
+      const gradosPrevios = selectedUserForGrados.gradosAsignados || [];
+      const gradosRemovidos = gradosPrevios.filter(
+        (g) => !gradosSeleccionados.includes(g),
+      );
+
       await updateDoc(doc(db, "usuarios", selectedUserForGrados.uid), {
         gradosAsignados: gradosSeleccionados,
         tutorDe: tutorDe,
       });
-      mostrarToast("success", "Asignación guardada", "Los grados y tutorías se actualizaron correctamente.");
+
+      // ✅ CASCADA: desactivar las materias de los grados removidos
+      let materiasDesasignadas = 0;
+      if (gradosRemovidos.length > 0) {
+        const q = query(
+          collection(db, "asignaturasDocente"),
+          where("docenteId", "==", selectedUserForGrados.uid),
+          where("activo", "==", true),
+        );
+        const snap = await getDocs(q);
+        const batch = writeBatch(db);
+        snap.docs.forEach((d) => {
+          if (gradosRemovidos.includes(d.data().gradoId)) {
+            batch.update(d.ref, { activo: false });
+            materiasDesasignadas++;
+          }
+        });
+        if (materiasDesasignadas > 0) await batch.commit();
+      }
+
+      mostrarToast(
+        "success",
+        "Asignación guardada",
+        materiasDesasignadas > 0
+          ? `Grados y tutorías actualizados. Se desasignaron ${materiasDesasignadas} materia(s) de los grados removidos.`
+          : "Los grados y tutorías se actualizaron correctamente.",
+      );
       setShowGradosModal(false);
       setSelectedUserForGrados(null);
       setGradosSeleccionados([]);
@@ -279,12 +289,12 @@ export default function GestionUsuarios() {
         where("activo", "==", true),
       );
       const snap = await getDocs(q);
-      let count = 0;
-      for (const d of snap.docs) {
-        await updateDoc(doc(db, "asignaturasDocente", d.id), { activo: false });
-        count++;
-      }
-      return count;
+      const batch = writeBatch(db);
+      snap.docs.forEach((d) => {
+        batch.update(d.ref, { activo: false });
+      });
+      if (snap.docs.length > 0) await batch.commit();
+      return snap.docs.length;
     } catch (error) {
       console.error("Error desactivando materias:", error);
       return 0;
@@ -319,102 +329,6 @@ export default function GestionUsuarios() {
     } catch (error) {
       console.error("Error archivando:", error);
       mostrarToast("error", "Error al archivar", "No se pudo archivar el usuario.");
-    }
-  }
-
-  async function openTransferModal(user: AppUser) {
-    setTransferSource(user);
-    setTransferDestId("");
-    setTransferAlsoGrados(true);
-    setTransferArchivar(true);
-    setLoadingTransfer(true);
-    setShowTransferModal(true);
-    try {
-      const q = query(
-        collection(db, "asignaturasDocente"),
-        where("docenteId", "==", user.uid),
-        where("activo", "==", true),
-      );
-      const snap = await getDocs(q);
-      setTransferMaterias(snap.docs.map((d) => ({ id: d.id, ...d.data() }) as AsignaturaDocente));
-    } catch (error) {
-      console.error("Error cargando materias:", error);
-      setTransferMaterias([]);
-    } finally {
-      setLoadingTransfer(false);
-    }
-  }
-
-  async function ejecutarTransferencia() {
-    if (!transferSource || !transferDestId) {
-      mostrarToast("warning", "Docente destino requerido", "Selecciona el docente que recibirá las materias.");
-      return;
-    }
-    const dest = users.find((u) => u.uid === transferDestId);
-    if (!dest) return;
-    const confirmado = await confirmar(
-      "Transferir materias",
-      `¿Transferir ${transferMaterias.length} materia(s) de "${transferSource.displayName}" a "${dest.displayName}"?${transferArchivar ? `\n\n📦 Además se ARCHIVARÁ a ${transferSource.displayName}.` : ""}`,
-      {
-        confirmText: "Sí, transferir",
-        cancelText: "Cancelar",
-        confirmColor: "bg-teal-600 hover:bg-teal-700",
-        icon: FaExchangeAlt,
-      },
-    );
-    if (!confirmado) return;
-    setIsTransferring(true);
-    try {
-      let transferidas = 0;
-      let omitidas = 0;
-      for (const mat of transferMaterias) {
-        const qDup = query(
-          collection(db, "asignaturasDocente"),
-          where("docenteId", "==", dest.uid),
-          where("gradoId", "==", mat.gradoId),
-          where("destrezaId", "==", mat.destrezaId),
-          where("activo", "==", true),
-        );
-        const snapDup = await getDocs(qDup);
-        if (!snapDup.empty) {
-          omitidas++;
-          continue;
-        }
-        await addDoc(collection(db, "asignaturasDocente"), {
-          docenteId: dest.uid,
-          gradoId: mat.gradoId,
-          destrezaId: mat.destrezaId,
-          anioLectivoId: mat.anioLectivoId,
-          activo: true,
-          transferidoDe: transferSource.uid,
-          createdAt: serverTimestamp(),
-        });
-        await updateDoc(doc(db, "asignaturasDocente", mat.id), { activo: false });
-        transferidas++;
-      }
-      if (transferAlsoGrados) {
-        await updateDoc(doc(db, "usuarios", dest.uid), {
-          gradosAsignados: Array.from(new Set([...(dest.gradosAsignados || []), ...(transferSource.gradosAsignados || [])])),
-          tutorDe: Array.from(new Set([...(dest.tutorDe || []), ...(transferSource.tutorDe || [])])),
-        });
-      }
-      if (transferArchivar) {
-        await updateDoc(doc(db, "usuarios", transferSource.uid), {
-          status: "deleted",
-          gradosAsignados: [],
-          tutorDe: [],
-        });
-      }
-      mostrarToast("success", "Transferencia completada", `${transferidas} materia(s) transferida(s)${omitidas > 0 ? `, ${omitidas} omitida(s)` : ""}${transferArchivar ? `. ${transferSource.displayName} archivado.` : ""}`, 6000);
-      setShowTransferModal(false);
-      setTransferSource(null);
-      setTransferMaterias([]);
-      await cargarUsuarios();
-    } catch (error) {
-      console.error("Error transfiriendo:", error);
-      mostrarToast("error", "Error al transferir", "No se pudieron transferir las materias.");
-    } finally {
-      setIsTransferring(false);
     }
   }
 
@@ -475,7 +389,6 @@ export default function GestionUsuarios() {
 
   return (
     <Layout title="Gestión de Usuarios" subtitle={`${users.length} usuarios registrados`} showBack>
-      {/* Botón para forzar refresh manual del DataContext */}
       <div className="mb-3 flex justify-end">
         <button
           onClick={reload}
@@ -592,13 +505,6 @@ export default function GestionUsuarios() {
                           className="inline-flex items-center gap-1 bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg text-sm font-medium"
                         >
                           <FaPlus className="w-4 h-4" /> Editar Asignación
-                        </button>
-                        <button
-                          onClick={() => openTransferModal(user)}
-                          className="inline-flex items-center gap-1 bg-teal-600 hover:bg-teal-700 text-white px-3 py-1.5 rounded-lg text-sm font-medium"
-                          title="Copiar sus materias a otro docente (reemplazo)"
-                        >
-                          <FaExchangeAlt className="w-4 h-4" /> Transferir Materias
                         </button>
                         <button onClick={() => updateStatus(user.uid, "blocked")} className="inline-flex items-center gap-1 bg-gray-200 hover:bg-gray-300 text-gray-700 px-3 py-1.5 rounded-lg text-sm font-medium">
                           <FaShieldAlt className="w-4 h-4" /> Bloquear
@@ -726,6 +632,30 @@ export default function GestionUsuarios() {
                   <p className="text-sm text-yellow-800">⚠️ Si no seleccionas ningún grado, el usuario no podrá ver nada en su panel.</p>
                 </div>
               )}
+
+              {gradosSeleccionados.length > 0 &&
+                (selectedUserForGrados.gradosAsignados || []).some(
+                  (g) => !gradosSeleccionados.includes(g),
+                ) && (
+                  <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg">
+                    <p className="text-sm text-amber-800">
+                      ⚠️ Al guardar, las materias asignadas en{" "}
+                      <strong>
+                        {selectedUserForGrados.gradosAsignados?.filter(
+                          (g) => !gradosSeleccionados.includes(g),
+                        )
+                          .map(
+                            (gid) =>
+                              grados.find((g) => g.id === gid)?.nombre +
+                              " " +
+                              (grados.find((g) => g.id === gid)?.paralelo || ""),
+                          )
+                          .join(", ")}
+                      </strong>{" "}
+                      se desasignarán automáticamente de su horario.
+                    </p>
+                  </div>
+                )}
             </div>
             <div className="border-t border-gray-200 px-6 py-4 flex gap-3">
               <button onClick={guardarAsignacion} className="flex-1 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium">
@@ -747,92 +677,13 @@ export default function GestionUsuarios() {
         </div>
       )}
 
-      {/* Modal de transferencia de materias */}
-      {showTransferModal && transferSource && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-xl shadow-xl max-w-2xl w-full max-h-[90vh] overflow-hidden">
-            <div className="bg-teal-600 px-6 py-4 flex items-center gap-2">
-              <FaExchangeAlt className="text-white text-lg" />
-              <h3 className="text-white text-lg font-bold">Transferir Materias de {transferSource.displayName}</h3>
-            </div>
-            <div className="p-6 overflow-y-auto max-h-[70vh] space-y-5">
-              <div>
-                <h4 className="font-semibold text-slate-800 mb-2 flex items-center gap-2">
-                  <FaChalkboardTeacher className="text-teal-600" /> Materias a transferir ({transferMaterias.length})
-                </h4>
-                {loadingTransfer ? (
-                  <div className="flex items-center gap-2 text-slate-500 text-sm p-3">
-                    <FaSpinner className="animate-spin" /> Cargando materias...
-                  </div>
-                ) : transferMaterias.length === 0 ? (
-                  <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg text-sm text-yellow-800">⚠️ Este docente no tiene materias configuradas en Mi Horario.</div>
-                ) : (
-                  <div className="space-y-1 max-h-40 overflow-y-auto">
-                    {transferMaterias.map((mat) => {
-                      const grado = grados.find((g) => g.id === mat.gradoId);
-                      const destreza = destrezas.find((d) => d.id === mat.destrezaId);
-                      return (
-                        <div key={mat.id} className="flex items-center gap-2 p-2 bg-slate-50 rounded-lg text-sm">
-                          <FaGraduationCap className="text-blue-600 text-xs" />
-                          <span className="font-medium text-slate-800">{grado ? `${grado.nombre} - ${grado.paralelo}` : "Grado"}</span>
-                          <span className="text-slate-400">•</span>
-                          <span className="text-teal-700 font-medium">{destreza?.nombre || "Materia"}</span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-              <div>
-                <h4 className="font-semibold text-slate-800 mb-2">👤 Docente que recibirá las materias</h4>
-                <select value={transferDestId} onChange={(e) => setTransferDestId(e.target.value)} className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-teal-500">
-                  <option value="">Seleccionar docente...</option>
-                  {users.filter((u) => u.status === "active" && u.uid !== transferSource.uid).map((u) => (
-                    <option key={u.uid} value={u.uid}>{u.displayName} ({u.email})</option>
-                  ))}
-                </select>
-              </div>
-              <label className="flex items-center gap-3 p-3 rounded-lg border-2 border-slate-200 cursor-pointer hover:border-teal-300 transition">
-                <input type="checkbox" checked={transferAlsoGrados} onChange={(e) => setTransferAlsoGrados(e.target.checked)} className="w-4 h-4 text-teal-600 rounded" />
-                <div>
-                  <span className="font-semibold text-slate-800 text-sm">Heredar también grados y tutorías</span>
-                  <p className="text-xs text-slate-500">El docente destino recibirá los mismos grados asignados y tutorías del docente saliente.</p>
-                </div>
-              </label>
-              <label className="flex items-center gap-3 p-3 rounded-lg border-2 border-slate-200 cursor-pointer hover:border-red-300 transition">
-                <input type="checkbox" checked={transferArchivar} onChange={(e) => setTransferArchivar(e.target.checked)} className="w-4 h-4 text-red-600 rounded" />
-                <div>
-                  <span className="font-semibold text-slate-800 text-sm">Archivar al docente saliente después de transferir</span>
-                  <p className="text-xs text-slate-500">Se quitarán sus grados y tutorías. Si retorna (ej. calamidad doméstica), reactívalo desde la pestaña "Archivados".</p>
-                </div>
-              </label>
-              <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg text-xs text-blue-800">
-                <strong>ℹ️ Nota:</strong> El historial de notas y asistencias NUNCA se elimina. El docente destino podrá verlo y editarlo (quedará registrado en la auditoría).
-              </div>
-            </div>
-            <div className="border-t border-gray-200 px-6 py-4 flex gap-3">
-              <button
-                onClick={ejecutarTransferencia}
-                disabled={isTransferring || loadingTransfer || transferMaterias.length === 0 || !transferDestId}
-                className="flex-1 bg-teal-600 hover:bg-teal-700 text-white px-4 py-2 rounded-lg font-medium disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center justify-center gap-2"
-              >
-                {isTransferring ? <FaSpinner className="animate-spin" /> : <FaExchangeAlt />} Transferir
-              </button>
-              <button
-                onClick={() => { setShowTransferModal(false); setTransferSource(null); setTransferMaterias([]); }}
-                disabled={isTransferring}
-                className="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-700 px-4 py-2 rounded-lg font-medium disabled:opacity-50"
-              >
-                Cancelar
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       <div className="mt-6 bg-blue-50 border border-blue-200 rounded-lg p-4">
-        <p className="text-sm text-blue-900">
-          <strong>💡 Flujo de reemplazo:</strong> Usa <strong>"Transferir Materias"</strong> para pasar la configuración al docente reemplazante. Si el docente retorna, ve a <strong>"Archivados"</strong> → <strong>"Reactivar"</strong>. El historial siempre se conserva.
+        <p className="text-sm text-blue-900 flex items-start gap-2">
+          <FaChalkboardTeacher className="text-blue-600 mt-0.5 shrink-0" />
+          <span>
+            <strong>💡 Gestión de materias:</strong> Para transferir, quitar o administrar las materias asignadas a los docentes, usa el módulo{" "}
+            <strong>Gestión de Materias Docentes</strong> desde el Dashboard.
+          </span>
         </p>
       </div>
 
