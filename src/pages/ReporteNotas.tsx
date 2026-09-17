@@ -27,7 +27,6 @@ import {
   FaSyncAlt,
   FaTimes,
 } from "react-icons/fa";
-import { cacheGet, cacheSet, cacheInvalidate } from "../utils/sessionCache";
 
 // ==================== INTERFACES ====================
 
@@ -39,6 +38,7 @@ interface ActividadData {
   destrezaId: string;
   ambitoId: string;
   gradoId: string;
+  periodoId?: string;
   estrategiaNota?: string;
 }
 
@@ -66,7 +66,7 @@ interface AsignaturaDocente {
   activo: boolean;
 }
 
-interface RegistroEnRiesgo {
+interface RegistroNota {
   calificacionId: string;
   estudianteId: string;
   estudianteNombre: string;
@@ -80,14 +80,23 @@ interface RegistroEnRiesgo {
   ambitoNombre: string;
   unidadId: string;
   unidadNombre: string;
-  actividadDetalle: string;
+  actividadId: string;
   actividadTipo: string;
+  actividadDetalle: string;
   actividadFecha: string;
   estrategiaActividad: string;
   notaOriginal: number;
   notaFinal: number;
   tieneRefuerzo: boolean;
   observacion?: string;
+  docenteIdCal?: string;
+}
+
+interface SeccionMateria {
+  unidadId: string;
+  unidadNombre: string;
+  ambitoNombre: string;
+  registros: RegistroNota[];
 }
 
 type ModoVista = "tutor" | "docente";
@@ -127,23 +136,25 @@ const calcularNotaFinalRefuerzo = (
   }
 };
 
-// ✅ TTL del cache para reporte de notas (15 minutos)
-const TTL_NOTAS = 1000 * 60 * 15;
+const claseNota = (nota: number): string => {
+  if (nota >= 7) return "bg-green-100 text-green-700 border border-green-300";
+  if (nota >= 5) return "bg-amber-100 text-amber-700 border border-amber-300";
+  return "bg-red-100 text-red-700 border border-red-300";
+};
 
 // ==================== COMPONENTE ====================
 
 export default function ReporteNotas() {
   const { user, userData } = useAuth();
-  const { grados, ambitos, destrezas, anioActivo, ready } = useData();
+  const { grados, ambitos, destrezas, anioActivo, periodoActual, ready } =
+    useData();
 
   const [asignaturasDocente, setAsignaturasDocente] = useState<
     AsignaturaDocente[]
   >([]);
   const [estudiantes, setEstudiantes] = useState<Estudiante[]>([]);
   const [actividades, setActividades] = useState<ActividadData[]>([]);
-  const [calificacionesBajas, setCalificacionesBajas] = useState<
-    CalificacionData[]
-  >([]);
+  const [calificaciones, setCalificaciones] = useState<CalificacionData[]>([]);
   const [loadedKey, setLoadedKey] = useState<string | null>(null);
   const [modoVista, setModoVista] = useState<ModoVista>("tutor");
   const [gradoTutorSel, setGradoTutorSel] = useState<string>("");
@@ -152,7 +163,7 @@ export default function ReporteNotas() {
   // ✅ Modal de refuerzo
   const [showRefuerzoModal, setShowRefuerzoModal] = useState(false);
   const [refuerzoRegistro, setRefuerzoRegistro] =
-    useState<RegistroEnRiesgo | null>(null);
+    useState<RegistroNota | null>(null);
   const [refuerzoForm, setRefuerzoForm] = useState({
     nota: 7,
     detalle: "",
@@ -220,6 +231,7 @@ export default function ReporteNotas() {
     );
   }, [asignaturasDocente, gradoDocenteEfectivo]);
 
+  // ✅ Todas mis destrezas (de todos mis grados) — para saber si PUEDO reforzar
   const misDestrezasTodas = useMemo(
     () => new Set(asignaturasDocente.map((a) => a.destrezaId)),
     [asignaturasDocente],
@@ -249,14 +261,17 @@ export default function ReporteNotas() {
 
   const shouldLoadData = ready && gradosDisponibles.length > 0;
 
+  // ✅ La carga depende del modo: tutor solo necesita bajas; docente todas
   const loadKey = useMemo(
     () =>
       JSON.stringify({
         admin: esAdmin,
+        modo: modoEfectivo,
         grados: gradosDisponibles.map((g) => g.id),
         materias: asignaturasDocente.map((a) => a.destrezaId),
+        periodo: periodoActual?.id || "",
       }),
-    [esAdmin, gradosDisponibles, asignaturasDocente],
+    [esAdmin, modoEfectivo, gradosDisponibles, asignaturasDocente, periodoActual],
   );
 
   const loading = shouldLoadData && loadedKey !== loadKey;
@@ -290,22 +305,6 @@ export default function ReporteNotas() {
     if (!shouldLoadData || loadedKey === loadKey) return;
 
     const cargarReporte = async () => {
-      // ✅ Intentar obtener del cache primero
-      const cacheKey = `reporteNotas_${loadKey}`;
-      const cached = cacheGet<{
-        actividades: ActividadData[];
-        calificaciones: CalificacionData[];
-        estudiantes: Estudiante[];
-      }>(cacheKey, TTL_NOTAS);
-
-      if (cached) {
-        setActividades(cached.actividades);
-        setCalificacionesBajas(cached.calificaciones);
-        setEstudiantes(cached.estudiantes);
-        setLoadedKey(loadKey);
-        return;
-      }
-
       try {
         const gradoIds = gradosDisponibles.map((g) => g.id);
         const tutorIds = new Set(userData?.tutorDe || []);
@@ -313,39 +312,39 @@ export default function ReporteNotas() {
         const myDestrezaIds = Array.from(
           new Set(asignaturasDocente.map((a) => a.destrezaId)),
         );
+        const periodoIdActivo = periodoActual?.id;
 
+        // 1) Actividades relevantes (grados tutor + mis destrezas), del periodo activo
         const actividadesMap = new Map<string, ActividadData>();
+        const agregarSiAplica = (act: ActividadData) => {
+          if (!gradoIds.includes(act.gradoId)) return;
+          if (
+            periodoIdActivo &&
+            act.periodoId &&
+            act.periodoId !== periodoIdActivo
+          )
+            return;
+          actividadesMap.set(act.id, act);
+        };
 
         if (esAdmin) {
           for (let i = 0; i < gradoIds.length; i += 10) {
             const lote = gradoIds.slice(i, i + 10);
             const snap = await getDocs(
-              query(
-                collection(db, "actividades"),
-                where("gradoId", "in", lote),
-              ),
+              query(collection(db, "actividades"), where("gradoId", "in", lote)),
             );
             snap.docs.forEach((d) =>
-              actividadesMap.set(d.id, {
-                id: d.id,
-                ...d.data(),
-              } as ActividadData),
+              agregarSiAplica({ id: d.id, ...d.data() } as ActividadData),
             );
           }
         } else {
           for (let i = 0; i < gradosTutorIds.length; i += 10) {
             const lote = gradosTutorIds.slice(i, i + 10);
             const snap = await getDocs(
-              query(
-                collection(db, "actividades"),
-                where("gradoId", "in", lote),
-              ),
+              query(collection(db, "actividades"), where("gradoId", "in", lote)),
             );
             snap.docs.forEach((d) =>
-              actividadesMap.set(d.id, {
-                id: d.id,
-                ...d.data(),
-              } as ActividadData),
+              agregarSiAplica({ id: d.id, ...d.data() } as ActividadData),
             );
           }
           for (let i = 0; i < myDestrezaIds.length; i += 30) {
@@ -356,30 +355,32 @@ export default function ReporteNotas() {
                 where("destrezaId", "in", lote),
               ),
             );
-            snap.docs.forEach((d) => {
-              const act = { id: d.id, ...d.data() } as ActividadData;
-              if (gradoIds.includes(act.gradoId)) {
-                actividadesMap.set(act.id, act);
-              }
-            });
+            snap.docs.forEach((d) =>
+              agregarSiAplica({ id: d.id, ...d.data() } as ActividadData),
+            );
           }
         }
 
         const actividadesBatch = Array.from(actividadesMap.values());
         setActividades(actividadesBatch);
 
+        // 2) Calificaciones: tutor solo bajas (lecturas mínimas); docente todas
         const actividadIds = actividadesBatch.map((a) => a.id);
         const calificacionesBatch: CalificacionData[] = [];
-
         for (let i = 0; i < actividadIds.length; i += 30) {
           const lote = actividadIds.slice(i, i + 30);
-          const snap = await getDocs(
-            query(
-              collection(db, "calificaciones"),
-              where("actividadId", "in", lote),
-              where("nota", "<=", 6),
-            ),
-          );
+          const q =
+            modoEfectivo === "tutor"
+              ? query(
+                  collection(db, "calificaciones"),
+                  where("actividadId", "in", lote),
+                  where("nota", "<=", 6),
+                )
+              : query(
+                  collection(db, "calificaciones"),
+                  where("actividadId", "in", lote),
+                );
+          const snap = await getDocs(q);
           snap.docs.forEach((d) =>
             calificacionesBatch.push({
               id: d.id,
@@ -387,14 +388,13 @@ export default function ReporteNotas() {
             } as CalificacionData),
           );
         }
+        setCalificaciones(calificacionesBatch);
 
-        setCalificacionesBajas(calificacionesBatch);
-
+        // 3) Estudiantes involucrados
         const estudianteIds = Array.from(
           new Set(calificacionesBatch.map((c) => c.estudianteId)),
         );
         const estudiantesBatch: Estudiante[] = [];
-
         for (let i = 0; i < estudianteIds.length; i += 30) {
           const lote = estudianteIds.slice(i, i + 30);
           const snap = await getDocs(
@@ -404,23 +404,14 @@ export default function ReporteNotas() {
             estudiantesBatch.push({ id: d.id, ...d.data() } as Estudiante),
           );
         }
-
         estudiantesBatch.sort((a, b) => a.apellidos.localeCompare(b.apellidos));
         setEstudiantes(estudiantesBatch);
-
-        // ✅ Guardar en cache antes de terminar
-        cacheSet(cacheKey, {
-          actividades: actividadesBatch,
-          calificaciones: calificacionesBatch,
-          estudiantes: estudiantesBatch,
-        });
       } catch (error) {
         console.error("Error cargando reporte:", error);
       } finally {
         setLoadedKey(loadKey);
       }
     };
-
     cargarReporte();
   }, [
     shouldLoadData,
@@ -429,23 +420,23 @@ export default function ReporteNotas() {
     gradosDisponibles,
     asignaturasDocente,
     esAdmin,
+    modoEfectivo,
     userData,
+    periodoActual,
   ]);
 
   // ==================== DATOS CONSOLIDADOS ====================
 
-  const registrosEnRiesgo = useMemo((): RegistroEnRiesgo[] => {
-    if (calificacionesBajas.length === 0) return [];
-
+  const registrosTodos = useMemo((): RegistroNota[] => {
+    if (calificaciones.length === 0) return [];
     const estudiantesMap = new Map(estudiantes.map((e) => [e.id, e]));
     const actividadesMap = new Map(actividades.map((a) => [a.id, a]));
     const gradosMap = new Map(grados.map((g) => [g.id, g]));
     const destrezasMap = new Map(destrezas.map((d) => [d.id, d]));
     const ambitosMap = new Map(ambitos.map((a) => [a.id, a]));
 
-    const registros: RegistroEnRiesgo[] = [];
-
-    calificacionesBajas.forEach((cal) => {
+    const registros: RegistroNota[] = [];
+    calificaciones.forEach((cal) => {
       const estudiante = estudiantesMap.get(cal.estudianteId);
       const actividad = actividadesMap.get(cal.actividadId);
       if (!estudiante || !actividad) return;
@@ -487,58 +478,45 @@ export default function ReporteNotas() {
         ambitoNombre: ambito?.nombre || "—",
         unidadId,
         unidadNombre,
-        actividadDetalle: actividad.detalle,
+        actividadId: actividad.id,
         actividadTipo: actividad.tipo,
+        actividadDetalle: actividad.detalle,
         actividadFecha: actividad.fecha,
         estrategiaActividad: actividad.estrategiaNota || "promediar",
         notaOriginal: cal.nota,
         notaFinal,
         tieneRefuerzo: !!cal.refuerzo,
         observacion: cal.observacion,
+        docenteIdCal: cal.docenteId,
       });
     });
 
-    registros.sort((a, b) => {
-      if (a.notaFinal !== b.notaFinal) return a.notaFinal - b.notaFinal;
-      return a.estudianteNombre.localeCompare(b.estudianteNombre);
-    });
-
-    return registros;
-  }, [
-    calificacionesBajas,
-    estudiantes,
-    actividades,
-    grados,
-    destrezas,
-    ambitos,
-  ]);
-
-  // ==================== FILTRO POR MODO + GRADO ====================
-
-  const registrosFiltrados = useMemo(() => {
-    if (modoEfectivo === "tutor") {
-      return registrosEnRiesgo.filter((r) => r.gradoId === gradoTutorEfectivo);
-    }
-    return registrosEnRiesgo.filter(
-      (r) =>
-        r.gradoId === gradoDocenteEfectivo &&
-        misUnidadesDelGrado.has(r.unidadId),
+    registros.sort(
+      (a, b) =>
+        a.estudianteNombre.localeCompare(b.estudianteNombre) ||
+        a.actividadFecha.localeCompare(b.actividadFecha),
     );
-  }, [
-    registrosEnRiesgo,
-    modoEfectivo,
-    gradoTutorEfectivo,
-    gradoDocenteEfectivo,
-    misUnidadesDelGrado,
-  ]);
+    return registros;
+  }, [calificaciones, estudiantes, actividades, grados, destrezas, ambitos]);
+
+  // ==================== VISTA TUTOR: RIESGO (<7) ====================
+
+  const registrosEnRiesgo = useMemo(
+    () => registrosTodos.filter((r) => r.notaFinal < 7),
+    [registrosTodos],
+  );
+
+  const registrosFiltradosTutor = useMemo(
+    () => registrosEnRiesgo.filter((r) => r.gradoId === gradoTutorEfectivo),
+    [registrosEnRiesgo, gradoTutorEfectivo],
+  );
 
   const estudiantesUnicosEnRiesgo = useMemo(() => {
     const map = new Map<
       string,
-      { estudiante: RegistroEnRiesgo; conteo: number; materias: Set<string> }
+      { estudiante: RegistroNota; conteo: number; materias: Set<string> }
     >();
-
-    registrosFiltrados.forEach((r) => {
+    registrosFiltradosTutor.forEach((r) => {
       if (!map.has(r.estudianteId)) {
         map.set(r.estudianteId, {
           estudiante: r,
@@ -550,13 +528,35 @@ export default function ReporteNotas() {
       entry.conteo++;
       entry.materias.add(r.materiaNombre);
     });
-
     return Array.from(map.values()).sort((a, b) => b.conteo - a.conteo);
-  }, [registrosFiltrados]);
+  }, [registrosFiltradosTutor]);
+
+  // ==================== VISTA DOCENTE: SECCIONES POR MATERIA ====================
+
+  const seccionesDocente = useMemo((): SeccionMateria[] => {
+    const mios = registrosTodos.filter(
+      (r) =>
+        r.gradoId === gradoDocenteEfectivo &&
+        misUnidadesDelGrado.has(r.unidadId),
+    );
+    const porUnidad = new Map<string, RegistroNota[]>();
+    mios.forEach((r) => {
+      if (!porUnidad.has(r.unidadId)) porUnidad.set(r.unidadId, []);
+      porUnidad.get(r.unidadId)!.push(r);
+    });
+    return Array.from(porUnidad.entries())
+      .map(([unidadId, regs]) => ({
+        unidadId,
+        unidadNombre: regs[0].unidadNombre,
+        ambitoNombre: regs[0].ambitoNombre,
+        registros: regs,
+      }))
+      .sort((a, b) => a.unidadNombre.localeCompare(b.unidadNombre));
+  }, [registrosTodos, gradoDocenteEfectivo, misUnidadesDelGrado]);
 
   // ==================== REFUERZO ====================
 
-  const abrirRefuerzo = (r: RegistroEnRiesgo) => {
+  const abrirRefuerzo = (r: RegistroNota) => {
     if (!misDestrezasTodas.has(r.destrezaId)) return;
     setRefuerzoRegistro(r);
     setRefuerzoForm({
@@ -570,10 +570,7 @@ export default function ReporteNotas() {
 
   const aplicarRefuerzo = async () => {
     if (!refuerzoRegistro) return;
-    if (!refuerzoForm.detalle.trim()) {
-      return;
-    }
-
+    if (!refuerzoForm.detalle.trim()) return;
     setIsGuardandoRefuerzo(true);
     try {
       const refuerzoData = {
@@ -583,27 +580,17 @@ export default function ReporteNotas() {
         aplicadoPor: user?.uid || "",
         estrategiaElegida: refuerzoForm.estrategia,
       };
-
-      await updateDoc(
-        doc(db, "calificaciones", refuerzoRegistro.calificacionId),
-        {
-          refuerzo: refuerzoData,
-          updatedAt: serverTimestamp(),
-        },
-      );
-
-      // ✅ Actualizar local para reflejar inmediato sin recargar todo
-      setCalificacionesBajas((prev) =>
+      await updateDoc(doc(db, "calificaciones", refuerzoRegistro.calificacionId), {
+        refuerzo: refuerzoData,
+        updatedAt: serverTimestamp(),
+      });
+      setCalificaciones((prev) =>
         prev.map((c) =>
           c.id === refuerzoRegistro.calificacionId
             ? { ...c, refuerzo: refuerzoData }
             : c,
         ),
       );
-
-      // ✅ Invalidar cache para que la próxima carga sea fresca
-      cacheInvalidate(`reporteNotas_${loadKey}`);
-
       setShowRefuerzoModal(false);
       setRefuerzoRegistro(null);
     } catch (error) {
@@ -627,79 +614,125 @@ export default function ReporteNotas() {
     const printWindow = window.open("", "_blank");
     if (!printWindow) return;
 
-    const grado =
-      modoEfectivo === "tutor" ? gradoTutorActual : gradoDocenteActual;
-    const tituloModo =
-      modoEfectivo === "tutor"
-        ? `Vista Tutor — Grado ${grado?.nombre} "${grado?.paralelo}" (todas las unidades)`
-        : `Vista Docente — Grado ${grado?.nombre} "${grado?.paralelo}" (${
-            esInicialDocente ? "ámbitos" : "mis materias"
-          }: ${misUnidadesNombres.join(", ")})`;
+    const esTutorPrint = modoEfectivo === "tutor";
+    const grado = esTutorPrint ? gradoTutorActual : gradoDocenteActual;
+    const nombreResponsable =
+      userData?.nombreDocumento || user?.displayName || "";
+    const fechaGeneracion = new Date().toLocaleDateString("es-EC", {
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
 
-    const html = `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <title>Reporte de Notas - Estudiantes en Riesgo</title>
-        <style>
-          body { font-family: Arial, sans-serif; padding: 30px; color: #333; line-height: 1.5; }
-          h1 { text-align: center; color: #d97706; font-size: 24px; margin-bottom: 5px; }
-          h2 { text-align: center; color: #555; font-size: 16px; margin-bottom: 10px; font-weight: normal; }
-          .modo { text-align: center; font-size: 12px; color: #666; margin-bottom: 20px; font-style: italic; }
-          table { width: 100%; border-collapse: collapse; margin-top: 20px; font-size: 11px; }
-          th { background-color: #fbbf24; color: #78350f; padding: 8px; text-align: left; border: 1px solid #d97706; }
-          td { padding: 6px 8px; border: 1px solid #ddd; vertical-align: top; }
-          tr:nth-child(even) { background-color: #fef3c7; }
-          .nota { font-weight: bold; color: #dc2626; text-align: center; }
-          .refuerzo { color: #16a34a; font-size: 10px; }
-          .footer { margin-top: 40px; text-align: center; font-size: 11px; color: #777; border-top: 1px solid #ccc; padding-top: 15px; }
-          @media print { body { padding: 0; } }
-        </style>
-      </head>
-      <body>
-        <h1>⚠️ Reporte de Estudiantes en Riesgo Académico</h1>
-        <h2>Estudiantes con notas menores a 7</h2>
-        <p class="modo">${tituloModo}</p>
-        <p><strong>Total:</strong> ${registrosFiltrados.length} registro(s) | ${estudiantesUnicosEnRiesgo.length} estudiante(s)</p>
+    let cuerpo: string;
+    if (esTutorPrint) {
+      const filas = registrosFiltradosTutor.map(
+        (r) => `
+        <tr>
+          <td>${r.estudianteNombre}${r.estudianteCedula ? `<br><small>CI: ${r.estudianteCedula}</small>` : ""}</td>
+          <td>${r.materiaNombre}<br><small>${r.ambitoNombre}</small></td>
+          <td>${r.actividadTipo}: ${r.actividadDetalle}</td>
+          <td>${r.actividadFecha}</td>
+          <td class="nota">${r.notaOriginal}${r.tieneRefuerzo ? `<br><span class="refuerzo">→ ${r.notaFinal} (ref.)</span>` : ""}</td>
+        </tr>`,
+      );
+      cuerpo = `
         <table>
           <thead>
             <tr>
               <th>Estudiante</th>
-              <th>Grado</th>
               <th>Materia / Destreza</th>
               <th>Actividad</th>
               <th>Fecha</th>
               <th>Nota</th>
             </tr>
           </thead>
-          <tbody>
-            ${registrosFiltrados
-              .map(
-                (r) => `
-              <tr>
-                <td>${r.estudianteNombre}${r.estudianteCedula ? `<br><small>CI: ${r.estudianteCedula}</small>` : ""}</td>
-                <td>${r.gradoNombre} - ${r.gradoParalelo}</td>
-                <td>${r.materiaNombre}<br><small>${r.ambitoNombre}</small></td>
-                <td>${r.actividadTipo}: ${r.actividadDetalle}</td>
-                <td>${r.actividadFecha}</td>
-                <td class="nota">${r.notaOriginal}${r.tieneRefuerzo ? `<br><span class="refuerzo">→ ${r.notaFinal} (ref.)</span>` : ""}</td>
-              </tr>
-            `,
-              )
-              .join("")}
-          </tbody>
-        </table>
-        <div class="footer">
-          <p>Generado: ${new Date().toLocaleDateString("es-EC", { year: "numeric", month: "long", day: "numeric", hour: "2-digit", minute: "2-digit" })}</p>
-          <p>Documento interno de seguimiento académico.</p>
-        </div>
+          <tbody>${filas.join("")}</tbody>
+        </table>`;
+    } else {
+      cuerpo = seccionesDocente
+        .map((sec) => {
+          const filas = sec.registros.map(
+            (r, idx) => `
+            <tr>
+              <td class="num">${idx + 1}</td>
+              <td class="name">${r.estudianteNombre}${r.estudianteCedula ? `<br><small>CI: ${r.estudianteCedula}</small>` : ""}</td>
+              <td>${r.actividadTipo}: ${r.actividadDetalle}<br><span class="fecha">${r.actividadFecha}</span></td>
+              <td class="nota">${r.notaFinal}${r.tieneRefuerzo ? `<br><span class="refuerzo">de ${r.notaOriginal}</span>` : ""}</td>
+            </tr>`,
+          );
+          return `
+            <div class="seccion">
+              <h3 class="sec-title">${sec.unidadNombre} <small>(${sec.ambitoNombre})</small></h3>
+              <table>
+                <thead>
+                  <tr>
+                    <th class="num">#</th>
+                    <th class="name">Estudiante</th>
+                    <th>Actividad / Fecha</th>
+                    <th>Nota</th>
+                  </tr>
+                </thead>
+                <tbody>${filas.join("")}</tbody>
+              </table>
+            </div>`;
+        })
+        .join("");
+    }
+
+    const titulo = esTutorPrint
+      ? "REPORTE DE ESTUDIANTES EN RIESGO ACADÉMICO"
+      : "CONSOLIDADO DE CALIFICACIONES DEL TRIMESTRE";
+    const subtitulo = esTutorPrint
+      ? `Vista Tutor — Grado ${grado?.nombre} "${grado?.paralelo}" · Notas menores a 7`
+      : `Vista Docente — Grado ${grado?.nombre} "${grado?.paralelo}" · ${
+          periodoActual?.nombre || "Trimestre activo"
+        }`;
+
+    const html = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>Reporte de Notas</title>
+        <style>
+          @page { size: letter portrait; margin: 2cm; }
+          body { font-family: Arial, sans-serif; padding: 20px; color: #333; line-height: 1.4; font-size: 10px; }
+          h1 { text-align: center; color: #b45309; font-size: 16px; margin: 0 0 4px 0; letter-spacing: 1px; }
+          h2 { text-align: center; color: #555; font-size: 11px; margin: 0 0 14px 0; font-weight: normal; }
+          .seccion { margin-bottom: 16px; page-break-inside: avoid; }
+          .sec-title { font-size: 11px; font-weight: bold; margin: 10px 0 4px 0; color: #0e7490; border-bottom: 2px solid #06b6d4; padding-bottom: 3px; }
+          .sec-title small { font-weight: normal; color: #6b7280; }
+          table { width: 100%; border-collapse: collapse; margin-top: 6px; font-size: 10px; }
+          th { background-color: #fbbf24; color: #78350f; padding: 5px 6px; text-align: left; border: 1px solid #d97706; font-size: 9px; text-transform: uppercase; }
+          td { padding: 4px 6px; border: 1px solid #ddd; vertical-align: top; }
+          td.name { min-width: 140px; }
+          td.num { width: 24px; text-align: center; color: #6b7280; }
+          tr:nth-child(even) { background-color: #fef3c7; }
+          .nota { font-weight: bold; color: #dc2626; text-align: center; }
+          .refuerzo { color: #16a34a; font-size: 9px; }
+          .fecha { color: #6b7280; font-size: 9px; }
+          .footer { margin-top: 30px; text-align: right; font-size: 9px; color: #777; border-top: 1px solid #ccc; padding-top: 8px; }
+          tr { page-break-inside: avoid; }
+        </style>
+      </head>
+      <body>
+        <h1>${titulo}</h1>
+        <h2>${subtitulo}</h2>
+        ${cuerpo}
+        <div class="footer">Generado: ${fechaGeneracion} · ${nombreResponsable || "Sistema"}</div>
       </body>
       </html>`;
-
     printWindow.document.write(html);
     printWindow.document.close();
     setTimeout(() => printWindow.print(), 400);
   };
+
+  const puedeImprimir =
+    modoEfectivo === "tutor"
+      ? registrosFiltradosTutor.length > 0
+      : seccionesDocente.length > 0;
 
   // ==================== RENDER ====================
 
@@ -715,7 +748,7 @@ export default function ReporteNotas() {
 
   return (
     <Layout>
-      {/* TABS DE MODO */}
+      {/* TABS DE MODO + IMPRIMIR */}
       <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4 mb-4">
         <div className="flex flex-col sm:flex-row gap-2 items-stretch sm:items-center justify-between">
           <div className="flex gap-2 flex-1">
@@ -748,7 +781,7 @@ export default function ReporteNotas() {
           </div>
           <button
             onClick={handlePrint}
-            disabled={registrosFiltrados.length === 0}
+            disabled={!puedeImprimir}
             className="inline-flex items-center justify-center gap-2 bg-amber-600 hover:bg-amber-700 text-white px-4 py-2.5 rounded-lg text-sm font-semibold disabled:opacity-50 disabled:cursor-not-allowed transition-all"
           >
             <FaPrint /> Imprimir
@@ -757,42 +790,39 @@ export default function ReporteNotas() {
       </div>
 
       {/* SELECTOR DE GRADO */}
-      <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4 mb-4">
+      <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4 mb-6">
         <label className="text-xs font-semibold text-slate-700 mb-2 flex items-center gap-1">
           <FaGraduationCap className="text-blue-600" />
-          {modoEfectivo === "tutor"
-            ? "Grado que tutoras"
-            : "Grado donde dictas"}
+          {modoEfectivo === "tutor" ? "Grado que tutoras" : "Grado donde dictas"}
         </label>
         <div className="flex flex-wrap gap-2">
-          {(modoEfectivo === "tutor"
-            ? gradosTutorizados
-            : gradosDocenteMios
-          ).map((g) => {
-            const sel =
-              modoEfectivo === "tutor"
-                ? gradoTutorEfectivo === g.id
-                : gradoDocenteEfectivo === g.id;
-            return (
-              <button
-                key={g.id}
-                onClick={() =>
-                  modoEfectivo === "tutor"
-                    ? setGradoTutorSel(g.id)
-                    : setGradoDocenteSel(g.id)
-                }
-                className={`px-4 py-2 rounded-lg text-sm font-medium border-2 transition-all ${
-                  sel
-                    ? modoEfectivo === "tutor"
-                      ? "bg-purple-600 text-white border-purple-600"
-                      : "bg-cyan-600 text-white border-cyan-600"
-                    : "bg-white text-slate-700 border-slate-200 hover:border-slate-400"
-                }`}
-              >
-                {g.nombre} - {g.paralelo}
-              </button>
-            );
-          })}
+          {(modoEfectivo === "tutor" ? gradosTutorizados : gradosDocenteMios).map(
+            (g) => {
+              const sel =
+                modoEfectivo === "tutor"
+                  ? gradoTutorEfectivo === g.id
+                  : gradoDocenteEfectivo === g.id;
+              return (
+                <button
+                  key={g.id}
+                  onClick={() =>
+                    modoEfectivo === "tutor"
+                      ? setGradoTutorSel(g.id)
+                      : setGradoDocenteSel(g.id)
+                  }
+                  className={`px-4 py-2 rounded-lg text-sm font-medium border-2 transition-all ${
+                    sel
+                      ? modoEfectivo === "tutor"
+                        ? "bg-purple-600 text-white border-purple-600"
+                        : "bg-cyan-600 text-white border-cyan-600"
+                      : "bg-white text-slate-700 border-slate-200 hover:border-slate-400"
+                  }`}
+                >
+                  {g.nombre} - {g.paralelo}
+                </button>
+              );
+            },
+          )}
         </div>
         <div className="mt-3 text-xs text-slate-600 bg-slate-50 rounded-lg p-3 border border-slate-200">
           <FaInfoCircle className="inline mr-1 text-blue-600" />
@@ -816,74 +846,16 @@ export default function ReporteNotas() {
             </>
           ) : (
             <>
-              <strong>Vista Docente:</strong> estudiantes de{" "}
+              <strong>Vista Docente:</strong> consolidado de{" "}
               <strong>
                 {gradoDocenteActual?.nombre} {gradoDocenteActual?.paralelo}
               </strong>{" "}
-              con notas &lt; 7 en{" "}
-              {esInicialDocente ? (
-                <>
-                  tus <strong>ámbitos</strong>:{" "}
-                  <strong>{misUnidadesNombres.join(", ") || "—"}</strong>
-                </>
-              ) : (
-                <>
-                  tus <strong>materias</strong>:{" "}
-                  <strong>{misUnidadesNombres.join(", ") || "—"}</strong>
-                </>
-              )}
-              .
+              en{" "}
+              <strong>{periodoActual?.nombre || "el trimestre activo"}</strong>{" "}
+              · tus materias:{" "}
+              <strong>{misUnidadesNombres.join(", ") || "—"}</strong>.
             </>
           )}
-        </div>
-      </div>
-
-      {/* Resumen en tarjetas */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-        <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
-          <div className="flex items-center gap-3">
-            <div className="bg-red-100 p-3 rounded-lg">
-              <FaExclamationTriangle className="text-red-600 text-xl" />
-            </div>
-            <div>
-              <p className="text-xs text-slate-500 font-semibold uppercase">
-                Registros
-              </p>
-              <p className="text-2xl font-bold text-slate-800">
-                {registrosFiltrados.length}
-              </p>
-            </div>
-          </div>
-        </div>
-        <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
-          <div className="flex items-center gap-3">
-            <div className="bg-amber-100 p-3 rounded-lg">
-              <FaUserGraduate className="text-amber-600 text-xl" />
-            </div>
-            <div>
-              <p className="text-xs text-slate-500 font-semibold uppercase">
-                Estudiantes en riesgo
-              </p>
-              <p className="text-2xl font-bold text-slate-800">
-                {estudiantesUnicosEnRiesgo.length}
-              </p>
-            </div>
-          </div>
-        </div>
-        <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
-          <div className="flex items-center gap-3">
-            <div className="bg-green-100 p-3 rounded-lg">
-              <FaCheckCircle className="text-green-600 text-xl" />
-            </div>
-            <div>
-              <p className="text-xs text-slate-500 font-semibold uppercase">
-                Con refuerzo aplicado
-              </p>
-              <p className="text-2xl font-bold text-slate-800">
-                {registrosFiltrados.filter((r) => r.tieneRefuerzo).length}
-              </p>
-            </div>
-          </div>
         </div>
       </div>
 
@@ -894,44 +866,88 @@ export default function ReporteNotas() {
             Cargando reporte...
           </p>
         </div>
-      ) : registrosFiltrados.length === 0 ? (
-        <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-12 text-center">
-          <div className="bg-green-100 rounded-full p-5 mb-4 inline-block">
-            <FaCheckCircle className="text-4xl text-green-500" />
+      ) : modoEfectivo === "tutor" ? (
+        // ==================== VISTA TUTOR ====================
+        registrosFiltradosTutor.length === 0 ? (
+          <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-12 text-center">
+            <div className="bg-green-100 rounded-full p-5 mb-4 inline-block">
+              <FaCheckCircle className="text-4xl text-green-500" />
+            </div>
+            <h3 className="text-lg font-bold text-slate-800 mb-2">
+              ¡Excelente! No hay estudiantes en riesgo
+            </h3>
+            <p className="text-slate-600 text-sm">
+              No se encontraron calificaciones menores a 7 en el grado
+              seleccionado.
+            </p>
           </div>
-          <h3 className="text-lg font-bold text-slate-800 mb-2">
-            ¡Excelente! No hay estudiantes en riesgo
-          </h3>
-          <p className="text-slate-600 text-sm">
-            No se encontraron calificaciones menores a 7 en el grado y modo
-            seleccionados.
-          </p>
-        </div>
-      ) : (
-        <>
-          {/* Resumen por estudiante */}
-          <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden mb-6">
-            <div
-              className={`px-5 py-4 flex items-center gap-3 ${
-                modoEfectivo === "tutor"
-                  ? "bg-linear-to-r from-purple-500 to-purple-600"
-                  : "bg-linear-to-r from-cyan-500 to-cyan-600"
-              }`}
-            >
-              <FaUserGraduate className="text-white text-xl" />
-              <div>
-                <h3 className="text-white font-semibold">
-                  Resumen por Estudiante
-                </h3>
-                <p className="text-white/80 text-xs">
-                  {estudiantesUnicosEnRiesgo.length} estudiante(s) con notas
-                  menores a 7
-                </p>
+        ) : (
+          <>
+            {/* Tarjetas resumen */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+              <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
+                <div className="flex items-center gap-3">
+                  <div className="bg-red-100 p-3 rounded-lg">
+                    <FaExclamationTriangle className="text-red-600 text-xl" />
+                  </div>
+                  <div>
+                    <p className="text-xs text-slate-500 font-semibold uppercase">
+                      Registros
+                    </p>
+                    <p className="text-2xl font-bold text-slate-800">
+                      {registrosFiltradosTutor.length}
+                    </p>
+                  </div>
+                </div>
+              </div>
+              <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
+                <div className="flex items-center gap-3">
+                  <div className="bg-amber-100 p-3 rounded-lg">
+                    <FaUserGraduate className="text-amber-600 text-xl" />
+                  </div>
+                  <div>
+                    <p className="text-xs text-slate-500 font-semibold uppercase">
+                      Estudiantes en riesgo
+                    </p>
+                    <p className="text-2xl font-bold text-slate-800">
+                      {estudiantesUnicosEnRiesgo.length}
+                    </p>
+                  </div>
+                </div>
+              </div>
+              <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
+                <div className="flex items-center gap-3">
+                  <div className="bg-green-100 p-3 rounded-lg">
+                    <FaCheckCircle className="text-green-600 text-xl" />
+                  </div>
+                  <div>
+                    <p className="text-xs text-slate-500 font-semibold uppercase">
+                      Con refuerzo aplicado
+                    </p>
+                    <p className="text-2xl font-bold text-slate-800">
+                      {registrosFiltradosTutor.filter((r) => r.tieneRefuerzo).length}
+                    </p>
+                  </div>
+                </div>
               </div>
             </div>
-            <div className="divide-y divide-slate-100">
-              {estudiantesUnicosEnRiesgo.map(
-                ({ estudiante, conteo, materias }) => (
+
+            {/* Resumen por estudiante */}
+            <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden mb-6">
+              <div className="bg-linear-to-r from-purple-500 to-purple-600 px-5 py-4 flex items-center gap-3">
+                <FaUserGraduate className="text-white text-xl" />
+                <div>
+                  <h3 className="text-white font-semibold">
+                    Resumen por Estudiante
+                  </h3>
+                  <p className="text-white/80 text-xs">
+                    {estudiantesUnicosEnRiesgo.length} estudiante(s) con notas
+                    menores a 7
+                  </p>
+                </div>
+              </div>
+              <div className="divide-y divide-slate-100">
+                {estudiantesUnicosEnRiesgo.map(({ estudiante, conteo, materias }) => (
                   <div
                     key={estudiante.estudianteId}
                     className="p-4 hover:bg-slate-50"
@@ -989,132 +1005,241 @@ export default function ReporteNotas() {
                       </div>
                     </div>
                   </div>
-                ),
-              )}
-            </div>
-          </div>
-
-          {/* Tabla detallada con botón de Refuerzo */}
-          <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-            <div className="bg-linear-to-r from-red-500 to-red-600 px-5 py-4 flex items-center gap-3">
-              <FaExclamationTriangle className="text-white text-xl" />
-              <div>
-                <h3 className="text-white font-semibold">
-                  Detalle de Calificaciones Bajas
-                </h3>
-                <p className="text-white/80 text-xs">
-                  {registrosFiltrados.length} registro(s) con nota menor a 7
-                </p>
+                ))}
               </div>
             </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead className="bg-slate-50 border-b border-slate-200">
-                  <tr>
-                    <th className="text-left px-4 py-2.5 font-semibold text-slate-700 text-xs">
-                      Estudiante
-                    </th>
-                    <th className="text-left px-3 py-2.5 font-semibold text-slate-700 text-xs">
-                      Materia / Destreza
-                    </th>
-                    <th className="text-left px-3 py-2.5 font-semibold text-slate-700 text-xs">
-                      Actividad
-                    </th>
-                    <th className="text-center px-3 py-2.5 font-semibold text-slate-700 text-xs">
-                      Fecha
-                    </th>
-                    <th className="text-center px-3 py-2.5 font-semibold text-slate-700 text-xs">
-                      Nota
-                    </th>
-                    <th className="text-center px-3 py-2.5 font-semibold text-slate-700 text-xs">
-                      Acción
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {registrosFiltrados.map((r, idx) => (
-                    <tr
-                      key={`${r.estudianteId}-${r.destrezaId}-${r.actividadDetalle}-${idx}`}
-                      className="hover:bg-slate-50"
-                    >
-                      <td className="px-4 py-2.5">
-                        <p className="font-medium text-slate-900 text-xs">
-                          {r.estudianteNombre}
-                        </p>
-                        {r.estudianteCedula && (
-                          <p className="text-[10px] text-slate-500">
-                            CI: {r.estudianteCedula}
-                          </p>
-                        )}
-                      </td>
-                      <td className="px-3 py-2.5">
-                        <p className="text-xs font-medium text-slate-900 flex items-center gap-1">
-                          <FaBook className="text-purple-500 text-[10px]" />
-                          {r.materiaNombre}
-                        </p>
-                        <p className="text-[10px] text-slate-500">
-                          {r.ambitoNombre}
-                        </p>
-                      </td>
-                      <td className="px-3 py-2.5">
-                        <p className="text-xs font-medium text-slate-900">
-                          {r.actividadDetalle}
-                        </p>
-                        <p className="text-[10px] text-slate-500">
-                          {r.actividadTipo}
-                        </p>
-                      </td>
-                      <td className="px-3 py-2.5 text-center text-xs text-slate-600">
-                        {r.actividadFecha}
-                      </td>
-                      <td className="px-3 py-2.5 text-center">
-                        <span
-                          className={`inline-block px-2 py-1 rounded text-xs font-bold ${
-                            r.notaFinal < 5
-                              ? "bg-red-100 text-red-700 border border-red-300"
-                              : "bg-amber-100 text-amber-700 border border-amber-300"
-                          }`}
-                        >
-                          {r.notaOriginal}
-                        </span>
-                        {r.tieneRefuerzo && (
-                          <p className="text-[10px] text-green-600 mt-1 font-semibold">
-                            → {r.notaFinal} (ref.)
-                          </p>
-                        )}
-                      </td>
-                      <td className="px-3 py-2.5 text-center">
-                        {misDestrezasTodas.has(r.destrezaId) ? (
-                          !r.tieneRefuerzo ? (
-                            <button
-                              onClick={() => abrirRefuerzo(r)}
-                              className="inline-flex items-center gap-1 bg-orange-100 hover:bg-orange-200 text-orange-700 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all"
-                              title="Aplicar refuerzo a esta calificación"
-                            >
-                              <FaSyncAlt className="text-[10px]" />
-                              Refuerzo
-                            </button>
-                          ) : (
-                            <span className="text-[10px] text-green-600 font-semibold">
-                              Refuerzo aplicado
-                            </span>
-                          )
-                        ) : (
-                          <span
-                            className="text-[10px] text-slate-400"
-                            title="Materia de otro docente: solo él puede aplicar refuerzo"
-                          >
-                            —
-                          </span>
-                        )}
-                      </td>
+
+            {/* Tabla detallada de riesgo */}
+            <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+              <div className="bg-linear-to-r from-red-500 to-red-600 px-5 py-4 flex items-center gap-3">
+                <FaExclamationTriangle className="text-white text-xl" />
+                <div>
+                  <h3 className="text-white font-semibold">
+                    Detalle de Calificaciones Bajas
+                  </h3>
+                  <p className="text-white/80 text-xs">
+                    {registrosFiltradosTutor.length} registro(s) con nota menor
+                    a 7
+                  </p>
+                </div>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-slate-50 border-b border-slate-200">
+                    <tr>
+                      <th className="text-left px-4 py-2.5 font-semibold text-slate-700 text-xs">
+                        Estudiante
+                      </th>
+                      <th className="text-left px-3 py-2.5 font-semibold text-slate-700 text-xs">
+                        Materia / Destreza
+                      </th>
+                      <th className="text-left px-3 py-2.5 font-semibold text-slate-700 text-xs">
+                        Actividad
+                      </th>
+                      <th className="text-center px-3 py-2.5 font-semibold text-slate-700 text-xs">
+                        Fecha
+                      </th>
+                      <th className="text-center px-3 py-2.5 font-semibold text-slate-700 text-xs">
+                        Nota
+                      </th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {registrosFiltradosTutor.map((r, idx) => (
+                      <tr
+                        key={`${r.estudianteId}-${r.calificacionId}-${idx}`}
+                        className="hover:bg-slate-50"
+                      >
+                        <td className="px-4 py-2.5">
+                          <p className="font-medium text-slate-900 text-xs">
+                            {r.estudianteNombre}
+                          </p>
+                          {r.estudianteCedula && (
+                            <p className="text-[10px] text-slate-500">
+                              CI: {r.estudianteCedula}
+                            </p>
+                          )}
+                        </td>
+                        <td className="px-3 py-2.5">
+                          <p className="text-xs font-medium text-slate-900 flex items-center gap-1">
+                            <FaBook className="text-purple-500 text-[10px]" />
+                            {r.materiaNombre}
+                          </p>
+                          <p className="text-[10px] text-slate-500">
+                            {r.ambitoNombre}
+                          </p>
+                        </td>
+                        <td className="px-3 py-2.5">
+                          <p className="text-xs font-medium text-slate-900">
+                            {r.actividadDetalle}
+                          </p>
+                          <p className="text-[10px] text-slate-500">
+                            {r.actividadTipo}
+                          </p>
+                        </td>
+                        <td className="px-3 py-2.5 text-center text-xs text-slate-600">
+                          {r.actividadFecha}
+                        </td>
+                        <td className="px-3 py-2.5 text-center">
+                          <span
+                            className={`inline-block px-2 py-1 rounded text-xs font-bold ${claseNota(r.notaFinal)}`}
+                          >
+                            {r.notaOriginal}
+                          </span>
+                          {r.tieneRefuerzo && (
+                            <p className="text-[10px] text-green-600 mt-1 font-semibold">
+                              → {r.notaFinal} (ref.)
+                            </p>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
+          </>
+        )
+      ) : // ==================== VISTA DOCENTE: CONSOLIDADO COMPACTO ====================
+      seccionesDocente.length === 0 ? (
+        <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-12 text-center">
+          <div className="bg-slate-100 rounded-full p-5 mb-4 inline-block">
+            <FaBook className="text-4xl text-slate-400" />
           </div>
-        </>
+          <h3 className="text-lg font-bold text-slate-800 mb-2">
+            Sin calificaciones en este trimestre
+          </h3>
+          <p className="text-slate-600 text-sm">
+            Aún no hay notas registradas en tus materias de{" "}
+            <strong>
+              {gradoDocenteActual?.nombre} {gradoDocenteActual?.paralelo}
+            </strong>
+            .
+          </p>
+        </div>
+      ) : (
+        <div className="space-y-6">
+          {seccionesDocente.map((sec) => (
+            <div
+              key={sec.unidadId}
+              className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden"
+            >
+              {/* ✅ La materia ocupa toda una fila */}
+              <div className="bg-linear-to-r from-cyan-600 to-cyan-700 px-5 py-3 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <FaBook className="text-white text-lg" />
+                  <h3 className="text-white font-semibold">{sec.unidadNombre}</h3>
+                  <span className="text-white/80 text-xs">
+                    ({sec.ambitoNombre})
+                  </span>
+                </div>
+                <span className="text-white/90 text-xs bg-white/20 px-2 py-1 rounded-full">
+                  {sec.registros.length} registro(s)
+                </span>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-slate-50 border-b border-slate-200">
+                    <tr>
+                      <th className="text-center px-2 py-2.5 font-semibold text-slate-700 text-xs w-10">
+                        N°
+                      </th>
+                      <th className="text-left px-3 py-2.5 font-semibold text-slate-700 text-xs min-w-45">
+                        Estudiante
+                      </th>
+                      <th className="text-left px-3 py-2.5 font-semibold text-slate-700 text-xs">
+                        Actividad · Fecha · Nota
+                      </th>
+                      <th className="text-center px-3 py-2.5 font-semibold text-slate-700 text-xs w-28">
+                        Acción
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {sec.registros.map((r, idx) => (
+                      <tr
+                        key={r.calificacionId}
+                        className="hover:bg-slate-50"
+                      >
+                        <td className="px-2 py-2.5 text-center text-xs text-slate-500">
+                          {idx + 1}
+                        </td>
+                        <td className="px-3 py-2.5">
+                          <p className="font-medium text-slate-900 text-xs">
+                            {r.estudianteNombre}
+                          </p>
+                          {r.estudianteCedula && (
+                            <p className="text-[10px] text-slate-500">
+                              CI: {r.estudianteCedula}
+                            </p>
+                          )}
+                        </td>
+                        {/* ✅ Actividad + fecha + nota en UNA columna */}
+                        <td className="px-3 py-2.5">
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="min-w-0">
+                              <p className="text-xs font-medium text-slate-900 truncate">
+                                {r.actividadTipo}: {r.actividadDetalle}
+                              </p>
+                              <p className="text-[10px] text-slate-500">
+                                {r.actividadFecha}
+                              </p>
+                            </div>
+                            <span
+                              className={`shrink-0 inline-block px-2 py-1 rounded text-xs font-bold ${claseNota(r.notaFinal)}`}
+                              title={
+                                r.tieneRefuerzo
+                                  ? `Original ${r.notaOriginal} → final ${r.notaFinal}`
+                                  : undefined
+                              }
+                            >
+                              {r.notaFinal}
+                              {r.tieneRefuerzo && (
+                                <span className="block text-[9px] font-normal text-slate-500">
+                                  de {r.notaOriginal}
+                                </span>
+                              )}
+                            </span>
+                          </div>
+                        </td>
+                        <td className="px-3 py-2.5 text-center">
+                          {misDestrezasTodas.has(r.destrezaId) ? (
+                            r.notaFinal < 7 && !r.tieneRefuerzo ? (
+                              <button
+                                onClick={() => abrirRefuerzo(r)}
+                                className="inline-flex items-center gap-1 bg-orange-100 hover:bg-orange-200 text-orange-700 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all"
+                                title="Aplicar refuerzo"
+                              >
+                                <FaSyncAlt className="text-[10px]" />
+                                Refuerzo
+                              </button>
+                            ) : r.tieneRefuerzo ? (
+                              <span className="text-[10px] text-green-600 font-semibold">
+                                Reforzada
+                              </span>
+                            ) : (
+                              <span className="text-[10px] text-slate-400">
+                                —
+                              </span>
+                            )
+                          ) : (
+                            <span
+                              className="text-[10px] text-slate-400"
+                              title="Materia de otro docente"
+                            >
+                              —
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ))}
+        </div>
       )}
 
       {/* ==================== MODAL REFUERZO ==================== */}
@@ -1152,7 +1277,8 @@ export default function ReporteNotas() {
                 {refuerzoRegistro.estudianteNombre}
               </p>
               <p className="text-xs text-orange-700 mt-1">
-                Nota original: <strong>{refuerzoRegistro.notaOriginal}</strong>
+                Nota original:{" "}
+                <strong>{refuerzoRegistro.notaOriginal}</strong>
               </p>
             </div>
             <div className="space-y-4">
