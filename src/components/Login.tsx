@@ -115,7 +115,7 @@ export default function Login() {
               />
             </div>
             <h2 className="text-3xl font-bold text-slate-900 mb-2">
-              Bienvenido
+              Bienvenido IA
             </h2>
             <p className="text-slate-500 text-sm">
               Inicia sesión para continuar
