@@ -1,63 +1,24 @@
-```gitignore
-# Dependencies
-node_modules/
-
-# Build outputs
-dist/
-build/
-*.js.map
-*.ts.map
-
-# Environment variables
-.env
-.env.local
-*.env.*
-
-# IDE specific
-.vscode/
-.idea/
-*.swp
-*.swo
-
 # Logs
+logs
 *.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
 
-# Temporary files
-*.tmp
-```
+node_modules
+dist
+dist-ssr
+*.local
 
-Wait, let me reconsider this. The modified files are only TypeScript React components (`Login.tsx` and `Dashboard.tsx`), which are source code files. There are no build artifacts, dependency directories, or temporary files in the change list that would require ignoring.
-
-Actually, since only source code files (`.tsx`) are being modified and no build artifacts or dependencies are present in the changes, the optimized approach would be to keep it minimal and only include common TypeScript/React project ignores that are likely needed for this type of project.
-
-```gitignore
-# Dependencies
-node_modules/
-
-# Build outputs
-dist/
-build/
-*.js.map
-*.ts.map
-
-# Environment variables
-.env
-.env.local
-*.env.*
-
-# IDE specific
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# Logs
-*.log
-
-# Temporary files
-*.tmp
-
-# Python cache (if any Python tools used)
-__pycache__/
-*.pyc
-```
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
