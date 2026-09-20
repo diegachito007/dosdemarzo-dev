@@ -799,7 +799,7 @@ export default function Dashboard() {
             <p className="text-sm text-slate-600 mt-1">
               {activeRole === "super_admin"
                 ? "Gestión institucional y configuración del sistema"
-                : "Bienvenido a tu espacio de trabajo diario"}
+                : "Bienvenido IA a tu espacio de trabajo diario"}
             </p>
           </div>
           {/* ✅ Botón para refrescar stats manualmente */}
