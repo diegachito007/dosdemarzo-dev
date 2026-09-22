@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
+import type { Unsubscribe } from "firebase/firestore";
 import {
   collection,
   query,
@@ -9,6 +10,7 @@ import {
   getDocs,
   where,
   addDoc,
+  onSnapshot,
 } from "firebase/firestore";
 import { db } from "../lib/firebase";
 import { useAuth } from "../context/AuthContext";
@@ -83,6 +85,7 @@ export default function Estudiantes() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedGradoId, setSelectedGradoId] = useState<string | null>(null);
+  const unsubscribeRef = useRef<Unsubscribe | null>(null);
 
   const [formData, setFormData] = useState({
     apellidos: "",
@@ -210,7 +213,87 @@ export default function Estudiantes() {
     setValidationErrors([]);
   };
 
-  // ✅ Función unificada para cargar estudiantes con cache
+  // ✅ Suscribirse a cambios en tiempo real con onSnapshot (optimizado)
+  useEffect(() => {
+    if (!ready || !gradoEfectivoId) {
+      if (!ready) return;
+      if (userData?.role === "docente" && !gradoEfectivoId) {
+        setEstudiantes([]);
+      }
+      return;
+    }
+
+    // Cancelar suscripción anterior si existe
+    if (unsubscribeRef.current) {
+      unsubscribeRef.current();
+      unsubscribeRef.current = null;
+    }
+
+    setLoadingEstudiantes(true);
+
+    const cacheKey = `estudiantesTodos_${gradoEfectivoId}`;
+
+    // Construir query según rol
+    let q;
+    if (userData?.role === "docente" || esAdmin) {
+      q = query(
+        collection(db, "estudiantes"),
+        where("gradoId", "==", gradoEfectivoId),
+        orderBy("apellidos", "asc"),
+      );
+    } else {
+      q = query(collection(db, "estudiantes"), orderBy("apellidos", "asc"));
+    }
+
+    // Suscribirse con onSnapshot para tiempo real
+    const unsubscribe = onSnapshot(
+      q,
+      (snapshot) => {
+        const data = snapshot.docs.map(
+          (doc) =>
+            ({
+              id: doc.id,
+              ...doc.data(),
+            }) as Estudiante,
+        );
+
+        // Guardar en cache inmediatamente
+        cacheSet(cacheKey, data);
+        setEstudiantes(data);
+        setLoadingEstudiantes(false);
+      },
+      (error) => {
+        console.error("Error en suscripción de estudiantes:", error);
+        setLoadingEstudiantes(false);
+        // Fallback: intentar lectura única
+        cargarEstudiantes(gradoEfectivoId, true);
+      },
+    );
+
+    unsubscribeRef.current = unsubscribe;
+
+    // Cleanup al desmontar o cambiar de grado
+    return () => {
+      if (unsubscribeRef.current) {
+        unsubscribeRef.current();
+        unsubscribeRef.current = null;
+      }
+    };
+  }, [gradoEfectivoId, ready, userData?.role, esAdmin]);
+
+  // ✅ Carga inicial desde cache si está disponible
+  useEffect(() => {
+    if (!ready || !gradoEfectivoId) return;
+
+    const cacheKey = `estudiantesTodos_${gradoEfectivoId}`;
+    const cached = cacheGet<Estudiante[]>(cacheKey, TTL_ESTUDIANTES);
+    if (cached) {
+      setEstudiantes(cached);
+      setLoadingEstudiantes(false);
+    }
+  }, [gradoEfectivoId, ready]);
+
+  // ✅ Función para recargar estudiantes (usar solo si hay error en onSnapshot)
   const cargarEstudiantes = useCallback(
     async (gradoId: string | null, forceRefresh = false) => {
       if (userData?.role === "docente" && !gradoId) {
@@ -266,16 +349,6 @@ export default function Estudiantes() {
     [userData?.role, esAdmin],
   );
 
-  // ✅ Effect inicial con cache
-  useEffect(() => {
-    if (!ready) return;
-
-    const ejecutar = async () => {
-      await cargarEstudiantes(gradoEfectivoId);
-    };
-    ejecutar();
-  }, [gradoEfectivoId, ready, cargarEstudiantes]);
-
   // ✅ Función para invalidar cache y recargar (sin useCallback)
   async function recargarEstudiantes() {
     // Invalidar cache de "todos" (este módulo)
@@ -289,7 +362,9 @@ export default function Estudiantes() {
       cacheInvalidate(`estudiantesActivos_${gradoEfectivoId}`);
     }
 
-    await cargarEstudiantes(gradoEfectivoId, true);
+    // Con onSnapshot, los cambios se reflejan automáticamente
+    // Solo necesitamos invalidar el cache para forzar una nueva lectura si es necesario
+    cacheInvalidate(cacheKeyTodos);
 
     // Notificar al DataContext que los datos cambiaron
     window.dispatchEvent(new Event("eduX:refreshData"));
