@@ -6,7 +6,6 @@ import {
   updateDoc,
   doc,
   serverTimestamp,
-  getDocs,
   where,
   addDoc,
   onSnapshot,
@@ -76,7 +75,8 @@ export default function Estudiantes() {
   const { grados, anioActivo, ready } = useData();
 
   const [estudiantes, setEstudiantes] = useState<Estudiante[]>([]);
-  const [cargandoLista, setCargandoLista] = useState(true);
+  const [gradoCargado, setGradoCargado] = useState<string | null>(null);
+  
   const [editingId, setEditingId] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedGradoId, setSelectedGradoId] = useState<string | null>(null);
@@ -207,15 +207,15 @@ export default function Estudiantes() {
     setValidationErrors([]);
   };
 
+  // ✅ Tiempo real con onSnapshot. SIN setState síncrono en el cuerpo del
+  // effect: el spinner se deriva comparando el grado del último snapshot
+  // recibido contra el grado efectivo actual.
   useEffect(() => {
     if (!ready) return;
     const esDocente = userData?.role === "docente";
-    if (esDocente && !gradoEfectivoId) {
-      setEstudiantes([]);
-      setCargandoLista(false);
-      return;
-    }
-    setCargandoLista(true);
+    if (esDocente && !gradoEfectivoId) return;
+    
+    const claveGrado = gradoEfectivoId ?? "__todos__";
     const q = gradoEfectivoId
       ? query(
           collection(db, "estudiantes"),
@@ -223,21 +223,28 @@ export default function Estudiantes() {
           orderBy("apellidos", "asc"),
         )
       : query(collection(db, "estudiantes"), orderBy("apellidos", "asc"));
+    
     const unsubscribe = onSnapshot(
       q,
       (snap) => {
         setEstudiantes(
           snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Estudiante),
         );
-        setCargandoLista(false);
+        setGradoCargado(claveGrado);
       },
       (error) => {
         console.error("Error escuchando estudiantes:", error);
-        setCargandoLista(false);
+        setGradoCargado(claveGrado);
       },
     );
     return () => unsubscribe();
   }, [ready, gradoEfectivoId, userData?.role]);
+
+  // ✅ Derivar cargandoLista: true si el grado efectivo no coincide con el último cargado
+  const cargandoLista =
+    ready && (gradoEfectivoId !== null || esAdmin)
+      ? gradoCargado !== (gradoEfectivoId ?? "__todos__")
+      : false;
 
   // ✅ IMPRIMIR NÓMINA DEL GRADO (activos + inactivos)
   const handlePrintNomina = () => {
@@ -1358,7 +1365,7 @@ export default function Estudiantes() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-200">
-                      {loadingEstudiantes ? (
+                      {cargandoLista ? (
                         <tr>
                           <td colSpan={4} className="px-5 py-16 text-center">
                             <div className="flex flex-col items-center">
@@ -1542,7 +1549,7 @@ export default function Estudiantes() {
                   </table>
                 </div>
 
-                {estudiantesAMostrar.length > 0 && !loadingEstudiantes && (
+                {estudiantesAMostrar.length > 0 && !cargandoLista && (
                   <div className="bg-slate-50 px-5 py-3 border-t border-slate-200">
                     <div className="flex items-center justify-between text-xs text-slate-600">
                       <span>

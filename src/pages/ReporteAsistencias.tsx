@@ -3,11 +3,12 @@ import {
   collection,
   query,
   where,
-  updateDoc,
   doc,
   serverTimestamp,
   getDocs,
   Timestamp,
+  onSnapshot,
+  writeBatch,
 } from "firebase/firestore";
 import { db } from "../lib/firebase";
 import { useAuth } from "../context/AuthContext";
@@ -305,29 +306,33 @@ export default function ReporteAsistencias() {
 
   const periodoInicializado = useRef(false);
 
+  // ✅ OPTIMIZADO: Listener EN VIVO para asignaturas del docente.
+  // Si el docente modifica materias en MiHorario, se refleja aquí al instante.
   useEffect(() => {
     if (!user?.uid || !anioActivo?.id) return;
 
-    const fetchAsignaturas = async () => {
-      try {
-        const q = query(
-          collection(db, "asignaturasDocente"),
-          where("docenteId", "==", user.uid),
-          where("anioLectivoId", "==", anioActivo.id),
-          where("activo", "==", true),
-        );
-        const snap = await getDocs(q);
+    const q = query(
+      collection(db, "asignaturasDocente"),
+      where("docenteId", "==", user.uid),
+      where("anioLectivoId", "==", anioActivo.id),
+      where("activo", "==", true),
+    );
+
+    const unsubscribe = onSnapshot(
+      q,
+      (snapshot) => {
         setAsignaturasDocente(
-          snap.docs.map(
+          snapshot.docs.map(
             (d) => ({ id: d.id, ...d.data() }) as AsignaturaDocente,
           ),
         );
-      } catch (error) {
-        console.error("Error cargando asignaturas del docente:", error);
-      }
-    };
+      },
+      (error) => {
+        console.error("Error escuchando asignaturas del docente:", error);
+      },
+    );
 
-    fetchAsignaturas();
+    return () => unsubscribe();
   }, [user?.uid, anioActivo?.id]);
 
   const esTutor = (userData?.tutorDe?.length ?? 0) > 0;
@@ -1054,17 +1059,19 @@ export default function ReporteAsistencias() {
         ? `Justificado por tutor: ${motivoJustificacion.trim()}`
         : "Justificado por tutor";
 
-      const batch = asistenciasAActualizar.map((asistenciaId) =>
-        updateDoc(doc(db, "asistencias", asistenciaId), {
+      // ✅ OPTIMIZADO: writeBatch para atomicidad (todas o ninguna)
+      const batch = writeBatch(db);
+      asistenciasAActualizar.forEach((asistenciaId) => {
+        batch.update(doc(db, "asistencias", asistenciaId), {
           estado: "J",
           v2: true,
           observacion,
           justificadoPor: user?.uid,
           justificadoEl: serverTimestamp(),
-        }),
-      );
+        });
+      });
 
-      await Promise.all(batch);
+      await batch.commit();
 
       const gradoEfectivo = gradoTutorEfectivo;
       const fechas = diasSemana.map(formatFechaISO);
@@ -1188,23 +1195,29 @@ export default function ReporteAsistencias() {
         return;
       }
 
-      const ops = gruposAGuardar.flatMap((g) => {
+      // ✅ OPTIMIZADO: writeBatch para atomicidad (todas o ninguna)
+      const batch = writeBatch(db);
+      let opsCount = 0;
+
+      gruposAGuardar.forEach((g) => {
         const num = formatoNumeroActa(numeroParaDia(g.fecha));
         const nota =
           (notasPorDia[g.fecha] || "").trim() ||
           `Acta de compromiso N° ${num} firmada con el representante`;
-        return g.asistenciaIds.map((id) =>
-          updateDoc(doc(db, "asistencias", id), {
+
+        g.asistenciaIds.forEach((id) => {
+          batch.update(doc(db, "asistencias", id), {
             representanteAsistio: true,
             representanteNota: nota,
             actaNumero: num,
             representantePor: user?.uid || "",
             representanteEl: serverTimestamp(),
-          }),
-        );
+          });
+          opsCount++;
+        });
       });
 
-      await Promise.all(ops);
+      await batch.commit();
 
       const gradoEfectivo = gradoTutorEfectivo;
       const fechas = diasSemana.map(formatFechaISO);
@@ -1214,7 +1227,7 @@ export default function ReporteAsistencias() {
       mostrarToast(
         "success",
         "Acta(s) registrada(s)",
-        `Se registraron ${gruposAGuardar.length} acta(s) que cubren ${ops.length} fuga(s). Pulsa "Refrescar" para ver los cambios.`,
+        `Se registraron ${gruposAGuardar.length} acta(s) que cubren ${opsCount} fuga(s). Pulsa "Refrescar" para ver los cambios.`,
         5000,
       );
       setShowActaModal(false);
