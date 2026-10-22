@@ -10,6 +10,8 @@ import type { ReactNode } from "react";
 import Login from "./components/Login";
 import Dashboard from "./pages/Dashboard";
 import Calificaciones from "./pages/Calificaciones";
+import RefuerzoPedagogico from "./pages/RefuerzoPedagogico";
+import PPE from "./pages/PPE";
 import AniosLectivos from "./pages/AniosLectivos";
 import Grados from "./pages/Grados";
 import Estudiantes from "./pages/Estudiantes";
@@ -27,15 +29,14 @@ import MigracionAsistencia from "./pages/MigracionAsistencia";
 import EnMantenimiento from "./pages/EnMantenimiento";
 import GestionMateriasDocentes from "./pages/GestionMateriasDocentes";
 
-// Formulario público y Panel de administración
+// Formulario público y panel de administración
 import Matricula from "./pages/Matricula";
 import Matriculas from "./pages/Matriculas";
 
-// ✅ RUTA PRIVADA CORREGIDA (Fail-Closed)
 function PrivateRoute({ children }: { children: ReactNode }) {
   const { user, userData, loading } = useAuth();
 
-  // ✅ Flag de mantenimiento leído en tiempo real desde Firestore
+  // Configuración de mantenimiento, sincronizada en tiempo real desde Firestore.
   const [mantenimiento, setMantenimiento] = useState(false);
   const [datosMantenimiento, setDatosMantenimiento] = useState<{
     titulo?: string;
@@ -43,10 +44,10 @@ function PrivateRoute({ children }: { children: ReactNode }) {
   }>({});
 
   useEffect(() => {
-    const unsub = onSnapshot(
+    const unsubscribe = onSnapshot(
       doc(db, "configuracion", "sistema"),
-      (snap) => {
-        const data = snap.data();
+      (snapshot) => {
+        const data = snapshot.data();
         setMantenimiento(data?.mantenimiento === true);
         setDatosMantenimiento({
           titulo: data?.tituloMantenimiento || "",
@@ -54,7 +55,6 @@ function PrivateRoute({ children }: { children: ReactNode }) {
         });
       },
       (error) => {
-        // Si el documento no existe aún, no hay mantenimiento
         console.warn(
           "No se pudo leer configuración de sistema:",
           error.message,
@@ -62,14 +62,15 @@ function PrivateRoute({ children }: { children: ReactNode }) {
         setMantenimiento(false);
       },
     );
-    return () => unsub();
+
+    return () => unsubscribe();
   }, []);
 
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-4 border-blue-600 border-t-transparent mx-auto mb-3"></div>
+          <div className="animate-spin rounded-full h-12 w-12 border-4 border-blue-600 border-t-transparent mx-auto mb-3" />
           <p className="text-slate-600 font-medium">Cargando...</p>
         </div>
       </div>
@@ -84,8 +85,10 @@ function PrivateRoute({ children }: { children: ReactNode }) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-4 border-blue-600 border-t-transparent mx-auto mb-3"></div>
-          <p className="text-slate-600 font-medium">Verificando usuario...</p>
+          <div className="animate-spin rounded-full h-12 w-12 border-4 border-blue-600 border-t-transparent mx-auto mb-3" />
+          <p className="text-slate-600 font-medium">
+            Verificando usuario...
+          </p>
         </div>
       </div>
     );
@@ -106,8 +109,7 @@ function PrivateRoute({ children }: { children: ReactNode }) {
     return <ArchivedAccount />;
   }
 
-  // ✅ MODO MANTENIMIENTO: bloquea a todos EXCEPTO super_admin
-  // Así el admin puede entrar a ejecutar la migración mientras el sistema está "cerrado"
+  // El superadministrador puede acceder durante el mantenimiento.
   if (mantenimiento && userData.role !== "super_admin") {
     return (
       <EnMantenimiento
@@ -118,15 +120,14 @@ function PrivateRoute({ children }: { children: ReactNode }) {
   }
 
   if (userData.status === "active") {
-    // ✅ SOLO los usuarios activos cargan los datos maestros
-    // (grados, ámbitos, destrezas, años, períodos) UNA SOLA VEZ
+    // Los usuarios activos cargan los datos maestros mediante DataProvider.
     return <DataProvider>{children}</DataProvider>;
   }
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-slate-50">
       <div className="text-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-4 border-blue-600 border-t-transparent mx-auto mb-3"></div>
+        <div className="animate-spin rounded-full h-12 w-12 border-4 border-blue-600 border-t-transparent mx-auto mb-3" />
         <p className="text-slate-600 font-medium">Procesando...</p>
       </div>
     </div>
@@ -148,16 +149,16 @@ function AppRoutes() {
 
   return (
     <Routes>
-      {/* Ruta de Login */}
+      {/* Ruta de login */}
       <Route
         path="/login"
         element={user ? <Navigate to="/" replace /> : <Login />}
       />
 
-      {/* RUTA PÚBLICA: Formulario de Matrícula (NO requiere PrivateRoute) */}
+      {/* Ruta pública: formulario de matrícula */}
       <Route path="/matricula" element={<Matricula />} />
 
-      {/* Rutas protegidas (requieren login + estado 'active') */}
+      {/* Rutas protegidas */}
       <Route
         path="/"
         element={
@@ -215,6 +216,25 @@ function AppRoutes() {
         }
       />
       <Route
+        path="/refuerzo-pedagogico"
+        element={
+          <PrivateRoute>
+            <RefuerzoPedagogico />
+          </PrivateRoute>
+        }
+      />
+
+      {/* Nueva ruta: Programa de Participación Estudiantil */}
+      <Route
+        path="/ppe"
+        element={
+          <PrivateRoute>
+            <PPE />
+          </PrivateRoute>
+        }
+      />
+
+      <Route
         path="/reporte-asistencias"
         element={
           <PrivateRoute>
@@ -249,7 +269,7 @@ function AppRoutes() {
         }
       />
 
-      {/* RUTA ADMIN: Panel de Gestión de Matrículas (Solo super_admin) */}
+      {/* Panel de gestión de matrículas: solo super_admin */}
       <Route
         path="/matriculas"
         element={
@@ -261,7 +281,7 @@ function AppRoutes() {
         }
       />
 
-      {/* Otras rutas solo para super_admin */}
+      {/* Rutas administrativas: solo super_admin */}
       <Route
         path="/configuracion-institucional"
         element={
@@ -292,8 +312,6 @@ function AppRoutes() {
           </PrivateRoute>
         }
       />
-
-      {/* ✅ RUTA ADMIN: Migración de nomenclatura de asistencia (Solo super_admin) */}
       <Route
         path="/migracion-asistencia"
         element={
@@ -305,10 +323,10 @@ function AppRoutes() {
         }
       />
 
-      {/* Ruta de espera para pendientes/rechazados */}
+      {/* Pantalla para usuarios pendientes */}
       <Route path="/pending-approval" element={<PendingApproval />} />
 
-      {/* Catch-all */}
+      {/* Ruta comodín */}
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );

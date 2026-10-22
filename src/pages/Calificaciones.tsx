@@ -28,6 +28,11 @@ import type { Estudiante } from "../types";
 import Layout from "../components/Layout";
 import { cacheGet, cacheSet, cacheInvalidate } from "../utils/sessionCache";
 import {
+  construirRefuerzoConHistorial,
+  type EntradaRefuerzo,
+  type RefuerzoConHistorial,
+} from "../utils/refuerzo";
+import {
   FaUserCheck,
   FaExclamationTriangle,
   FaTasks,
@@ -91,6 +96,15 @@ interface RefuerzoData {
   fecha: string;
   aplicadoPor: string;
   estrategiaElegida?: EstrategiaNota;
+  historial?: Array<{
+    numero?: number;
+    nota: number;
+    detalle: string;
+    fecha: string;
+    aplicadoPor?: string;
+    estrategiaElegida?: EstrategiaNota;
+    origen?: "formal" | "informal";
+  }>;
 }
 interface ActividadData {
   id?: string;
@@ -106,6 +120,9 @@ interface ActividadData {
   estrategiaNota: EstrategiaNota;
   dirigidaA?: "general" | "ambos" | "especial";
   estudianteIds?: string[];
+  // ✅ INSUMOS: actividad consolidada y fuentes agrupadas
+  esConsolidado?: boolean;
+  actividadesAgrupadas?: string[];
   createdAt?: Timestamp | Date;
   updatedAt?: Timestamp | Date;
 }
@@ -210,6 +227,15 @@ const calcularNotaFinal = (
       return round2((notaOriginal + refuerzo.nota) / 2);
   }
 };
+
+// Un estudiante puede recibir nuevos refuerzos mientras la nota efectiva siga
+// por debajo de 7. La nota original queda protegida; solo se agrega al historial
+// una nueva aplicación de refuerzo.
+const puedeRecibirOtroRefuerzo = (
+  notaOriginal: number,
+  refuerzo?: RefuerzoData | null,
+  estrategiaDefault: EstrategiaNota = "promediar",
+): boolean => calcularNotaFinal(notaOriginal, refuerzo, estrategiaDefault) < 7;
 const esBachillerato = (gradoNombre: string): boolean =>
   gradoNombre.includes("8vo") ||
   gradoNombre.includes("9no") ||
@@ -268,7 +294,7 @@ export default function Calificaciones() {
   const [fechaAsistencia, setFechaAsistencia] = useState(
     new Date().toISOString().split("T")[0],
   );
-  // ✅ Horas pedagógicas del bloque que se está registrando
+  // ✅ Horas pedagógicas del bloque que se está registrando (scope activo)
   const [horasAsistencia, setHorasAsistencia] = useState<number[]>([]);
   const [horasPending, setHorasPending] = useState<{
     gradoId: string;
@@ -276,6 +302,7 @@ export default function Calificaciones() {
     destrezaId: string | null;
     horas: number[];
     presionada: number;
+    fecha: string;
   } | null>(null);
   const [asistencias, setAsistencias] = useState<
     Record<
@@ -332,6 +359,16 @@ export default function Calificaciones() {
     dirigidaA: "general" as "general" | "ambos" | "especial",
     estudianteIds: [] as string[],
   });
+  // ✅ CONSOLIDAR ACTIVIDADES (INSUMOS)
+  const [showConsolidarModal, setShowConsolidarModal] = useState(false);
+  const [consolidarSeleccionadas, setConsolidarSeleccionadas] = useState<
+    string[]
+  >([]);
+  const [consolidarNombre, setConsolidarNombre] = useState("");
+  const [isConsolidando, setIsConsolidando] = useState(false);
+  const [agrupadasExpandidas, setAgrupadasExpandidas] = useState<
+    Record<string, boolean>
+  >({});
   const [showRefuerzoModal, setShowRefuerzoModal] = useState(false);
   const [refuerzoEstudianteId, setRefuerzoEstudianteId] = useState<
     string | null
@@ -358,6 +395,12 @@ export default function Calificaciones() {
     Record<string, EstadoAsistencia | undefined>
   >({});
   const notaInputRefs = useRef<(HTMLInputElement | null)[]>([]);
+  // ✅ Registros crudos del día (para filtrar por hora sin re-consultar)
+  const rawAsistenciasDiaRef = useRef<AsistenciaData[]>([]);
+  // ✅ Scope de horas activo (ref espejo para el listener)
+  const horasScopeRef = useRef<number[]>([]);
+  // ✅ Estudiantes con estados que difieren entre horas del bloque
+  const [conflictoHoras, setConflictoHoras] = useState<Set<string>>(new Set());
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [confirmModal, setConfirmModal] = useState<ConfirmModalState>({
     isOpen: false,
@@ -406,16 +449,167 @@ export default function Calificaciones() {
   const materiaSeleccionadaEfectiva = esGradoBachillerato
     ? materiaEfectivaId
     : ambitoEfectivoId;
+
+  // ✅ Reconstruye el mapa de asistencias visibles filtrando por el scope de horas
+  const reconstruirAsistencias = useCallback((scope: number[]) => {
+    const map: Record<
+      string,
+      {
+        estado: EstadoAsistencia | undefined;
+        observacion: string;
+        registradoPor?: string;
+        editadoPor?: string;
+        justificadoPor?: string;
+        esTutorOnly?: boolean;
+      }
+    > = {};
+    const conflictos = new Set<string>();
+    const porEstudiante = new Map<string, AsistenciaData[]>();
+    rawAsistenciasDiaRef.current.forEach((r) => {
+      const hora = r.hora ?? null;
+      const aplica =
+        scope.length === 0 || hora === null || scope.includes(hora);
+      if (!aplica) return;
+      const arr = porEstudiante.get(r.estudianteId) || [];
+      arr.push(r);
+      porEstudiante.set(r.estudianteId, arr);
+    });
+    porEstudiante.forEach((regs, estId) => {
+      regs.sort((a, b) => (a.hora ?? 0) - (b.hora ?? 0));
+      const estados = new Set(
+        regs.map((r) => normalizarEstado(r.estado, r.v2)),
+      );
+      const tieneLegacy = regs.some((r) => r.hora == null);
+      const coberturaCompleta =
+        tieneLegacy || scope.length === 0 || regs.length >= scope.length;
+      if (estados.size > 1 || (scope.length > 1 && !coberturaCompleta)) {
+        conflictos.add(estId);
+      }
+      const principal = regs[0];
+      const est = normalizarEstado(principal.estado, principal.v2);
+      map[estId] = {
+        estado: est,
+        observacion: principal.observacion || "",
+        registradoPor: principal.registradoPor,
+        editadoPor: principal.editadoPor,
+        justificadoPor: principal.justificadoPor,
+        esTutorOnly: estadoConfig(est)?.quien === "tutor",
+      };
+    });
+    setAsistencias(map);
+    setConflictoHoras(conflictos);
+  }, []);
+
+  // ✅ Asignatura del grado/materia actual (para conocer el bloque de horas del día)
+  const asignaturaDelPanel = useMemo(() => {
+    if (!gradoEfectivoId) return undefined;
+    return asignaturasDocente.find((a) => {
+      if (a.gradoId !== gradoEfectivoId) return false;
+      if (esGradoBachillerato) return a.destrezaId === materiaEfectivaId;
+      const d = destrezas.find((x) => x.id === a.destrezaId);
+      return d?.ambitoId === ambitoEfectivoId;
+    });
+  }, [
+    asignaturasDocente,
+    gradoEfectivoId,
+    esGradoBachillerato,
+    materiaEfectivaId,
+    ambitoEfectivoId,
+    destrezas,
+  ]);
+
+  // ✅ Horas del bloque correspondientes al día de la fecha seleccionada
+  const horasBloqueDia = useMemo(() => {
+    if (!asignaturaDelPanel?.horario?.length || !fechaAsistencia)
+      return [] as number[];
+    const js = new Date(fechaAsistencia + "T00:00:00").getDay();
+    if (js < 1 || js > 5) return [] as number[];
+    const bloque = asignaturaDelPanel.horario.find((b) => b.dia === js);
+    return bloque?.horas?.length ? [...bloque.horas].sort((a, b) => a - b) : [];
+  }, [asignaturaDelPanel, fechaAsistencia]);
+
+  // ✅ Día sin clase para esta materia (tiene horario pero ningún bloque ese día)
+  const diaSinClasePanel1 =
+    !esGradoInicialActual &&
+    !!asignaturaDelPanel?.horario?.length &&
+    horasAsistencia.length === 0;
+
+  // ✅ Cambia el scope de horas y reconstruye la vista al instante
+  const cambiarScopeHoras = (scope: number[]) => {
+    horasScopeRef.current = scope;
+    setHorasAsistencia(scope);
+    reconstruirAsistencias(scope);
+  };
+
+  // ✅ Si cambia la fecha y el scope actual no aplica al nuevo día,
+  // lo resincroniza al bloque de ese día (o vacío si no hay clase)
+  useEffect(() => {
+    if (panel !== 1 || esGradoInicialActual) return;
+    const horario = asignaturaDelPanel?.horario;
+    if (!horario || horario.length === 0) return;
+    const js = fechaAsistencia
+      ? new Date(fechaAsistencia + "T00:00:00").getDay()
+      : 0;
+    const bloque =
+      js >= 1 && js <= 5
+        ? [...(horario.find((b) => b.dia === js)?.horas ?? [])].sort(
+            (a, b) => a - b,
+          )
+        : [];
+    const scope = horasScopeRef.current;
+    const esSubconjunto =
+      scope.length > 0 && scope.every((h) => bloque.includes(h));
+    if (esSubconjunto) return;
+    if (
+      bloque.length === scope.length &&
+      bloque.every((h, i) => h === scope[i])
+    )
+      return;
+    horasScopeRef.current = bloque;
+    setHorasAsistencia(bloque);
+  }, [panel, fechaAsistencia, asignaturaDelPanel, esGradoInicialActual]);
+
   // ✅ Día de hoy (1=Lun ... 5=Vie); 0 = fin de semana
   const DIA_HOY = (() => {
     const js = new Date().getDay();
     return js >= 1 && js <= 5 ? js : 0;
   })();
+
+  // ✅ Fecha ISO local de hoy
+  const hoyLocalISO = () => {
+    const d = new Date();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const dd = String(d.getDate()).padStart(2, "0");
+    return `${d.getFullYear()}-${m}-${dd}`;
+  };
+
+  // ✅ Fecha ISO del día de la semana (1=Lun) de la semana actual
+  // (si hoy es sáb/dom, la "semana actual" es la que acaba de pasar)
+  const fechaDeDiaSemana = (dia: number): string => {
+    const hoy = new Date();
+    const jsHoy = hoy.getDay();
+    const lunes = new Date(hoy);
+    lunes.setDate(hoy.getDate() + (jsHoy === 0 ? -6 : 1 - jsHoy));
+    const d = new Date(lunes);
+    d.setDate(lunes.getDate() + (dia - 1));
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const dd = String(d.getDate()).padStart(2, "0");
+    return `${d.getFullYear()}-${m}-${dd}`;
+  };
+
+  const formatFechaLegible = (iso: string): string =>
+    new Date(iso + "T00:00:00").toLocaleDateString("es-EC", {
+      weekday: "long",
+      day: "2-digit",
+      month: "short",
+    });
+
   // ✅ Suma de horas pedagógicas semanales de todas las materias
   const totalHorasPedagogicas = asignaturasDocente.reduce(
     (sum, a) => sum + (a.horario?.reduce((s, b) => s + b.horas.length, 0) || 0),
     0,
   );
+
   // ✅ Paleta de colores por grado (para pintar la columna de hoy)
   const PALETA_COLORES = [
     "bg-yellow-300",
@@ -431,8 +625,64 @@ export default function Calificaciones() {
     const idx = grados.findIndex((g) => g.id === gradoId);
     return PALETA_COLORES[Math.abs(idx) % PALETA_COLORES.length];
   };
+
   const actividadSeleccionada = actividades.find(
     (a) => a.id === selectedActividadId,
+  );
+
+  // ✅ INSUMOS: actividades agrupadas dentro de un consolidado (ocultas de matrices/listas/ficha)
+  const idsAgrupados = useMemo(() => {
+    const s = new Set<string>();
+    actividades.forEach((a) => {
+      if (a.esConsolidado && a.actividadesAgrupadas) {
+        a.actividadesAgrupadas.forEach((id) => s.add(id));
+      }
+    });
+    return s;
+  }, [actividades]);
+  // Extraer los identificadores antes de useMemo evita que React Compiler
+  // infiera dependencias de objeto completo mientras el arreglo declara solo .id.
+  const anioActivoId = anioActivo?.id;
+  const periodoActualId = periodoActual?.id;
+
+  const actividadesVisibles = useMemo(
+    () =>
+      actividades.filter(
+        (a) =>
+          !!a.id &&
+          !idsAgrupados.has(a.id) &&
+          (!gradoEfectivoId || a.gradoId === gradoEfectivoId) &&
+          (!anioActivoId || a.anioLectivoId === anioActivoId) &&
+          (!periodoActualId || a.periodoId === periodoActualId),
+      ),
+    [
+      actividades,
+      idsAgrupados,
+      gradoEfectivoId,
+      anioActivoId,
+      periodoActualId,
+    ],
+  );
+  // Solo permitir agrupar actividades del contexto académico activo.
+  // Esto evita mezclar calificaciones de otros grados, años lectivos o períodos.
+  const consolidables = useMemo(
+    () =>
+      actividadesVisibles.filter(
+        (a) =>
+          !!a.id &&
+          !a.esConsolidado &&
+          a.destrezaId === destrezaEfectivaId &&
+          a.gradoId === gradoEfectivoId &&
+          a.anioLectivoId === (anioActivo?.id || "") &&
+          a.periodoId === (periodoActual?.id || ""),
+      ),
+    [
+      actividadesVisibles,
+      destrezaEfectivaId,
+      gradoEfectivoId,
+      anioActivo?.id,
+      periodoActual?.id,
+    ],
   );
 
   // ✅ ADAPTACIÓN CURRICULAR
@@ -488,7 +738,8 @@ export default function Calificaciones() {
   const mostrarToast = useCallback(
     (type: Toast["type"], title: string, message?: string, duration = 4000) => {
       const id = `toast-${Date.now()}-${Math.random()}`;
-      setToasts((prev) => [...prev, { id, type, title, message }]);
+      const toast: Toast = { id, type, title, message };
+      setToasts((prev) => [...prev, toast]);
       setTimeout(
         () => setToasts((prev) => prev.filter((t) => t.id !== id)),
         duration,
@@ -496,10 +747,9 @@ export default function Calificaciones() {
     },
     [],
   );
-  const cerrarToast = useCallback(
-    (id: string) => setToasts((prev) => prev.filter((t) => t.id !== id)),
-    [],
-  );
+  const cerrarToast = useCallback((id: string) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+  }, []);
   const confirmar = useCallback(
     (
       title: string,
@@ -540,9 +790,25 @@ export default function Calificaciones() {
     gradoNombre: string,
     destrezaId: string | null,
     horas: number[] = [],
+    fecha?: string,
   ) => {
     const esBach = esBachillerato(gradoNombre);
     const d = destrezaId ? destrezas.find((x) => x.id === destrezaId) : null;
+    const fechaFinal = fecha || hoyLocalISO();
+    // ✅ Si no se indica scope, usar el bloque de ESA fecha del horario (si existe)
+    let scope = horas;
+    if (scope.length === 0 && destrezaId && !esGradoInicial(gradoNombre)) {
+      const asig = asignaturasDocente.find(
+        (a) => a.gradoId === gradoId && a.destrezaId === destrezaId,
+      );
+      const js = new Date(fechaFinal + "T00:00:00").getDay();
+      const bloque =
+        js >= 1 && js <= 5
+          ? asig?.horario?.find((b) => b.dia === js)
+          : undefined;
+      if (bloque?.horas?.length)
+        scope = [...bloque.horas].sort((a, b) => a - b);
+    }
     setSelectedGradoId(gradoId);
     setSelectedGradoNombre(gradoNombre);
     setSelectedMateriaId(esBach && d ? d.id : "");
@@ -550,7 +816,9 @@ export default function Calificaciones() {
     setSelectedDestrezaId(d?.id || "");
     setSelectedActividadId("");
     setObsExpandida({});
-    setHorasAsistencia(horas);
+    setHorasAsistencia(scope);
+    horasScopeRef.current = scope;
+    setFechaAsistencia(fechaFinal);
     setPanel(1);
   };
   const entrarCalificaciones = (
@@ -573,33 +841,89 @@ export default function Calificaciones() {
   };
   const volverListado = () => setPanel(0);
 
-  // ✅ Al presionar una celda del horario: detecta el bloque consecutivo
-  const presionarCeldaHorario = (
+  // ✅ Al presionar una celda del horario:
+  // - Usa la fecha REAL del día presionado (no la de hoy)
+  // - Bloquea días futuros
+  // - Sin registros ese día → pregunta ambas vs una
+  // - Con registros → SIN MODAL: entra a ese día y los chips manejan el scope
+  const presionarCeldaHorario = async (
     asignatura: AsignaturaDocente,
     dia: number,
     hora: number,
   ) => {
+    const gradoNombre =
+      grados.find((g) => g.id === asignatura.gradoId)?.nombre || "";
+    const fechaISO = fechaDeDiaSemana(dia);
+
+    if (fechaISO > hoyLocalISO()) {
+      mostrarToast(
+        "warning",
+        "Día futuro",
+        `Aún no puedes registrar asistencia para el ${formatFechaLegible(fechaISO)} (es posterior a hoy).`,
+      );
+      return;
+    }
+
     const bloque = asignatura.horario?.find(
       (b) => b.dia === dia && b.horas.includes(hora),
     );
     const horas = bloque?.horas?.length ? bloque.horas : [hora];
+
     if (horas.length > 1) {
-      setHorasPending({
-        gradoId: asignatura.gradoId,
-        gradoNombre:
-          grados.find((g) => g.id === asignatura.gradoId)?.nombre || "",
-        destrezaId: asignatura.destrezaId,
-        horas,
-        presionada: hora,
-      });
-    } else {
+      const esBach = esBachillerato(gradoNombre);
+      const esInicial = esGradoInicial(gradoNombre);
+      const ambitoIdBuscado = esInicial
+        ? "general"
+        : esBach
+          ? asignatura.destrezaId
+          : destrezas.find((x) => x.id === asignatura.destrezaId)?.ambitoId ||
+            "";
+      let horasConRegistro: number[] = [];
+      try {
+        const snap = await getDocs(
+          query(
+            collection(db, "asistencias"),
+            where("gradoId", "==", asignatura.gradoId),
+            where("fecha", "==", fechaISO),
+            where("ambitoId", "==", ambitoIdBuscado),
+          ),
+        );
+        const setH = new Set<number>();
+        snap.docs.forEach((d) => setH.add((d.data().hora as number) ?? 1));
+        horasConRegistro = Array.from(setH);
+      } catch (e) {
+        console.error(e);
+      }
+
+      if (horasConRegistro.length === 0) {
+        setHorasPending({
+          gradoId: asignatura.gradoId,
+          gradoNombre,
+          destrezaId: asignatura.destrezaId,
+          horas,
+          presionada: hora,
+          fecha: fechaISO,
+        });
+        return;
+      }
+      const bloqueCompleto = horas.every((h) => horasConRegistro.includes(h));
+      const scope = bloqueCompleto ? horas : [hora];
       entrarAsistencia(
         asignatura.gradoId,
-        grados.find((g) => g.id === asignatura.gradoId)?.nombre || "",
+        gradoNombre,
         asignatura.destrezaId,
-        [hora],
+        scope,
+        fechaISO,
       );
+      return;
     }
+    entrarAsistencia(
+      asignatura.gradoId,
+      gradoNombre,
+      asignatura.destrezaId,
+      [hora],
+      fechaISO,
+    );
   };
 
   // ==================== CARGA ====================
@@ -680,13 +1004,21 @@ export default function Calificaciones() {
     }
   }, []);
 
-  // ✅ GUARDAR ASISTENCIA: un registro por estudiante POR HORA del bloque
+  // ✅ GUARDAR ASISTENCIA: un registro por estudiante POR HORA del scope
   const guardarAsistencia = async () => {
     if (!esGradoInicialActual && !materiaSeleccionadaEfectiva) {
       mostrarToast(
         "warning",
         "Materia requerida",
         "Debes seleccionar una materia/ámbito antes de guardar.",
+      );
+      return;
+    }
+    if (diaSinClasePanel1) {
+      mostrarToast(
+        "warning",
+        "Día sin clases",
+        "Según tu horario, no tienes clases de esta materia en la fecha seleccionada. Cambia la fecha.",
       );
       return;
     }
@@ -855,9 +1187,14 @@ export default function Calificaciones() {
   };
 
   const eliminarActividad = async (actividadId: string) => {
+    const actAEliminar = actividades.find((a) => a.id === actividadId);
     const ok = await confirmar(
       "Eliminar actividad",
-      "Se eliminarán también todas las calificaciones asociadas. Esta acción no se puede deshacer.",
+      `Se eliminarán también todas las calificaciones asociadas. Esta acción no se puede deshacer.${
+        actAEliminar?.esConsolidado
+          ? "\n\nAl eliminar el insumo, las actividades agrupadas VOLVERÁN a mostrarse."
+          : ""
+      }`,
       { confirmText: "Sí, eliminar", icon: FaTrash },
     );
     if (!ok) return;
@@ -895,12 +1232,242 @@ export default function Calificaciones() {
     }
   };
 
+  // ✅ CONSOLIDAR: promedia las actividades seleccionadas en un nuevo "Insumo"
+  const consolidarActividades = async () => {
+    if (consolidarSeleccionadas.length < 2) {
+      mostrarToast(
+        "warning",
+        "Selección insuficiente",
+        "Selecciona al menos 2 actividades para consolidar.",
+      );
+      return;
+    }
+    if (!consolidarNombre.trim()) {
+      mostrarToast(
+        "warning",
+        "Nombre requerido",
+        "Escribe el nombre del nuevo insumo.",
+      );
+      return;
+    }
+    setIsConsolidando(true);
+    try {
+      const fuentes = consolidables.filter(
+        (a) => a.id && consolidarSeleccionadas.includes(a.id),
+      );
+      if (fuentes.length !== consolidarSeleccionadas.length) {
+        mostrarToast(
+          "error",
+          "Selección no válida",
+          "Una o más actividades ya no pertenecen al grado, materia, año lectivo o período actual. Actualiza la lista y vuelve a seleccionar.",
+        );
+        return;
+      }
+      if (fuentes.some((f) => f.esConsolidado)) {
+        mostrarToast(
+          "warning",
+          "Insumo no permitido",
+          "No se pueden agrupar insumos dentro de otro insumo.",
+        );
+        return;
+      }
+      const ids = fuentes.map((f) => f.id!);
+      const fuenteDe = new Map(fuentes.map((f) => [f.id!, f]));
+      const acum: Record<string, { suma: number; conteo: number }> = {};
+      for (let i = 0; i < ids.length; i += 30) {
+        const snap = await getDocs(
+          query(
+            collection(db, "calificaciones"),
+            where("actividadId", "in", ids.slice(i, i + 30)),
+          ),
+        );
+        snap.docs.forEach((d) => {
+          const c = d.data() as unknown as CalificacionData;
+          const f = fuenteDe.get(c.actividadId);
+          if (!f) return;
+          const est = estudiantes.find((e) => e.id === c.estudianteId);
+          if (!est || !aplicaActividad(est, f)) return;
+          const nf = calcularNotaFinal(c.nota, c.refuerzo, f.estrategiaNota);
+          if (!acum[c.estudianteId])
+            acum[c.estudianteId] = { suma: 0, conteo: 0 };
+          acum[c.estudianteId].suma += nf;
+          acum[c.estudianteId].conteo += 1;
+        });
+      }
+      const promedios = Object.entries(acum)
+        .map(([estId, { suma, conteo }]) => ({
+          estId,
+          nota: round2(suma / conteo),
+          conteo,
+        }))
+        .filter((p) => p.conteo > 0);
+      if (promedios.length === 0) {
+        mostrarToast(
+          "warning",
+          "Sin notas",
+          "Las actividades seleccionadas aún no tienen notas registradas.",
+        );
+        return;
+      }
+      if (promedios.length + 1 > 500) {
+        mostrarToast(
+          "warning",
+          "Demasiados registros",
+          "Firestore permite hasta 500 operaciones por lote. Divide la consolidación en grupos más pequeños.",
+        );
+        return;
+      }
+      // Crear el insumo y sus calificaciones en una sola operación atómica:
+      // evita dejar un insumo vacío si falla el guardado de sus notas.
+      const nuevaRef = doc(collection(db, "actividades"));
+      const batch = writeBatch(db);
+      batch.set(nuevaRef, {
+        tipo: "Insumo",
+        detalle: consolidarNombre.trim(),
+        fecha: new Date().toISOString().split("T")[0],
+        destrezaId: destrezaEfectivaId,
+        ambitoId: ambitoEfectivoId,
+        gradoId: gradoEfectivoId,
+        anioLectivoId: anioActivo?.id || "",
+        periodoId: periodoActual?.id || "",
+        docenteId: user?.uid || "",
+        estrategiaNota: "promediar",
+        dirigidaA: "ambos",
+        estudianteIds: [],
+        esConsolidado: true,
+        actividadesAgrupadas: ids,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+      promedios.forEach((p) => {
+        batch.set(doc(collection(db, "calificaciones")), {
+          estudianteId: p.estId,
+          actividadId: nuevaRef.id,
+          nota: p.nota,
+          observacion: `Consolidado (promedio de ${p.conteo} actividad${p.conteo !== 1 ? "es" : ""})`,
+          refuerzo: null,
+          docenteId: user?.uid || "",
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      });
+      await batch.commit();
+      cacheInvalidate(`actividades_${destrezaEfectivaId}`);
+      cacheInvalidate(`calificacionesMatriz_${destrezaEfectivaId}`);
+      await cargarActividades(destrezaEfectivaId);
+      mostrarToast(
+        "success",
+        "Insumo creado",
+        `Se consolidaron ${ids.length} actividades en "${consolidarNombre.trim()}" (${promedios.length} promedio(s)). Las originales quedaron ocultas.`,
+        6000,
+      );
+      setShowConsolidarModal(false);
+      setConsolidarSeleccionadas([]);
+      setConsolidarNombre("");
+    } catch (e) {
+      console.error(e);
+      mostrarToast(
+        "error",
+        "Error al consolidar",
+        "No se pudo crear el insumo.",
+      );
+    } finally {
+      setIsConsolidando(false);
+    }
+  };
+
+  // ✅ DESAGRUPAR: revierte un insumo consolidado
+  const desagruparInsumo = async (insumo: ActividadData) => {
+    // El ID es opcional en la interfaz; validarlo antes de consultar o borrar en Firestore.
+    const insumoId = insumo.id;
+    if (!insumoId) {
+      mostrarToast(
+        "error",
+        "ID faltante",
+        "No se puede desagrupar el insumo porque no tiene un identificador válido.",
+      );
+      return;
+    }
+
+    if (!insumo.esConsolidado || !insumo.actividadesAgrupadas?.length) {
+      mostrarToast(
+        "warning",
+        "No se puede desagrupar",
+        "Esta actividad no es un insumo consolidado válido.",
+      );
+      return;
+    }
+
+    const confirmado = await confirmar(
+      "Desagrupar Insumo",
+      `¿Estás seguro de desagrupar "${insumo.detalle}"?\n\nSe eliminará la calificación consolidada y las actividades originales volverán a ser visibles y editables de forma individual.\n\nEsta acción no se puede deshacer.`,
+      {
+        confirmText: "Sí, desagrupar",
+        cancelText: "Cancelar",
+        confirmColor: "bg-amber-600 hover:bg-amber-700",
+        icon: FaUndo,
+      },
+    );
+
+    if (!confirmado) return;
+
+    setIsSaving(true);
+    try {
+      const batch = writeBatch(db);
+
+      // 1. Eliminar las calificaciones generadas por este insumo
+      const calsSnap = await getDocs(
+        query(
+          collection(db, "calificaciones"),
+          where("actividadId", "==", insumoId),
+        ),
+      );
+      calsSnap.docs.forEach((d) => batch.delete(d.ref));
+
+      // 2. Eliminar la actividad insumo
+      batch.delete(doc(db, "actividades", insumoId));
+
+      await batch.commit();
+
+      // Invalidar datos derivados y limpiar selección si estaba apuntando al insumo eliminado.
+      cacheInvalidate(`calificaciones_${insumoId}`);
+      cacheInvalidate(`calificacionesMatriz_${insumo.destrezaId}`);
+      if (selectedActividadId === insumoId) {
+        setSelectedActividadId("");
+        setCalificaciones({});
+      }
+
+      // 3. Recargar las actividades: al desaparecer el insumo, las originales vuelven a ser visibles.
+      if (insumo.destrezaId) {
+        await cargarActividades(insumo.destrezaId);
+      }
+      mostrarToast(
+        "success",
+        "Insumo desagrupado",
+        "Se eliminaron las notas consolidadas y las actividades originales volvieron a mostrarse.",
+      );
+    } catch (error) {
+      console.error("Error desagrupando insumo:", error);
+      mostrarToast("error", "Error", "No se pudo desagrupar el insumo.");
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   const guardarCalificaciones = async () => {
     if (!selectedActividadId) {
       mostrarToast(
         "warning",
         "Actividad requerida",
         "Selecciona una actividad.",
+      );
+      return;
+    }
+    if (actividadSeleccionada?.esConsolidado) {
+      mostrarToast(
+        "info",
+        "Insumo consolidado",
+        "La nota del insumo es calculada. Solo puedes aplicar refuerzo.",
       );
       return;
     }
@@ -941,12 +1508,18 @@ export default function Calificaciones() {
         const notaNum = parseFloat(calificacion.nota);
         if (isNaN(notaNum) || notaNum < 0 || notaNum > 10) return;
         const existente = existentesMap.get(est.id);
+        // Si existe un refuerzo, la nota original no debe sobrescribirse con la
+        // nota final que se muestra en pantalla. Las nuevas mejoras se registran
+        // únicamente mediante el historial de refuerzos.
+        const notaPersistir = existente?.data.refuerzo
+          ? round2(existente.data.nota)
+          : round2(notaNum);
         const datos = {
           estudianteId: est.id,
           actividadId: selectedActividadId,
-          nota: round2(notaNum),
+          nota: notaPersistir,
           observacion: calificacion.observacion || "",
-          refuerzo: calificacion.refuerzo || null,
+          refuerzo: calificacion.refuerzo || existente?.data.refuerzo || null,
           updatedAt: serverTimestamp(),
         };
         if (!existente) {
@@ -1026,12 +1599,27 @@ export default function Calificaciones() {
         setIsSaving(false);
         return;
       }
-      const refuerzoData: RefuerzoData = {
+      const calificacionActual = snap.docs[0].data() as CalificacionData;
+      const refuerzoPrevio = (calificacionActual.refuerzo || null) as RefuerzoConHistorial | null;
+      const entradaRefuerzo: EntradaRefuerzo = {
         nota: round2(refuerzoForm.nota),
         detalle: refuerzoForm.detalle.trim(),
         fecha: refuerzoForm.fecha,
         aplicadoPor: user?.uid || "",
         estrategiaElegida: refuerzoForm.estrategia,
+        origen: "informal",
+      };
+      const refuerzoConstruido = construirRefuerzoConHistorial(
+        refuerzoPrevio,
+        entradaRefuerzo,
+      );
+      // Guardar cada refuerzo con un número consecutivo persistente.
+      const refuerzoData = {
+        ...refuerzoConstruido,
+        historial: (refuerzoConstruido.historial || []).map((entrada, index) => ({
+          ...entrada,
+          numero: index + 1,
+        })),
       };
       await updateDoc(doc(db, "calificaciones", snap.docs[0].id), {
         refuerzo: refuerzoData,
@@ -1069,6 +1657,17 @@ export default function Calificaciones() {
       const calExistente = calificacionesMatriz[key];
       const act = actividadesMatriz.find((a) => a.id === actividadId);
       if (!act) return;
+      if (act.esConsolidado) {
+        mostrarToast(
+          "info",
+          "Insumo consolidado",
+          "La nota del insumo es calculada; no se edita en la matriz.",
+        );
+        setGuardandoCelda(false);
+        setCeldaActiva(null);
+        setNotaTemporal("");
+        return;
+      }
       const estMatriz = estudiantes.find((e) => e.id === estudianteId);
       if (!estMatriz || !aplicaActividad(estMatriz, act)) {
         setCeldaActiva(null);
@@ -1087,13 +1686,23 @@ export default function Calificaciones() {
         setNotaTemporal("");
         return;
       }
+      if (calExistente?.refuerzo) {
+        mostrarToast(
+          "warning",
+          "Nota original protegida",
+          "Esta actividad ya tiene refuerzo. No se puede editar la nota original desde la matriz; si la nota final es menor que 7, selecciona la celda para aplicar otro refuerzo.",
+        );
+        setCeldaActiva(null);
+        setNotaTemporal("");
+        return;
+      }
       if (calExistente?.id) {
         await updateDoc(doc(db, "calificaciones", calExistente.id), {
           nota: round2(notaNum),
           updatedAt: serverTimestamp(),
         });
       } else {
-        await updateDoc(doc(collection(db, "calificaciones")), {
+        await addDoc(collection(db, "calificaciones"), {
           estudianteId,
           actividadId,
           nota: round2(notaNum),
@@ -1135,7 +1744,7 @@ export default function Calificaciones() {
     setFichaBase({});
     setFichaAsistencias({});
     try {
-      const actividadIds = actividades
+      const actividadIds = actividadesVisibles
         .map((a) => a.id)
         .filter(Boolean) as string[];
       if (!actividadIds.length) {
@@ -1167,7 +1776,9 @@ export default function Calificaciones() {
           };
         });
       }
-      const fechas = Array.from(new Set(actividades.map((a) => a.fecha)));
+      const fechas = Array.from(
+        new Set(actividadesVisibles.map((a) => a.fecha)),
+      );
       const asis: Record<string, EstadoAsistencia | undefined> = {};
       for (let i = 0; i < fechas.length; i += 30) {
         const snapAs = await getDocs(
@@ -1186,7 +1797,7 @@ export default function Calificaciones() {
       setFichaAsistencias(asis);
       const notas: Record<string, string> = {};
       const obs: Record<string, string> = {};
-      actividades.forEach((a) => {
+      actividadesVisibles.forEach((a) => {
         if (!a.id) return;
         notas[a.id] = base[a.id]?.notaGuardada ?? "";
         obs[a.id] = base[a.id]?.observacion ?? "";
@@ -1208,8 +1819,8 @@ export default function Calificaciones() {
       observacion: string;
     }[] = [];
     const estFicha = estudiantes.find((e) => e.id === fichaEstudianteId);
-    actividades.forEach((a) => {
-      if (!a.id) return;
+    actividadesVisibles.forEach((a) => {
+      if (!a.id || a.esConsolidado) return;
       if (!aplicaActividad(estFicha, a)) return;
       const base = fichaBase[a.id];
       if (estadoBloqueaNota(fichaAsistencias[a.fecha]) && esFechaHoy(a.fecha))
@@ -1220,12 +1831,16 @@ export default function Calificaciones() {
       const vOB = (base?.observacion ?? "").trim();
       if (vN === "" && vNB === "") return;
       let nf: number;
-      if (vN !== "") {
+      if (base?.refuerzo) {
+        // No permitir que la ficha reescriba la nota original de una actividad
+        // con refuerzo. Las observaciones de esa actividad sí pueden cambiar.
+        nf = parseFloat(vNB) || 0;
+      } else if (vN !== "") {
         const n = parseFloat(vN);
         if (isNaN(n) || n < 0 || n > 10) return;
         nf = round2(n);
       } else nf = parseFloat(vNB) || 0;
-      if (vN === vNB && vO === vOB) return;
+      if ((base?.refuerzo || vN === vNB) && vO === vOB) return;
       cambios.push({ actividadId: a.id, nota: nf, observacion: vO });
     });
     return cambios;
@@ -1350,6 +1965,16 @@ export default function Calificaciones() {
       [id]: { ...prev[id], observacion: obs },
     }));
   const actualizarCalificacion = (id: string, valor: string) => {
+    if (actividadSeleccionada?.esConsolidado) return;
+    const actual = calificaciones[id];
+    if (actual?.refuerzo) {
+      mostrarToast(
+        "info",
+        "Nota original protegida",
+        "Esta actividad ya tiene refuerzo. Si la nota final sigue por debajo de 7, puedes aplicar otro refuerzo sin modificar la nota original.",
+      );
+      return;
+    }
     if (
       estadoBloqueaNota(asistenciasDiaActividad[id]) &&
       esFechaHoy(actividadSeleccionada?.fecha || "")
@@ -1376,6 +2001,14 @@ export default function Calificaciones() {
       [id]: { ...prev[id], observacion: obs },
     }));
   const aplicarNotaATodos = (nota: number) => {
+    if (actividadSeleccionada?.esConsolidado) {
+      mostrarToast(
+        "info",
+        "Insumo consolidado",
+        "La nota del insumo es un promedio calculado. Usa refuerzo para ajustarla.",
+      );
+      return;
+    }
     const hoy = esFechaHoy(actividadSeleccionada?.fecha || "");
     setCalificaciones((prev) => {
       const nuevas = { ...prev };
@@ -1493,7 +2126,7 @@ export default function Calificaciones() {
 
   useEffect(() => {
     if (panel !== 2 || vistaCalificaciones !== "matriz") return;
-    if (!destrezaEfectivaId || actividades.length === 0) return;
+    if (!destrezaEfectivaId || actividadesVisibles.length === 0) return;
     let mounted = true;
     (async () => {
       const ck = `calificacionesMatriz_${destrezaEfectivaId}`;
@@ -1507,7 +2140,9 @@ export default function Calificaciones() {
       }
       setLoadingMatriz(true);
       try {
-        const ids = actividades.map((a) => a.id).filter(Boolean) as string[];
+        const ids = actividadesVisibles
+          .map((a) => a.id)
+          .filter(Boolean) as string[];
         const map: Record<string, CalificacionData> = {};
         for (let i = 0; i < ids.length; i += 30) {
           const snap = await getDocs(
@@ -1535,14 +2170,17 @@ export default function Calificaciones() {
     return () => {
       mounted = false;
     };
-  }, [panel, vistaCalificaciones, destrezaEfectivaId, actividades]);
+  }, [panel, vistaCalificaciones, destrezaEfectivaId, actividadesVisibles]);
 
-  const actividadesMatriz = [...actividades]
+  const actividadesMatriz = [...actividadesVisibles]
     .filter((a): a is ActividadData & { id: string } => !!a.id)
     .sort((a, b) => a.fecha.localeCompare(b.fecha));
   const calificacionesMatrizEfectiva =
-    !destrezaEfectivaId || actividades.length === 0 ? {} : calificacionesMatriz;
+    !destrezaEfectivaId || actividadesVisibles.length === 0
+      ? {}
+      : calificacionesMatriz;
 
+  // ✅ Listener de asistencias del día: guarda crudo y filtra por scope de horas
   useEffect(() => {
     if (panel !== 1) return;
     if (!gradoEfectivoId || !fechaAsistencia) return;
@@ -1564,30 +2202,11 @@ export default function Calificaciones() {
     return onSnapshot(
       q,
       (s) => {
-        const map: Record<
-          string,
-          {
-            estado: EstadoAsistencia | undefined;
-            observacion: string;
-            registradoPor?: string;
-            editadoPor?: string;
-            justificadoPor?: string;
-            esTutorOnly?: boolean;
-          }
-        > = {};
-        s.docs.forEach((d) => {
-          const data = d.data() as AsistenciaData;
-          const est = normalizarEstado(data.estado, data.v2);
-          map[data.estudianteId] = {
-            estado: est,
-            observacion: data.observacion || "",
-            registradoPor: data.registradoPor,
-            editadoPor: data.editadoPor,
-            justificadoPor: data.justificadoPor,
-            esTutorOnly: estadoConfig(est)?.quien === "tutor",
-          };
+        rawAsistenciasDiaRef.current = s.docs.map((d) => {
+          const data = d.data() as unknown as AsistenciaData;
+          return { ...data, id: d.id };
         });
-        setAsistencias(map);
+        reconstruirAsistencias(horasScopeRef.current);
       },
       (e) => console.error(e),
     );
@@ -1599,6 +2218,7 @@ export default function Calificaciones() {
     ambitoEfectivoId,
     esGradoInicialActual,
     esGradoBachillerato,
+    reconstruirAsistencias,
   ]);
 
   useEffect(() => {
@@ -1767,20 +2387,16 @@ export default function Calificaciones() {
 
               {vistaPanel0 === "horario" ? (
                 <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-x-auto">
-                  <table className="w-full text-xs">
+                  <table className="w-full table-fixed text-xs min-w-160">
                     <thead>
                       <tr className="bg-slate-50 border-b border-slate-200">
-                        <th className="px-2 py-2 w-16"></th>
+                        <th className="px-2 py-2 w-14"></th>
                         {NOMBRES_DIAS.map((d, di) => {
                           const esHoy = di + 1 === DIA_HOY;
                           return (
                             <th
                               key={d}
-                              className={`px-1 py-2 text-center font-semibold ${
-                                esHoy
-                                  ? "bg-emerald-50 text-emerald-700"
-                                  : "text-slate-700"
-                              }`}
+                              className={`px-1 py-2 text-center font-semibold ${esHoy ? "bg-emerald-50 text-emerald-700" : "text-slate-700"}`}
                             >
                               {d}
                               {esHoy && (
@@ -1850,11 +2466,7 @@ export default function Calificaciones() {
                                     </button>
                                   ) : (
                                     <div
-                                      className={`w-full h-9 rounded-md ${
-                                        esHoy
-                                          ? "bg-emerald-50 border border-emerald-100"
-                                          : "bg-slate-50 border border-slate-100"
-                                      }`}
+                                      className={`w-full h-9 rounded-md ${esHoy ? "bg-emerald-50 border border-emerald-100" : "bg-slate-50 border border-slate-100"}`}
                                     ></div>
                                   )}
                                 </td>
@@ -1869,11 +2481,7 @@ export default function Calificaciones() {
                               {NOMBRES_DIAS.map((d, di) => (
                                 <td
                                   key={d}
-                                  className={`px-0.5 py-1 ${
-                                    di + 1 === DIA_HOY
-                                      ? "bg-amber-50/70"
-                                      : "bg-amber-50/40"
-                                  }`}
+                                  className={`px-0.5 py-1 ${di + 1 === DIA_HOY ? "bg-amber-50/70" : "bg-amber-50/40"}`}
                                 >
                                   <div className="w-full h-3 rounded-md bg-amber-100/70"></div>
                                 </td>
@@ -2070,6 +2678,37 @@ export default function Calificaciones() {
                       {horasAsistencia.map((h) => `${h}ª`).join(" + ")}
                     </span>
                   )}
+                  {/* ✅ Chips de scope por hora */}
+                  {horasBloqueDia.length > 1 && (
+                    <span className="flex items-center gap-1 shrink-0">
+                      {horasBloqueDia.map((h) => (
+                        <button
+                          key={h}
+                          onClick={() => cambiarScopeHoras([h])}
+                          className={`px-2 py-0.5 rounded-full text-[10px] font-bold border transition-all ${
+                            horasAsistencia.length === 1 &&
+                            horasAsistencia[0] === h
+                              ? "bg-blue-600 text-white border-blue-600"
+                              : "bg-white text-slate-600 border-slate-300 hover:border-blue-400"
+                          }`}
+                          title={`Ver y editar solo la ${h}ª hora`}
+                        >
+                          {h}ª
+                        </button>
+                      ))}
+                      <button
+                        onClick={() => cambiarScopeHoras(horasBloqueDia)}
+                        className={`px-2 py-0.5 rounded-full text-[10px] font-bold border transition-all ${
+                          horasAsistencia.length === horasBloqueDia.length
+                            ? "bg-blue-600 text-white border-blue-600"
+                            : "bg-white text-slate-600 border-slate-300 hover:border-blue-400"
+                        }`}
+                        title="Ver y editar todas las horas del bloque"
+                      >
+                        Todas
+                      </button>
+                    </span>
+                  )}
                 </div>
                 <input
                   type="date"
@@ -2078,6 +2717,18 @@ export default function Calificaciones() {
                   className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs focus:ring-2 focus:ring-blue-500 shrink-0"
                 />
               </div>
+              {diaSinClasePanel1 && (
+                <div className="mb-4 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                  <div className="flex items-center gap-2 text-red-800">
+                    <FaExclamationTriangle className="text-sm shrink-0" />
+                    <span className="text-xs font-medium">
+                      Según tu horario, no tienes clases de esta materia en la
+                      fecha seleccionada. Cambia la fecha o entra desde el día
+                      correspondiente del horario.
+                    </span>
+                  </div>
+                </div>
+              )}
               {!todosConAsistencia &&
                 estudiantes.length > 0 &&
                 (esGradoInicialActual || materiaSeleccionadaEfectiva) && (
@@ -2143,6 +2794,15 @@ export default function Calificaciones() {
                             {est.conAdaptacion && (
                               <span className="inline-flex items-center mt-0.5 px-2 py-0.5 bg-purple-100 border border-purple-300 text-purple-700 rounded text-[10px] font-bold">
                                 Adaptación curricular
+                              </span>
+                            )}
+                            {conflictoHoras.has(est.id) && (
+                              <span
+                                className="inline-flex items-center gap-1 mt-0.5 px-2 py-0.5 bg-amber-100 border border-amber-300 text-amber-800 rounded text-[10px] font-bold"
+                                title="Este estudiante tiene estados distintos (u horas sin registro) dentro del bloque. Usa los filtros de hora para editar cada hora por separado."
+                              >
+                                <FaExclamationTriangle className="text-[9px]" />{" "}
+                                Estados difieren por hora
                               </span>
                             )}
                             {estado === "J" ? (
@@ -2444,13 +3104,18 @@ export default function Calificaciones() {
                         <FaTasks className="text-blue-600 shrink-0" />
                         {actividadSeleccionada ? (
                           <span className="truncate text-slate-900 font-semibold">
+                            {actividadSeleccionada.esConsolidado && (
+                              <span className="mr-1 text-[9px] px-1.5 py-0.5 rounded-full bg-purple-100 text-purple-700 font-bold">
+                                INSUMO
+                              </span>
+                            )}
                             {actividadSeleccionada.tipo} ·{" "}
                             {actividadSeleccionada.detalle} ·{" "}
                             {actividadSeleccionada.fecha}
                           </span>
                         ) : (
                           <span className="truncate text-slate-500">
-                            {actividades.length === 0
+                            {actividadesVisibles.length === 0
                               ? "Sin actividades — crea la primera"
                               : "Ninguna actividad seleccionada"}
                           </span>
@@ -2477,31 +3142,54 @@ export default function Calificaciones() {
                     </div>
                   ) : (
                     <>
-                      {actividadSeleccionada && (
-                        <div className="mb-4 bg-blue-50 border border-blue-200 rounded-lg p-3">
+                      {actividadSeleccionada &&
+                        !actividadSeleccionada.esConsolidado && (
+                          <div className="mb-4 bg-blue-50 border border-blue-200 rounded-lg p-3">
+                            <div className="flex items-start gap-2">
+                              <FaInfoCircle className="text-blue-600 mt-0.5 shrink-0" />
+                              <p className="text-xs text-blue-800">
+                                {actividadEsHoy ? (
+                                  <>
+                                    La actividad es <strong>de hoy</strong>. Los
+                                    estudiantes con inasistencia injustificada o
+                                    fuga <strong>NO podrán recibir nota</strong>{" "}
+                                    hasta que el tutor justifique su falta.
+                                  </>
+                                ) : actividadEsAntigua ? (
+                                  <>
+                                    La actividad es{" "}
+                                    <strong>de un día anterior</strong>. Puedes
+                                    asignar notas{" "}
+                                    <strong>
+                                      aunque el estudiante haya estado ausente
+                                    </strong>{" "}
+                                    (recuperaciones, trabajos extra, etc.).
+                                  </>
+                                ) : (
+                                  <>
+                                    Actividad programada para una fecha futura.
+                                  </>
+                                )}
+                              </p>
+                            </div>
+                          </div>
+                        )}
+                      {actividadSeleccionada.esConsolidado && (
+                        <div className="mb-4 bg-purple-50 border border-purple-200 rounded-lg p-3">
                           <div className="flex items-start gap-2">
-                            <FaInfoCircle className="text-blue-600 mt-0.5 shrink-0" />
-                            <p className="text-xs text-blue-800">
-                              {actividadEsHoy ? (
-                                <>
-                                  La actividad es <strong>de hoy</strong>. Los
-                                  estudiantes con inasistencia injustificada o
-                                  fuga <strong>NO podrán recibir nota</strong>{" "}
-                                  hasta que el tutor justifique su falta.
-                                </>
-                              ) : actividadEsAntigua ? (
-                                <>
-                                  La actividad es{" "}
-                                  <strong>de un día anterior</strong>. Puedes
-                                  asignar notas{" "}
-                                  <strong>
-                                    aunque el estudiante haya estado ausente
-                                  </strong>{" "}
-                                  (recuperaciones, trabajos extra, etc.).
-                                </>
-                              ) : (
-                                <>Actividad programada para una fecha futura.</>
-                              )}
+                            <FaInfoCircle className="text-purple-600 mt-0.5 shrink-0" />
+                            <p className="text-xs text-purple-800">
+                              <strong>Insumo consolidado:</strong> la nota es el{" "}
+                              <strong>promedio</strong> de{" "}
+                              {
+                                (
+                                  actividadSeleccionada.actividadesAgrupadas ||
+                                  []
+                                ).length
+                              }{" "}
+                              actividad(es) agrupadas. Es de solo lectura;
+                              puedes aplicar <strong>refuerzo</strong> tal como
+                              se trabaja normalmente.
                             </p>
                           </div>
                         </div>
@@ -2531,6 +3219,8 @@ export default function Calificaciones() {
                           const notaParaColor = tieneRefuerzo
                             ? notaFinal
                             : notaOriginal;
+                          const esConsolidadoSel =
+                            !!actividadSeleccionada?.esConsolidado;
                           const estadoAsistencia =
                             asistenciasDiaActividad[est.id];
                           const bloqueadoPorAusenciaHoy =
@@ -2542,8 +3232,12 @@ export default function Calificaciones() {
                           const necesitaRefuerzo =
                             !esGradoInicialActual &&
                             notaOriginal !== undefined &&
-                            notaOriginal < 7 &&
-                            !calificacion?.refuerzo &&
+                            !esConsolidadoSel &&
+                            puedeRecibirOtroRefuerzo(
+                              notaOriginal,
+                              calificacion?.refuerzo,
+                              actividadSeleccionada?.estrategiaNota || "promediar",
+                            ) &&
                             !bloqueadoPorAusenciaHoy;
                           const esDeOtroDocente =
                             calificacion?.docenteId &&
@@ -2553,7 +3247,7 @@ export default function Calificaciones() {
                           return (
                             <div
                               key={est.id}
-                              className={`border rounded-lg p-3 transition-all border-l-4 ${bloqueadoPorAusenciaHoy ? "border-red-200 bg-red-50/40 border-l-red-500 hover:shadow-md" : ausenteAntiguo ? "border-amber-200 bg-amber-50/40 border-l-amber-500 hover:shadow-md" : "border-orange-200 bg-orange-50/40 border-l-orange-400 hover:shadow-md"}`}
+                              className={`border rounded-lg p-3 transition-all border-l-4 ${bloqueadoPorAusenciaHoy ? "border-red-200 bg-red-50/40 border-l-red-500 hover:shadow-md" : ausenteAntiguo ? "border-amber-200 bg-amber-50/40 border-l-amber-500 hover:shadow-md" : esConsolidadoSel ? "border-purple-200 bg-purple-50/30 border-l-purple-500 hover:shadow-md" : "border-orange-200 bg-orange-50/40 border-l-orange-400 hover:shadow-md"}`}
                             >
                               <div className="flex items-center justify-between gap-3">
                                 <div className="flex-1 min-w-0">
@@ -2650,7 +3344,9 @@ export default function Calificaciones() {
                                         inputMode="decimal"
                                         maxLength={5}
                                         value={notaMostrada}
-                                        readOnly={tieneRefuerzo}
+                                        readOnly={
+                                          tieneRefuerzo || esConsolidadoSel
+                                        }
                                         onChange={(e) =>
                                           actualizarCalificacion(
                                             est.id,
@@ -2661,15 +3357,21 @@ export default function Calificaciones() {
                                           handleNotaKeyDown(e, index)
                                         }
                                         onFocus={(e) => {
-                                          if (!tieneRefuerzo) e.target.select();
+                                          if (
+                                            !tieneRefuerzo &&
+                                            !esConsolidadoSel
+                                          )
+                                            e.target.select();
                                         }}
                                         placeholder="0-10"
                                         title={
                                           tieneRefuerzo
                                             ? "Nota final después del refuerzo (solo lectura)"
-                                            : undefined
+                                            : esConsolidadoSel
+                                              ? "Nota consolidada (promedio de actividades agrupadas)"
+                                              : undefined
                                         }
-                                        className={`w-20 border-2 rounded px-2 py-1.5 text-center text-sm font-bold focus:ring-2 focus:ring-blue-500 focus:outline-none ${notaParaColor !== undefined ? (notaParaColor >= 7 ? "border-green-500 text-green-700 bg-green-50" : "border-red-500 text-red-700 bg-red-50") : ausenteAntiguo ? "border-amber-400 bg-amber-50" : "border-slate-300 bg-white"} ${tieneRefuerzo ? "cursor-not-allowed" : ""}`}
+                                        className={`w-20 border-2 rounded px-2 py-1.5 text-center text-sm font-bold focus:ring-2 focus:ring-blue-500 focus:outline-none ${notaParaColor !== undefined ? (notaParaColor >= 7 ? "border-green-500 text-green-700 bg-green-50" : "border-red-500 text-red-700 bg-red-50") : ausenteAntiguo ? "border-amber-400 bg-amber-50" : esConsolidadoSel ? "border-purple-300 bg-purple-50 text-purple-800" : "border-slate-300 bg-white"} ${tieneRefuerzo || esConsolidadoSel ? "cursor-not-allowed" : ""}`}
                                       />
                                       {necesitaRefuerzo && (
                                         <button
@@ -2736,27 +3438,34 @@ export default function Calificaciones() {
                                     </div>
                                   </div>
                                 )}
-                              {!bloqueadoPorAusenciaHoy && (
-                                <div className="mt-2">
-                                  <input
-                                    type="text"
-                                    value={calificacion?.observacion || ""}
-                                    onChange={(e) =>
-                                      actualizarObservacionCalificacion(
-                                        est.id,
-                                        e.target.value,
-                                      )
-                                    }
-                                    tabIndex={-1}
-                                    placeholder={
-                                      ausenteAntiguo
-                                        ? "Observación (sugerido: justificar la nota)"
-                                        : "Observación (opcional)..."
-                                    }
-                                    className={`w-full border rounded px-2 py-1 text-xs focus:ring-2 focus:ring-blue-500 ${ausenteAntiguo ? "border-amber-300 bg-amber-50" : "border-slate-300"}`}
-                                  />
-                                </div>
-                              )}
+                              {!bloqueadoPorAusenciaHoy &&
+                                !esConsolidadoSel && (
+                                  <div className="mt-2">
+                                    <input
+                                      type="text"
+                                      value={calificacion?.observacion || ""}
+                                      onChange={(e) =>
+                                        actualizarObservacionCalificacion(
+                                          est.id,
+                                          e.target.value,
+                                        )
+                                      }
+                                      tabIndex={-1}
+                                      placeholder={
+                                        ausenteAntiguo
+                                          ? "Observación (sugerido: justificar la nota)"
+                                          : "Observación (opcional)..."
+                                      }
+                                      className={`w-full border rounded px-2 py-1 text-xs focus:ring-2 focus:ring-blue-500 ${ausenteAntiguo ? "border-amber-300 bg-amber-50" : "border-slate-300"}`}
+                                    />
+                                  </div>
+                                )}
+                              {esConsolidadoSel &&
+                                calificacion?.observacion && (
+                                  <div className="mt-2 text-[11px] text-purple-700">
+                                    {calificacion.observacion}
+                                  </div>
+                                )}
                             </div>
                           );
                         })}
@@ -2794,6 +3503,11 @@ export default function Calificaciones() {
                                 className="px-2 py-2 text-center font-semibold text-slate-700 min-w-28"
                                 title={`${a.tipo}: ${a.detalle} · ${a.fecha}`}
                               >
+                                {a.esConsolidado && (
+                                  <div className="text-[8px] font-bold text-purple-600">
+                                    INSUMO
+                                  </div>
+                                )}
                                 <div className="text-[10px] font-bold text-slate-800">
                                   {a.tipo}
                                 </div>
@@ -2844,6 +3558,17 @@ export default function Calificaciones() {
                                 cal.nota === undefined ||
                                 cal.nota === null
                               ) {
+                                if (a.esConsolidado) {
+                                  return (
+                                    <td
+                                      key={a.id}
+                                      className="px-2 py-1.5 text-center text-slate-300 text-[10px]"
+                                      title="Insumo sin nota para este estudiante"
+                                    >
+                                      —
+                                    </td>
+                                  );
+                                }
                                 return (
                                   <td
                                     key={a.id}
@@ -2921,8 +3646,28 @@ export default function Calificaciones() {
                                       : "bg-red-100 text-red-800";
                               const necesitaRefuerzo =
                                 !esGradoInicialActual &&
-                                nf < 7 &&
-                                !cal.refuerzo;
+                                !a.esConsolidado &&
+                                nf < 7;
+                              if (a.esConsolidado) {
+                                return (
+                                  <td
+                                    key={a.id}
+                                    className="px-2 py-1.5 text-center"
+                                  >
+                                    <span
+                                      className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-bold ${cls}`}
+                                      title={`Insumo (promedio consolidado)${cal.refuerzo ? " · con refuerzo" : ""}`}
+                                    >
+                                      {round2(nf)}
+                                      {cal.refuerzo && (
+                                        <span className="ml-0.5 text-[8px]">
+                                          ✓
+                                        </span>
+                                      )}
+                                    </span>
+                                  </td>
+                                );
+                              }
                               return (
                                 <td
                                   key={a.id}
@@ -2974,6 +3719,9 @@ export default function Calificaciones() {
                                           });
                                           setSelectedActividadId(a.id || "");
                                           setShowRefuerzoModal(true);
+                                        } else if (cal.refuerzo) {
+                                          // Nota final aprobada: no se edita ni se abre otro refuerzo.
+                                          return;
                                         } else {
                                           setCeldaActiva({
                                             estudianteId: est.id,
@@ -2982,12 +3730,13 @@ export default function Calificaciones() {
                                           setNotaTemporal(String(cal.nota));
                                         }
                                       }}
-                                      className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-bold transition-all cursor-pointer hover:ring-2 hover:ring-blue-400 ${cls}`}
+                                      disabled={!!cal.refuerzo && nf >= 7}
+                                      className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-bold transition-all ${cal.refuerzo && nf >= 7 ? "cursor-not-allowed opacity-80" : "cursor-pointer hover:ring-2 hover:ring-blue-400"} ${cls}`}
                                       title={
                                         necesitaRefuerzo
-                                          ? `Nota ${round2(nf)} · clic para aplicar refuerzo`
+                                          ? `Nota ${round2(nf)} · clic para aplicar otro refuerzo`
                                           : cal.refuerzo
-                                            ? `Original ${cal.nota} → refuerzo ${cal.refuerzo.nota} · clic para editar`
+                                            ? `Nota final ${round2(nf)} · aprobada y protegida contra edición`
                                             : `${round2(nf)} · clic para editar`
                                       }
                                     >
@@ -3078,7 +3827,7 @@ export default function Calificaciones() {
             </div>
             <button
               onClick={guardarAsistencia}
-              disabled={isSaving || !todosConAsistencia}
+              disabled={isSaving || !todosConAsistencia || diaSinClasePanel1}
               className="shrink-0 bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-lg text-sm font-semibold transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed shadow-md hover:shadow-lg"
             >
               {isSaving ? (
@@ -3139,7 +3888,7 @@ export default function Calificaciones() {
                     {" "}
                     / {estudiantesAplicables.length}
                   </span>
-                  <span className="text-slate-500 font-normal ml-1.5 hidden sm-inline">
+                  <span className="text-slate-500 font-normal ml-1.5 hidden sm:inline">
                     con nota
                   </span>
                 </div>
@@ -3166,7 +3915,11 @@ export default function Calificaciones() {
               </div>
               <button
                 onClick={guardarCalificaciones}
-                disabled={isSaving || calificacionesRegistradas === 0}
+                disabled={
+                  isSaving ||
+                  calificacionesRegistradas === 0 ||
+                  !!actividadSeleccionada?.esConsolidado
+                }
                 className="shrink-0 bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-lg text-sm font-semibold transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed shadow-md hover:shadow-lg"
               >
                 {isSaving ? (
@@ -3188,7 +3941,7 @@ export default function Calificaciones() {
       {/* MODAL: ¿ASISTENCIA PARA LAS DOS HORAS? */}
       {horasPending && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-100 p-4 animate-in fade-in duration-200">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden animate-in zoom-in-95 duration-200">
+          <div className="w-full max-w-sm overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl animate-in zoom-in-95 duration-200">
             <div className="bg-linear-to-r from-blue-50 to-blue-100 px-6 pt-6 pb-4 border-b border-blue-200">
               <div className="flex items-start gap-4">
                 <div className="w-12 h-12 rounded-full bg-blue-100 flex items-center justify-center shrink-0">
@@ -3208,6 +3961,10 @@ export default function Calificaciones() {
                     , que es un bloque de{" "}
                     <strong>
                       {horasPending.horas.map((h) => `${h}ª`).join(" y ")}
+                    </strong>{" "}
+                    del día{" "}
+                    <strong className="capitalize">
+                      {formatFechaLegible(horasPending.fecha)}
                     </strong>
                     .
                   </p>
@@ -3222,6 +3979,7 @@ export default function Calificaciones() {
                     horasPending.gradoNombre,
                     horasPending.destrezaId,
                     [horasPending.presionada],
+                    horasPending.fecha,
                   );
                   setHorasPending(null);
                 }}
@@ -3236,6 +3994,7 @@ export default function Calificaciones() {
                     horasPending.gradoNombre,
                     horasPending.destrezaId,
                     horasPending.horas,
+                    horasPending.fecha,
                   );
                   setHorasPending(null);
                 }}
@@ -3248,11 +4007,11 @@ export default function Calificaciones() {
         </div>
       )}
 
-      {/* MODAL LISTADO ACTIVIDADES */}
+      {/* MODAL LISTADO ACTIVIDADES (compacto, con insumos y actividades agrupadas) */}
       {showActividadesModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full p-6 max-h-[85vh] overflow-y-auto">
-            <div className="flex items-center justify-between mb-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-3 backdrop-blur-[2px] sm:p-4">
+          <div className="flex max-h-[84vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl">
+            <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3 sm:px-5">
               <div className="flex items-center gap-3">
                 <div className="bg-blue-100 p-2 rounded-lg">
                   <FaTasks className="text-blue-600 text-xl" />
@@ -3262,46 +4021,66 @@ export default function Calificaciones() {
                     Actividades
                   </h3>
                   <p className="text-xs text-slate-500">
-                    {actividades.length} actividad(es) · numeradas por fecha (1
-                    = más antigua)
+                    {actividadesVisibles.length} visible(s) · numeradas por
+                    fecha (1 = más antigua)
                   </p>
                 </div>
               </div>
               <button
                 onClick={() => setShowActividadesModal(false)}
-                className="text-slate-400 hover:text-slate-600"
+                className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 transition hover:bg-white hover:text-slate-700"
               >
                 <FaTimes />
               </button>
             </div>
-            <button
-              onClick={() => {
-                setShowActividadesModal(false);
-                setEditingActividadId(null);
-                setActividadForm({
-                  tipo: "Tarea",
-                  detalle: "",
-                  fecha: new Date().toISOString().split("T")[0],
-                  estrategiaNota: "promediar",
-                  dirigidaA: "general",
-                  estudianteIds: [],
-                });
-                setShowActividadModal(true);
-              }}
-              className="w-full mb-3 inline-flex items-center justify-center gap-2 bg-green-600 hover:bg-green-700 text-white px-4 py-2.5 rounded-lg text-sm font-semibold transition-all"
-            >
-              <FaPlus /> Nueva actividad
-            </button>
-            {actividades.length === 0 ? (
-              <div className="p-6 bg-slate-50 border border-slate-200 rounded-lg text-center text-sm text-slate-500">
+            <div className="grid grid-cols-1 gap-2 border-b border-slate-100 bg-slate-50/70 px-4 py-3 sm:grid-cols-2 sm:px-5">
+              <button
+                onClick={() => {
+                  setShowActividadesModal(false);
+                  setEditingActividadId(null);
+                  setActividadForm({
+                    tipo: "Tarea",
+                    detalle: "",
+                    fecha: new Date().toISOString().split("T")[0],
+                    estrategiaNota: "promediar",
+                    dirigidaA: "general",
+                    estudianteIds: [],
+                  });
+                  setShowActividadModal(true);
+                }}
+                className="inline-flex items-center justify-center gap-2 bg-green-600 hover:bg-green-700 text-white px-3.5 py-2 rounded-lg text-xs font-semibold transition-colors"
+              >
+                <FaPlus /> Nueva actividad
+              </button>
+              <button
+                onClick={() => {
+                  setConsolidarSeleccionadas([]);
+                  setConsolidarNombre("");
+                  setShowConsolidarModal(true);
+                }}
+                disabled={consolidables.length < 2}
+                className="inline-flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white px-3.5 py-2 rounded-lg text-xs font-semibold transition-colors"
+                title={
+                  consolidables.length < 2
+                    ? "Necesitas al menos 2 actividades sin agrupar"
+                    : "Promediar varias actividades en un solo insumo"
+                }
+              >
+                <FaSyncAlt /> Consolidar en insumo
+              </button>
+            </div>
+            {actividadesVisibles.length === 0 ? (
+              <div className="m-4 rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
                 No hay actividades aún.
               </div>
             ) : (
-              <div className="space-y-2">
-                {[...actividades]
+              <div className="flex-1 space-y-2 overflow-y-auto p-3 sm:p-4">
+                {[...actividadesVisibles]
                   .sort((x, y) => (x.fecha || "").localeCompare(y.fecha || ""))
                   .map((a, idx) => {
                     const sel = a.id === selectedActividadId;
+                    const agrupadas = a.actividadesAgrupadas || [];
+                    const expandida = !!a.id && !!agrupadasExpandidas[a.id];
                     return (
                       <div
                         key={a.id}
@@ -3327,15 +4106,21 @@ export default function Calificaciones() {
                               <span className="text-xs font-bold px-2 py-0.5 rounded bg-blue-100 text-blue-700">
                                 {a.tipo}
                               </span>
-                              {(a.dirigidaA || "general") !== "general" && (
-                                <span
-                                  className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${a.dirigidaA === "especial" ? "bg-purple-100 text-purple-700" : "bg-teal-100 text-teal-700"}`}
-                                >
-                                  {a.dirigidaA === "especial"
-                                    ? "Adaptación"
-                                    : "Todos"}
+                              {a.esConsolidado && (
+                                <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-purple-100 text-purple-700">
+                                  INSUMO
                                 </span>
                               )}
+                              {(a.dirigidaA || "general") !== "general" &&
+                                !a.esConsolidado && (
+                                  <span
+                                    className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${a.dirigidaA === "especial" ? "bg-purple-100 text-purple-700" : "bg-teal-100 text-teal-700"}`}
+                                  >
+                                    {a.dirigidaA === "especial"
+                                      ? "Adaptación"
+                                      : "Todos"}
+                                  </span>
+                                )}
                               <span className="text-[10px] text-slate-500">
                                 {a.fecha}
                               </span>
@@ -3348,8 +4133,65 @@ export default function Calificaciones() {
                             <div className="text-sm font-medium text-slate-900 mt-1">
                               {a.detalle}
                             </div>
+                            {a.esConsolidado && agrupadas.length > 0 && (
+                              <div className="mt-2">
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setAgrupadasExpandidas((p) => ({
+                                      ...p,
+                                      [a.id as string]: !p[a.id as string],
+                                    }))
+                                  }
+                                  className="inline-flex items-center gap-1 text-[11px] font-semibold text-purple-700 hover:text-purple-900"
+                                >
+                                  {expandida ? "Ocultar" : "Ver"} actividades
+                                  agrupadas ({agrupadas.length})
+                                </button>
+                                {expandida && (
+                                  <div className="mt-1.5 space-y-1 pl-2 border-l-2 border-purple-200">
+                                    {agrupadas.map((sid) => {
+                                      const s = actividades.find(
+                                        (x) => x.id === sid,
+                                      );
+                                      return (
+                                        <div
+                                          key={sid}
+                                          className="text-[11px] text-slate-500 flex items-center gap-2"
+                                        >
+                                          <span className="font-bold text-slate-600 shrink-0">
+                                            {s?.tipo || "—"}
+                                          </span>
+                                          <span className="truncate">
+                                            {s?.detalle ||
+                                              "Actividad eliminada"}
+                                          </span>
+                                          <span className="shrink-0 text-slate-400">
+                                            {s?.fecha || ""}
+                                          </span>
+                                        </div>
+                                      );
+                                    })}
+                                    <p className="text-[10px] text-slate-400 italic">
+                                      Solo lectura: la agrupación no se puede
+                                      deshacer.
+                                    </p>
+                                  </div>
+                                )}
+                              </div>
+                            )}
                           </button>
                           <div className="flex gap-1 shrink-0">
+                            {/* ✅ Botón para desagrupar (solo visible en insumos) */}
+                            {a.esConsolidado && (
+                              <button
+                                onClick={() => desagruparInsumo(a)}
+                                className="p-2 bg-amber-50 hover:bg-amber-100 text-amber-600 rounded-lg"
+                                title="Desagrupar insumo y restaurar originales"
+                              >
+                                <FaUndo className="text-xs" />
+                              </button>
+                            )}
                             <button
                               onClick={() => {
                                 setShowActividadesModal(false);
@@ -3390,24 +4232,172 @@ export default function Calificaciones() {
         </div>
       )}
 
+      {/* MODAL: CONSOLIDAR ACTIVIDADES (INSUMO) */}
+      {showConsolidarModal && (
+        <div className="fixed inset-0 z-100 flex items-center justify-center bg-slate-950/45 p-3 backdrop-blur-[2px] sm:p-4 animate-in fade-in duration-200">
+          <div className="max-h-[88vh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-slate-200 bg-white shadow-xl animate-in zoom-in-95 duration-200">
+            <div className="sticky top-0 z-10 flex items-center justify-between gap-4 border-b border-slate-100 bg-linear-to-r from-indigo-50 via-white to-violet-50 px-5 py-4 sm:px-7">
+              <div className="flex items-center gap-3">
+                <div className="bg-indigo-100 p-2 rounded-lg">
+                  <FaSyncAlt className="text-indigo-600 text-xl" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-slate-900">
+                    Consolidar actividades en un insumo
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    El promedio calculado será la nota de la nueva actividad
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowConsolidarModal(false)}
+                disabled={isConsolidando}
+                className="text-slate-400 hover:text-slate-600 disabled:opacity-50"
+              >
+                <FaTimes />
+              </button>
+            </div>
+
+            <div className="px-5 pt-5 sm:px-7">
+              <label className="mb-2 block text-xs font-bold uppercase tracking-wide text-slate-600">
+                Nombre del insumo *
+              </label>
+              <input
+                type="text"
+                value={consolidarNombre}
+                onChange={(e) => setConsolidarNombre(e.target.value)}
+                placeholder='Ej: "Insumo 1: Procesual de talleres y lecciones"'
+                className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-3 text-sm shadow-sm outline-none transition placeholder:text-slate-400 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100"
+              />
+            </div>
+
+            <div className="px-5 pt-5 sm:px-7">
+              <label className="mb-2 block text-xs font-bold uppercase tracking-wide text-slate-600">
+                Actividades a promediar *{" "}
+                <span className="text-xs text-slate-400 font-normal">
+                  ({consolidarSeleccionadas.length} seleccionadas)
+                </span>
+              </label>
+              <div className="max-h-64 divide-y divide-slate-100 overflow-y-auto rounded-2xl border border-slate-200 bg-white shadow-inner">
+                {consolidables.length === 0 ? (
+                  <p className="p-4 text-sm text-slate-500 text-center">
+                    No hay actividades disponibles para agrupar.
+                  </p>
+                ) : (
+                  [...consolidables]
+                    .sort((x, y) =>
+                      (x.fecha || "").localeCompare(y.fecha || ""),
+                    )
+                    .map((a) => {
+                      const checked = consolidarSeleccionadas.includes(a.id!);
+                      return (
+                        <label
+                          key={a.id}
+                          className={`flex items-center gap-3 p-2.5 cursor-pointer transition-colors ${checked ? "bg-indigo-50" : "hover:bg-slate-50"}`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={(e) =>
+                              setConsolidarSeleccionadas((prev) =>
+                                e.target.checked
+                                  ? [...prev, a.id!]
+                                  : prev.filter((id) => id !== a.id),
+                              )
+                            }
+                            className="w-4 h-4 text-indigo-600 rounded focus:ring-indigo-500 shrink-0"
+                          />
+                          <span className="text-xs font-bold px-2 py-0.5 rounded bg-blue-100 text-blue-700 shrink-0">
+                            {a.tipo}
+                          </span>
+                          <span className="text-sm text-slate-800 flex-1 min-w-0 truncate">
+                            {a.detalle}
+                          </span>
+                          <span className="text-[10px] text-slate-500 shrink-0">
+                            {a.fecha}
+                          </span>
+                        </label>
+                      );
+                    })
+                )}
+              </div>
+            </div>
+
+            <div className="mx-5 mt-5 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-xs leading-relaxed text-amber-900 sm:mx-7">
+              <FaExclamationTriangle className="inline mr-1" />
+              <strong>Importante:</strong> al consolidar, la nota de cada
+              estudiante será el <strong>promedio</strong> de las actividades
+              seleccionadas (usando su nota final con refuerzo si lo tiene). Las
+              actividades agrupadas <strong>dejarán de mostrarse</strong> en
+              matriz, listas y ficha, y podrás restaurarlas usando la opción <strong>Desagrupar</strong> en el listado.
+              El nuevo insumo también acepta refuerzo.
+            </div>
+
+            <div className="flex flex-col-reverse gap-2 border-t border-slate-100 bg-slate-50/90 px-5 py-4 sm:flex-row sm:px-7">
+              <button
+                onClick={consolidarActividades}
+                disabled={
+                  isConsolidando ||
+                  consolidarSeleccionadas.length < 2 ||
+                  !consolidarNombre.trim()
+                }
+                className="flex-1 inline-flex items-center justify-center gap-2 rounded-xl bg-linear-to-r from-indigo-600 to-violet-600 px-4 py-3 text-sm font-bold text-white shadow-lg shadow-indigo-200 transition hover:-translate-y-0.5 hover:shadow-xl disabled:cursor-not-allowed disabled:bg-slate-300 disabled:shadow-none"
+              >
+                {isConsolidando ? (
+                  <FaSpinner className="animate-spin text-xs" />
+                ) : (
+                  <FaCheck className="text-xs" />
+                )}
+                Consolidar{" "}
+                {consolidarSeleccionadas.length > 0 &&
+                  `(${consolidarSeleccionadas.length})`}
+              </button>
+              <button
+                onClick={() => setShowConsolidarModal(false)}
+                disabled={isConsolidando}
+                className="flex-1 rounded-lg border border-slate-200 bg-white px-3.5 py-2.5 text-xs font-semibold text-slate-600 transition hover:bg-slate-100 disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showActividadModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-100 p-4">
-          <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-bold text-slate-900">
-                {editingActividadId ? "Editar Actividad" : "Nueva Actividad"}
-              </h3>
+        <div className="fixed inset-0 z-100 flex items-center justify-center bg-slate-950/45 p-3 backdrop-blur-[2px] sm:p-4 animate-in fade-in duration-200">
+          <div className="flex max-h-[88vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl animate-in zoom-in-95 duration-200">
+            <div className="flex items-center justify-between gap-3 border-b border-slate-100 bg-linear-to-r from-blue-50/80 via-white to-indigo-50/70 px-4 py-3 sm:px-5">
+              <div className="flex min-w-0 items-center gap-2.5">
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-blue-600 text-white shadow-sm">
+                  {editingActividadId ? <FaEdit className="text-xl" /> : <FaPlus className="text-xl" />}
+                </div>
+                <div className="min-w-0">
+                  <h3 className="text-base font-bold tracking-tight text-slate-900 sm:text-lg">
+                    {editingActividadId ? "Editar actividad" : "Crear actividad"}
+                  </h3>
+                  <p className="mt-0.5 text-[11px] text-slate-500 sm:text-xs">
+                    Registra los datos y la configuración de evaluación
+                  </p>
+                </div>
+              </div>
               <button
                 onClick={() => {
                   setShowActividadModal(false);
                   setEditingActividadId(null);
                 }}
-                className="text-slate-400 hover:text-slate-600"
+                aria-label="Cerrar modal"
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-slate-400 transition hover:bg-white hover:text-slate-700 hover:shadow-sm"
               >
                 <FaTimes />
               </button>
             </div>
-            <div className="space-y-4">
+            <div className="space-y-4 overflow-y-auto px-4 py-4 sm:px-5">
+              <div className="rounded-xl border border-blue-100 bg-blue-50/60 px-3 py-2.5">
+                <p className="text-xs font-bold uppercase tracking-wider text-blue-700">Datos de la actividad</p>
+                <p className="mt-1 text-sm text-slate-600">Los campos con * son obligatorios.</p>
+              </div>
               <div>
                 <label className="block text-sm font-semibold text-slate-700 mb-2">
                   Tipo de Actividad *
@@ -3417,7 +4407,7 @@ export default function Calificaciones() {
                   onChange={(e) =>
                     setActividadForm({ ...actividadForm, tipo: e.target.value })
                   }
-                  className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500"
+                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                 >
                   {TIPOS_ACTIVIDAD.map((t) => (
                     <option key={t} value={t}>
@@ -3440,7 +4430,7 @@ export default function Calificaciones() {
                     })
                   }
                   placeholder="Ej: Suma y resta de enteros"
-                  className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500"
+                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                 />
               </div>
               <div>
@@ -3456,7 +4446,7 @@ export default function Calificaciones() {
                       fecha: e.target.value,
                     })
                   }
-                  className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500"
+                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                 />
               </div>
               <div>
@@ -3474,7 +4464,7 @@ export default function Calificaciones() {
                         | "especial",
                     })
                   }
-                  className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500"
+                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                 >
                   <option value="general">
                     Solo grupo general (por defecto)
@@ -3485,7 +4475,7 @@ export default function Calificaciones() {
                   </option>
                 </select>
                 {actividadForm.dirigidaA === "especial" && (
-                  <div className="mt-2 p-2 border border-purple-200 bg-purple-50 rounded-lg max-h-40 overflow-y-auto space-y-1">
+                  <div className="mt-3 max-h-44 space-y-2 overflow-y-auto rounded-xl border border-purple-200 bg-purple-50 p-3">
                     {estudiantesConAdaptacion.length === 0 ? (
                       <p className="text-xs text-purple-700">
                         No hay estudiantes marcados con adaptación en este
@@ -3512,7 +4502,7 @@ export default function Calificaciones() {
                                     ),
                               })
                             }
-                            className="w-4 h-4 text-purple-600 rounded"
+                            className="h-4 w-4 rounded accent-purple-600"
                           />
                           {est.apellidos} {est.nombres}
                         </label>
@@ -3538,7 +4528,7 @@ export default function Calificaciones() {
                         estrategiaNota: e.target.value as EstrategiaNota,
                       })
                     }
-                    className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500"
+                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                   >
                     {ESTRATEGIAS_NOTA.map((s) => (
                       <option key={s.value} value={s.value}>
@@ -3553,23 +4543,24 @@ export default function Calificaciones() {
                 </div>
               )}
             </div>
-            <div className="flex gap-2 mt-6">
-              <button
-                onClick={guardarActividad}
-                disabled={isSaving}
-                className="flex-1 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-all flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed"
-              >
-                {isSaving ? <FaSpinner className="animate-spin" /> : <FaSave />}{" "}
-                {editingActividadId ? "Actualizar" : "Crear"}
-              </button>
+            <div className="flex flex-col-reverse gap-2 border-t border-slate-100 bg-slate-50/90 px-5 py-4 sm:flex-row sm:justify-end sm:px-7">
               <button
                 onClick={() => {
                   setShowActividadModal(false);
                   setEditingActividadId(null);
                 }}
-                className="flex-1 bg-slate-200 hover:bg-slate-300 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold transition-all"
+                disabled={isSaving}
+                className="rounded-xl border border-slate-200 bg-white px-5 py-3 text-sm font-bold text-slate-600 transition hover:bg-slate-100 disabled:opacity-50 sm:min-w-32"
               >
                 Cancelar
+              </button>
+              <button
+                onClick={guardarActividad}
+                disabled={isSaving}
+                className="flex items-center justify-center gap-2 rounded-xl bg-linear-to-r from-blue-600 to-indigo-600 px-6 py-3 text-sm font-bold text-white shadow-lg shadow-blue-200 transition hover:-translate-y-0.5 hover:shadow-xl disabled:cursor-not-allowed disabled:opacity-60 sm:min-w-44"
+              >
+                {isSaving ? <FaSpinner className="animate-spin" /> : <FaSave />}
+                {isSaving ? "Guardando..." : editingActividadId ? "Guardar cambios" : "Crear actividad"}
               </button>
             </div>
           </div>
@@ -3578,8 +4569,8 @@ export default function Calificaciones() {
 
       {showFichaModal && fichaEstudianteId && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-100 p-4">
-          <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full p-6 max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between mb-4">
+          <div className="max-h-[86vh] w-full max-w-md overflow-y-auto rounded-2xl border border-slate-200 bg-white p-4 shadow-xl sm:p-5">
+            <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3 sm:px-5">
               <div className="flex items-center gap-3">
                 <div className="bg-purple-100 p-2 rounded-lg">
                   <FaListUl className="text-purple-600 text-xl" />
@@ -3616,8 +4607,8 @@ export default function Calificaciones() {
                 <FaSpinner className="animate-spin text-3xl text-blue-600" />
               </div>
             ) : (
-              <div className="space-y-2">
-                {[...actividades]
+              <div className="flex-1 space-y-2 overflow-y-auto p-3 sm:p-4">
+                {[...actividadesVisibles]
                   .filter(
                     (a) =>
                       a.id &&
@@ -3653,7 +4644,7 @@ export default function Calificaciones() {
                     return (
                       <div
                         key={a.id}
-                        className={`p-3 rounded-lg border-2 transition-all ${modificada ? "border-blue-400 bg-blue-50/50" : bloqueada ? "border-red-200 bg-red-50/40" : "border-slate-200"}`}
+                        className={`p-3 rounded-lg border-2 transition-all ${modificada ? "border-blue-400 bg-blue-50/50" : bloqueada ? "border-red-200 bg-red-50/40" : a.esConsolidado ? "border-purple-200 bg-purple-50/30" : "border-slate-200"}`}
                       >
                         <div className="flex items-center justify-between gap-3">
                           <div className="flex-1 min-w-0">
@@ -3661,6 +4652,11 @@ export default function Calificaciones() {
                               <span className="text-xs font-bold px-2 py-0.5 rounded bg-blue-100 text-blue-700">
                                 {a.tipo}
                               </span>
+                              {a.esConsolidado && (
+                                <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-purple-100 text-purple-700">
+                                  INSUMO
+                                </span>
+                              )}
                               <span className="text-[10px] text-slate-500">
                                 {a.fecha}
                               </span>
@@ -3699,12 +4695,18 @@ export default function Calificaciones() {
                               <span className="px-2 py-1.5 rounded text-xs font-bold bg-red-100 border border-red-300 text-red-700">
                                 Sin nota
                               </span>
-                            ) : tieneRefuerzo ? (
+                            ) : tieneRefuerzo || a.esConsolidado ? (
                               <span
                                 className="px-3 py-1.5 rounded text-sm font-bold bg-orange-50 border border-orange-300 text-orange-700"
-                                title="Nota final con refuerzo (solo lectura)"
+                                title={
+                                  a.esConsolidado
+                                    ? "Nota consolidada (solo lectura)"
+                                    : "Nota final con refuerzo (solo lectura)"
+                                }
                               >
-                                {round2(notaFinalRef ?? 0)}
+                                {round2(
+                                  notaFinalRef ?? (parseFloat(valor) || 0),
+                                )}
                               </span>
                             ) : (
                               <input
@@ -3733,7 +4735,8 @@ export default function Calificaciones() {
                           </div>
                         </div>
                         {(valor !== "" || !!base?.notaGuardada) &&
-                          !bloqueada && (
+                          !bloqueada &&
+                          !a.esConsolidado && (
                             <div className="mt-2">
                               <input
                                 type="text"
@@ -3784,23 +4787,32 @@ export default function Calificaciones() {
       )}
 
       {showRefuerzoModal && refuerzoEstudianteId && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-100 p-4">
-          <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6 max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-bold text-slate-900">
-                Aplicar Refuerzo
-              </h3>
+        <div className="fixed inset-0 z-100 flex items-center justify-center bg-slate-950/45 p-3 backdrop-blur-[2px] sm:p-4 animate-in fade-in duration-200">
+          <div className="flex max-h-[88vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl animate-in zoom-in-95 duration-200">
+            <div className="flex items-center justify-between gap-3 border-b border-slate-100 bg-linear-to-r from-orange-50/80 via-white to-amber-50/70 px-4 py-3 sm:px-5">
+              <div className="flex items-center gap-3">
+                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-orange-500 text-white shadow-sm">
+                  <FaGraduationCap className="text-xl" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold tracking-tight text-slate-900 sm:text-lg">
+                    Aplicar refuerzo pedagógico
+                  </h3>
+                  <p className="mt-0.5 text-[11px] text-slate-500 sm:text-xs">Registra la nota y revisa el efecto antes de guardar</p>
+                </div>
+              </div>
               <button
                 onClick={() => {
                   setShowRefuerzoModal(false);
                   setRefuerzoEstudianteId(null);
                 }}
-                className="text-slate-400 hover:text-slate-600"
+                className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 transition hover:bg-white hover:text-slate-700"
               >
                 <FaTimes />
               </button>
             </div>
-            <div className="mb-4 p-3 bg-orange-50 border border-orange-200 rounded-lg">
+            <div className="overflow-y-auto px-4 py-4 sm:px-5">
+            <div className="mb-4 rounded-xl border border-orange-200 bg-linear-to-r from-orange-50/80 to-amber-50/80 p-3">
               <p className="text-sm text-orange-800 font-semibold mb-1">
                 {
                   estudiantes.find((e) => e.id === refuerzoEstudianteId)
@@ -3844,7 +4856,7 @@ export default function Calificaciones() {
                     }
                   }}
                   placeholder="Ej: 8.5"
-                  className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500"
+                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none transition focus:border-orange-500 focus:ring-2 focus:ring-orange-100"
                 />
               </div>
               <div>
@@ -3859,7 +4871,7 @@ export default function Calificaciones() {
                       estrategia: e.target.value as EstrategiaNota,
                     })
                   }
-                  className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500"
+                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none transition focus:border-orange-500 focus:ring-2 focus:ring-orange-100"
                 >
                   {ESTRATEGIAS_NOTA.map((s) => (
                     <option key={s.value} value={s.value}>
@@ -3882,7 +4894,7 @@ export default function Calificaciones() {
                     })
                   }
                   placeholder="Ej: Ejercicios adicionales"
-                  className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500"
+                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none transition focus:border-orange-500 focus:ring-2 focus:ring-orange-100"
                 />
               </div>
               <div>
@@ -3895,11 +4907,11 @@ export default function Calificaciones() {
                   onChange={(e) =>
                     setRefuerzoForm({ ...refuerzoForm, fecha: e.target.value })
                   }
-                  className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500"
+                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none transition focus:border-orange-500 focus:ring-2 focus:ring-orange-100"
                 />
               </div>
               {actividadSeleccionada && (
-                <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg text-xs text-blue-800">
+                <div className="rounded-2xl border border-blue-200 bg-blue-50 p-4 text-xs leading-relaxed text-blue-900">
                   <p className="font-semibold mb-1">Estrategia aplicada:</p>
                   <p className="mb-2">
                     {
@@ -3938,29 +4950,27 @@ export default function Calificaciones() {
                 </div>
               )}
             </div>
-            <div className="flex gap-2 mt-6">
-              <button
-                onClick={aplicarRefuerzo}
-                disabled={
-                  isSaving || refuerzoForm.nota <= 0 || refuerzoForm.nota > 10
-                }
-                className="flex-1 bg-orange-600 hover:bg-orange-700 text-white px-4 py-2.5 rounded-lg text-sm font-semibold transition-all flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed"
-              >
-                {isSaving ? (
-                  <FaSpinner className="animate-spin" />
-                ) : (
-                  <FaCheck />
-                )}{" "}
-                Aplicar Refuerzo
-              </button>
+            </div>
+            <div className="flex flex-col-reverse gap-2 border-t border-slate-100 bg-slate-50/90 px-5 py-4 sm:flex-row sm:px-7">
               <button
                 onClick={() => {
                   setShowRefuerzoModal(false);
                   setRefuerzoEstudianteId(null);
                 }}
-                className="flex-1 bg-slate-200 hover:bg-slate-300 text-slate-700 px-4 py-2.5 rounded-lg text-sm font-semibold transition-all"
+                disabled={isSaving}
+                className="flex-1 rounded-lg border border-slate-200 bg-white px-3.5 py-2.5 text-xs font-semibold text-slate-600 transition hover:bg-slate-100 disabled:opacity-50"
               >
                 Cancelar
+              </button>
+              <button
+                onClick={aplicarRefuerzo}
+                disabled={
+                  isSaving || refuerzoForm.nota < 0 || refuerzoForm.nota > 10 || !refuerzoForm.detalle.trim()
+                }
+                className="flex-1 inline-flex items-center justify-center gap-2 rounded-xl bg-linear-to-r from-orange-500 to-amber-500 px-4 py-3 text-sm font-bold text-white shadow-lg shadow-orange-200 transition hover:-translate-y-0.5 hover:shadow-xl disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {isSaving ? <FaSpinner className="animate-spin" /> : <FaCheck />}
+                {isSaving ? "Aplicando..." : "Aplicar refuerzo"}
               </button>
             </div>
           </div>
@@ -3969,7 +4979,7 @@ export default function Calificaciones() {
 
       {confirmModal.isOpen && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-100 p-4 animate-in fade-in duration-200">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden animate-in zoom-in-95 duration-200">
+          <div className="w-full max-w-sm overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl animate-in zoom-in-95 duration-200">
             <div className="bg-linear-to-r from-slate-50 to-slate-100 px-6 pt-6 pb-4 border-b border-slate-200">
               <div className="flex items-start gap-4">
                 <div className="w-12 h-12 rounded-full bg-red-100 flex items-center justify-center shrink-0">

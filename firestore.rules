@@ -1,0 +1,67 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function autenticado() {
+      return request.auth != null;
+    }
+
+    function esSuperAdmin() {
+      return autenticado() &&
+        get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.role == 'super_admin';
+    }
+
+    // ==================== USUARIOS (CORREGIDO) ====================
+    // Lectura: cualquier autenticado (GestionUsuarios, nombres de docentes).
+    // Creación: solo el propio UID al registrarse, SIEMPRE sin privilegios.
+    // Actualización: super_admin libre; el dueño solo campos de presentación,
+    //   con rol/estado/grados/tutorías congelados (comparación contra el valor existente).
+    // Eliminación física: PROHIBIDA para todos (archivar = update status='deleted').
+    match /usuarios/{userId} {
+      allow read: if autenticado();
+      allow create: if autenticado() && request.auth.uid == userId
+        && request.resource.data.role == 'docente'
+        && request.resource.data.status == 'pending';
+      allow update: if esSuperAdmin() ||
+        (autenticado() && request.auth.uid == userId
+          && request.resource.data.status == resource.data.status
+          && request.resource.data.role == resource.data.role
+          && request.resource.data.gradosAsignados == resource.data.gradosAsignados
+          && request.resource.data.tutorDe == resource.data.tutorDe);
+      allow delete: if false;
+    }
+
+    // ==================== FLUJO PÚBLICO DE MATRÍCULA (sin cambios) ====================
+    match /configuracionInstitucional/{document} {
+      allow read: if true;
+      allow write: if autenticado();
+    }
+
+    match /grados/{gradoId} {
+      allow read: if true;
+      allow write: if autenticado();
+    }
+
+    match /solicitudesMatriculas/{solicitudId} {
+      allow read: if autenticado();
+      allow create: if true;
+      allow update, delete: if autenticado();
+    }
+
+    match /representantes/{representanteId} {
+      allow read: if autenticado();
+      allow create: if true;
+      allow update, delete: if autenticado();
+    }
+
+    // ==================== RESTO DE COLECCIONES ====================
+    // Comodín RESTRINGIDO: 'usuarios' queda excluido de la escritura para que
+    // el bloque específico anterior sea el único camino de escritura.
+    // (Las reglas se combinan por O: un comodín permisivo anularía cualquier
+    //  bloque específico, que fue exactamente la causa del incidente.)
+    match /{collection}/{document} {
+      allow read: if autenticado();
+      allow write: if autenticado() && collection != 'usuarios';
+    }
+  }
+}
