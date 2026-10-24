@@ -16,6 +16,7 @@ import {
 } from "firebase/firestore";
 import { auth, googleProvider, db } from "../lib/firebase";
 import type { AppUser } from "../types";
+import { changesFor } from "../offline/store";
 
 interface AuthContextType {
   user: User | null;
@@ -77,31 +78,6 @@ export function AuthProvider({ children }: AuthProviderProps) {
         }, 20000);
 
         try {
-          // La transacción lee del servidor y no sobrescribe perfiles existentes.
-          await runTransaction(db, async (transaction) => {
-            const userSnap = await transaction.get(userRef);
-
-            if (!isCurrentSession()) throw new Error("Sesión reemplazada");
-
-            if (!userSnap.exists()) {
-              operation = "crear el perfil";
-
-              transaction.set(userRef, {
-                uid: firebaseUser.uid,
-                email: firebaseUser.email ?? "",
-                displayName: firebaseUser.displayName || "Nuevo Usuario",
-                photoURL: firebaseUser.photoURL ?? null,
-                role: "docente",
-                status: "pending",
-                gradosAsignados: [],
-                tutorDe: [],
-                nombreDocumento: "",
-                createdAt: serverTimestamp(),
-              });
-
-            }
-          });
-
           if (!isCurrentSession()) return;
 
           operation = "escuchar el perfil";
@@ -111,8 +87,11 @@ export function AuthProvider({ children }: AuthProviderProps) {
             { includeMetadataChanges: true },
             (snapshot) => {
               if (!isCurrentSession()) return;
-              // No autorizar navegación a partir de un rol/estado antiguo en caché.
-              if (snapshot.metadata.fromCache || snapshot.metadata.hasPendingWrites) return;
+              // Offline access is limited to a previously loaded active teacher.
+              // Server rules still validate every synchronized write.
+              if (snapshot.metadata.hasPendingWrites) return;
+              if (snapshot.metadata.fromCache &&
+                  (!snapshot.exists() || snapshot.data()?.status !== "active" || snapshot.data()?.role !== "docente")) return;
               clearTimeout(profileTimer);
               setAuthError(null);
 
@@ -139,9 +118,22 @@ export function AuthProvider({ children }: AuthProviderProps) {
                   nombreDocumento: data.nombreDocumento || "",
                   createdAt: data.createdAt || new Date().toISOString(),
                 });
-              } else {
-                setAuthError("No existe el perfil. Contacta al administrador; no se recreará durante esta sesión.");
-                setUserData(null);
+              } else if (!snapshot.metadata.fromCache) {
+                // Only a confirmed online read may create a first-time profile.
+                void runTransaction(db, async transaction => {
+                  const current = await transaction.get(userRef);
+                  if (!current.exists()) transaction.set(userRef, {
+                    uid: firebaseUser.uid, email: firebaseUser.email ?? "",
+                    displayName: firebaseUser.displayName || "Nuevo Usuario",
+                    photoURL: firebaseUser.photoURL ?? null, role: "docente", status: "pending",
+                    gradosAsignados: [], tutorDe: [], nombreDocumento: "", createdAt: serverTimestamp(),
+                  });
+                }).catch(() => {
+                  if (!isCurrentSession()) return;
+                  setAuthError("No se pudo crear el perfil. Conéctate y reintenta.");
+                  setLoading(false);
+                });
+                return;
               }
 
               setLoading(false);
@@ -207,6 +199,11 @@ export function AuthProvider({ children }: AuthProviderProps) {
   };
 
   const logout = async () => {
+    if (auth.currentUser && (await changesFor(auth.currentUser.uid)).length > 0) {
+      throw new Error("Tienes cambios locales pendientes. Sincronízalos o revísalos antes de cerrar sesión.");
+    }
+    Object.keys(sessionStorage).filter(key => key.startsWith("eduX_cache_v1:") || key === "dayanix-datacontext-v1")
+      .forEach(key => sessionStorage.removeItem(key));
     await signOut(auth);
   };
 

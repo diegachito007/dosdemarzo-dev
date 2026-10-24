@@ -8,12 +8,15 @@ export default defineConfig({
     react(),
     tailwindcss(),
     VitePWA({
-      registerType: 'autoUpdate',
-      includeAssets: ['favicon.ico', 'robots.txt', 'apple-touch-icon.png'],
+      registerType: 'prompt',
+      includeAssets: ['favicon.svg', 'logo.eduX.mini.png'],
       
       // ✅ SOLUCIÓN: Aumenta el límite de tamaño de archivo a 5 MB (5,000,000 bytes)
       workbox: {
         maximumFileSizeToCacheInBytes: 5000000,
+        navigateFallback: '/index.html',
+        globPatterns: ['**/*.{js,css,html,svg,png,woff2}'],
+        cleanupOutdatedCaches: true,
       },
       
       manifest: {
@@ -24,16 +27,8 @@ export default defineConfig({
         background_color: '#ffffff',
         display: 'standalone',
         icons: [
-          {
-            src: '/icon-192.png',
-            sizes: '192x192',
-            type: 'image/png'
-          },
-          {
-            src: '/icon-512.png',
-            sizes: '512x512',
-            type: 'image/png'
-          }
+          { src: '/icon-192.png', sizes: '192x192', type: 'image/png' },
+          { src: '/icon-512.png', sizes: '512x512', type: 'image/png' }
         ]
       }
     })
