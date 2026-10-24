@@ -8,9 +8,8 @@ import {
   useCallback,
 } from "react";
 import type { ReactNode } from "react";
-import { collection, query, where } from "firebase/firestore";
+import { collection, query, where, getDocs } from "firebase/firestore";
 import { db } from "../lib/firebase";
-import { readAvailable } from "../offline/reads";
 import type {
   Grado,
   Ambito,
@@ -142,21 +141,21 @@ export function DataProvider({ children }: { children: ReactNode }) {
         periodosSnap,
         usuariosSnap,
       ] = await Promise.all([
-        readAvailable(query(collection(db, "grados"), where("activo", "==", true))),
-        readAvailable(query(collection(db, "ambitos"), where("activo", "==", true))),
-        readAvailable(
+        getDocs(query(collection(db, "grados"), where("activo", "==", true))),
+        getDocs(query(collection(db, "ambitos"), where("activo", "==", true))),
+        getDocs(
           query(collection(db, "destrezas"), where("activo", "==", true)),
         ),
-        readAvailable(
+        getDocs(
           query(collection(db, "aniosLectivos"), where("activo", "==", true)),
         ),
-        readAvailable(
+        getDocs(
           query(
             collection(db, "periodosEvaluacion"),
             where("activo", "==", true),
           ),
         ),
-        readAvailable(collection(db, "usuarios")),
+        getDocs(collection(db, "usuarios")),
       ]);
 
       const g = sortByOrden(

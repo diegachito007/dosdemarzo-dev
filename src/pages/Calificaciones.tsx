@@ -14,16 +14,13 @@ import {
   updateDoc,
   doc,
   serverTimestamp,
+  getDocs,
   where,
   Timestamp,
   onSnapshot,
   writeBatch,
 } from "firebase/firestore";
 import { db } from "../lib/firebase";
-import { readAvailable, readCached, localChanges } from "../offline/reads";
-import { enqueue } from "../offline/store";
-import { makeChange } from "../offline/model";
-import type { Change, RecordData } from "../offline/model";
 import { useAuth } from "../context/AuthContext";
 import { useData } from "../context/DataContext";
 import { Link } from "react-router-dom";
@@ -898,7 +895,7 @@ export default function Calificaciones() {
             "";
       let horasConRegistro: number[] = [];
       try {
-        const snap = await readAvailable(
+        const snap = await getDocs(
           query(
             collection(db, "asistencias"),
             where("gradoId", "==", asignatura.gradoId),
@@ -974,7 +971,7 @@ export default function Calificaciones() {
         where("destrezaId", "==", destrezaId),
         orderBy("fecha", "desc"),
       );
-      const snap = await readAvailable(q);
+      const snap = await getDocs(q);
       const data = snap.docs.map(
         (d) => ({ id: d.id, ...d.data() }) as ActividadData,
       );
@@ -991,7 +988,7 @@ export default function Calificaciones() {
         collection(db, "calificaciones"),
         where("actividadId", "==", actividadId),
       );
-      const snap = await readAvailable(q);
+      const snap = await getDocs(q);
       const map: Record<
         string,
         {
@@ -1014,11 +1011,6 @@ export default function Calificaciones() {
           docenteId: c.docenteId,
           editadoPor: c.editadoPor,
         };
-      });
-      const pending = await localChanges("calificaciones");
-      pending.filter(c => c.identity.actividadId === actividadId).forEach(c => {
-        const id = String(c.identity.estudianteId);
-        map[id] = { ...map[id], nota: String(c.patch.nota), observacion: String(c.patch.observacion ?? map[id]?.observacion ?? "") };
       });
       cacheSet(`calificaciones_${actividadId}`, map);
       setCalificaciones(map);
@@ -1053,7 +1045,7 @@ export default function Calificaciones() {
       const ambitoIdParaGuardar = esGradoInicialActual
         ? "general"
         : materiaSeleccionadaEfectiva;
-      const existentesSnap = await readCached(
+      const existentesSnap = await getDocs(
         query(
           collection(db, "asistencias"),
           where("gradoId", "==", gradoEfectivoId),
@@ -1071,8 +1063,8 @@ export default function Calificaciones() {
           data: d.data() as AsistenciaData,
         }),
       );
-      const changes: Change[] = [];
-      
+      const batch = writeBatch(db);
+      let operaciones = 0;
       estudiantes.forEach((est) => {
         const asistencia = asistencias[est.id];
         if (!asistencia || !asistencia.estado) return;
@@ -1085,22 +1077,48 @@ export default function Calificaciones() {
           if (configExistente?.quien === "tutor" && !esTutorDelGradoActual)
             return;
           const datos = {
-            estudianteId: est.id, gradoId: gradoEfectivoId, anioLectivoId, periodoId,
-            fecha: fechaAsistencia, ambitoId: ambitoIdParaGuardar, hora,
-            estado: asistencia.estado, v2: true, observacion: asistencia.observacion || "",
+            estudianteId: est.id,
+            gradoId: gradoEfectivoId,
+            anioLectivoId,
+            periodoId,
+            fecha: fechaAsistencia,
+            ambitoId: ambitoIdParaGuardar,
+            hora,
+            estado: asistencia.estado,
+            v2: true,
+            observacion: asistencia.observacion || "",
+            updatedAt: serverTimestamp(),
           };
-          changes.push(makeChange(user?.uid || "", "asistencias", {
-            gradoId: gradoEfectivoId, ambitoId: ambitoIdParaGuardar,
-            fecha: fechaAsistencia, estudianteId: est.id, hora,
-          }, datos, existente ? { id: existente.id, data: existente.data as unknown as RecordData } : undefined, asignaturaDelPanel?.id, `${est.apellidos} ${est.nombres}`));
-
+          if (!existente) {
+            batch.set(doc(collection(db, "asistencias")), {
+              ...datos,
+              registradoPor: user?.uid || "",
+              createdAt: serverTimestamp(),
+            });
+          } else {
+            const aud: Record<string, unknown> = {};
+            if (
+              existente.data.registradoPor &&
+              existente.data.registradoPor !== user?.uid
+            ) {
+              aud.editadoPor = user?.uid || "";
+              aud.editadoEl = serverTimestamp();
+              if (!existente.data.estadoOriginal)
+                aud.estadoOriginal = existente.data.estado;
+            }
+            batch.update(doc(db, "asistencias", existente.id), {
+              ...datos,
+              ...aud,
+            });
+          }
+          operaciones++;
         });
       });
-      await enqueue(changes);
+      if (operaciones > 0) await batch.commit();
       mostrarToast(
         "success",
-        "Asistencia guardada en este dispositivo",
-        `${horas.length} hora(s). Se sincronizará automáticamente al tener conexión; revisa el indicador de pendientes.`,
+        "Asistencia guardada",
+        `Se registró la asistencia de ${horas.length} hora(s) correctamente.`,
       );
     } catch (e) {
       console.error(e);
@@ -1115,7 +1133,6 @@ export default function Calificaciones() {
   };
 
   const guardarActividad = async () => {
-    if (!navigator.onLine) { mostrarToast("info", "Requiere conexión", "Esta operación necesita internet. Las notas y asistencias sí pueden guardarse sin conexión."); return; }
     if (!actividadForm.detalle.trim()) {
       mostrarToast(
         "warning",
@@ -1185,7 +1202,6 @@ export default function Calificaciones() {
   };
 
   const eliminarActividad = async (actividadId: string) => {
-    if (!navigator.onLine) { mostrarToast("info", "Requiere conexión", "Esta operación necesita internet. Las notas y asistencias sí pueden guardarse sin conexión."); return; }
     const actAEliminar = actividades.find((a) => a.id === actividadId);
     const ok = await confirmar(
       "Eliminar actividad",
@@ -1199,7 +1215,7 @@ export default function Calificaciones() {
     if (!ok) return;
     setIsSaving(true);
     try {
-      const snap = await readAvailable(
+      const snap = await getDocs(
         query(
           collection(db, "calificaciones"),
           where("actividadId", "==", actividadId),
@@ -1233,7 +1249,6 @@ export default function Calificaciones() {
 
   // ✅ CONSOLIDAR: promedia las actividades seleccionadas en un nuevo "Insumo"
   const consolidarActividades = async () => {
-    if (!navigator.onLine) { mostrarToast("info", "Requiere conexión", "Esta operación necesita internet. Las notas y asistencias sí pueden guardarse sin conexión."); return; }
     if (consolidarSeleccionadas.length < 2) {
       mostrarToast(
         "warning",
@@ -1275,7 +1290,7 @@ export default function Calificaciones() {
       const fuenteDe = new Map(fuentes.map((f) => [f.id!, f]));
       const acum: Record<string, { suma: number; conteo: number }> = {};
       for (let i = 0; i < ids.length; i += 30) {
-        const snap = await readAvailable(
+        const snap = await getDocs(
           query(
             collection(db, "calificaciones"),
             where("actividadId", "in", ids.slice(i, i + 30)),
@@ -1378,7 +1393,6 @@ export default function Calificaciones() {
 
   // ✅ DESAGRUPAR: revierte un insumo consolidado
   const desagruparInsumo = async (insumo: ActividadData) => {
-    if (!navigator.onLine) { mostrarToast("info", "Requiere conexión", "Esta operación necesita internet. Las notas y asistencias sí pueden guardarse sin conexión."); return; }
     // El ID es opcional en la interfaz; validarlo antes de consultar o borrar en Firestore.
     const insumoId = insumo.id;
     if (!insumoId) {
@@ -1417,7 +1431,7 @@ export default function Calificaciones() {
       const batch = writeBatch(db);
 
       // 1. Eliminar las calificaciones generadas por este insumo
-      const calsSnap = await readAvailable(
+      const calsSnap = await getDocs(
         query(
           collection(db, "calificaciones"),
           where("actividadId", "==", insumoId),
@@ -1474,7 +1488,7 @@ export default function Calificaciones() {
     }
     setIsSaving(true);
     try {
-      const existentesSnap = await readCached(
+      const existentesSnap = await getDocs(
         query(
           collection(db, "calificaciones"),
           where("actividadId", "==", selectedActividadId),
@@ -1491,8 +1505,8 @@ export default function Calificaciones() {
         }),
       );
       const actividadEsHoy = esFechaHoy(actividadSeleccionada?.fecha || "");
-      const changes: Change[] = [];
-
+      const batch = writeBatch(db);
+      let operaciones = 0;
       estudiantesAplicables.forEach((est) => {
         const calificacion = calificaciones[est.id];
         if (
@@ -1513,26 +1527,49 @@ export default function Calificaciones() {
         // nota final que se muestra en pantalla. Las nuevas mejoras se registran
         // únicamente mediante el historial de refuerzos.
         const notaPersistir = existente?.data.refuerzo
-          ? existente.data.nota
+          ? round2(existente.data.nota)
           : round2(notaNum);
         const datos = {
-          estudianteId: est.id, actividadId: selectedActividadId,
-          nota: notaPersistir, observacion: calificacion.observacion || "",
+          estudianteId: est.id,
+          actividadId: selectedActividadId,
+          nota: notaPersistir,
+          observacion: calificacion.observacion || "",
+          refuerzo: calificacion.refuerzo || existente?.data.refuerzo || null,
+          updatedAt: serverTimestamp(),
         };
-        changes.push(makeChange(user?.uid || "", "calificaciones", {
-          actividadId: selectedActividadId, estudianteId: est.id,
-        }, datos, existente ? { id: existente.id, data: existente.data as unknown as RecordData } : undefined, asignaturaDelPanel?.id, `${est.apellidos} ${est.nombres}`));
-
+        if (!existente) {
+          batch.set(doc(collection(db, "calificaciones")), {
+            ...datos,
+            docenteId: user?.uid || "",
+            createdAt: serverTimestamp(),
+          });
+        } else {
+          const aud: Record<string, unknown> = {};
+          if (
+            existente.data.docenteId &&
+            existente.data.docenteId !== user?.uid
+          ) {
+            aud.editadoPor = user?.uid || "";
+            aud.editadoEl = serverTimestamp();
+            if (existente.data.notaOriginal === undefined)
+              aud.notaOriginal = existente.data.nota;
+          }
+          batch.update(doc(db, "calificaciones", existente.id), {
+            ...datos,
+            ...aud,
+          });
+        }
+        operaciones++;
       });
-      if (changes.length > 0) {
-        await enqueue(changes);
+      if (operaciones > 0) {
+        await batch.commit();
         cacheInvalidate(`calificaciones_${selectedActividadId}`);
         cacheInvalidate(`calificacionesMatriz_${destrezaEfectivaId}`);
       }
       mostrarToast(
         "success",
-        "Calificaciones guardadas en este dispositivo",
-        "Se sincronizarán al tener conexión. Revisa el indicador de pendientes.",
+        "Calificaciones guardadas",
+        "Se guardaron correctamente.",
       );
     } catch (e) {
       console.error(e);
@@ -1547,7 +1584,6 @@ export default function Calificaciones() {
   };
 
   const aplicarRefuerzo = async () => {
-    if (!navigator.onLine) { mostrarToast("info", "Requiere conexión", "Esta operación necesita internet. Las notas y asistencias sí pueden guardarse sin conexión."); return; }
     if (
       !refuerzoEstudianteId ||
       !selectedActividadId ||
@@ -1562,7 +1598,7 @@ export default function Calificaciones() {
     }
     setIsSaving(true);
     try {
-      const snap = await readAvailable(
+      const snap = await getDocs(
         query(
           collection(db, "calificaciones"),
           where("estudianteId", "==", refuerzoEstudianteId),
@@ -1678,12 +1714,20 @@ export default function Calificaciones() {
         setNotaTemporal("");
         return;
       }
-      const actualSnap = await readCached(query(collection(db, "calificaciones"), where("actividadId", "==", actividadId), where("estudianteId", "==", estudianteId)));
-      if (actualSnap.size > 1) throw new Error("Hay calificaciones duplicadas; revisa el registro antes de editar.");
-      const actual = actualSnap.docs[0];
-      await enqueue([makeChange(user?.uid || "", "calificaciones", { estudianteId, actividadId }, {
-        estudianteId, actividadId, nota: round2(notaNum),
-      }, actual ? { id: actual.id, data: actual.data() } : undefined, asignaturaDelPanel?.id, `${estMatriz.apellidos} ${estMatriz.nombres}`)]);
+      if (calExistente?.id) {
+        await updateDoc(doc(db, "calificaciones", calExistente.id), {
+          nota: round2(notaNum),
+          updatedAt: serverTimestamp(),
+        });
+      } else {
+        await addDoc(collection(db, "calificaciones"), {
+          estudianteId,
+          actividadId,
+          nota: round2(notaNum),
+          docenteId: user?.uid || "",
+          createdAt: serverTimestamp(),
+        });
+      }
       setCalificacionesMatriz((prev) => ({
         ...prev,
         [key]: {
@@ -1728,7 +1772,7 @@ export default function Calificaciones() {
       const base: Record<string, FichaBaseEntry> = {};
       for (let i = 0; i < actividadIds.length; i += 30) {
         const chunk = actividadIds.slice(i, i + 30);
-        const snapCal = await readAvailable(
+        const snapCal = await getDocs(
           query(
             collection(db, "calificaciones"),
             where("estudianteId", "==", estudianteId),
@@ -1755,7 +1799,7 @@ export default function Calificaciones() {
       );
       const asis: Record<string, EstadoAsistencia | undefined> = {};
       for (let i = 0; i < fechas.length; i += 30) {
-        const snapAs = await readAvailable(
+        const snapAs = await getDocs(
           query(
             collection(db, "asistencias"),
             where("estudianteId", "==", estudianteId),
@@ -1821,7 +1865,6 @@ export default function Calificaciones() {
   };
 
   const guardarFichaEstudiante = async () => {
-    if (!navigator.onLine) { mostrarToast("info", "Requiere conexión", "Esta operación necesita internet. Las notas y asistencias sí pueden guardarse sin conexión."); return; }
     if (!fichaEstudianteId) return;
     const cambios = calcularCambiosFicha();
     if (!cambios.length) {
@@ -2018,15 +2061,6 @@ export default function Calificaciones() {
     }
   };
 
-  useEffect(() => {
-    const invalidate = () => {
-      if (selectedActividadId) cacheInvalidate(`calificaciones_${selectedActividadId}`);
-      if (destrezaEfectivaId) cacheInvalidate(`calificacionesMatriz_${destrezaEfectivaId}`);
-    };
-    window.addEventListener("eduX:offlineChanged", invalidate);
-    return () => window.removeEventListener("eduX:offlineChanged", invalidate);
-  }, [selectedActividadId, destrezaEfectivaId]);
-
   // ==================== EFFECTS ====================
   useEffect(() => {
     if (!gradoEfectivoId || panel === 0) return;
@@ -2129,7 +2163,7 @@ export default function Calificaciones() {
           .filter(Boolean) as string[];
         const map: Record<string, CalificacionData> = {};
         for (let i = 0; i < ids.length; i += 30) {
-          const snap = await readAvailable(
+          const snap = await getDocs(
             query(
               collection(db, "calificaciones"),
               where("actividadId", "in", ids.slice(i, i + 30)),
@@ -2143,11 +2177,6 @@ export default function Calificaciones() {
             };
           });
         }
-        const pending = await localChanges("calificaciones");
-        pending.filter(c => ids.includes(String(c.identity.actividadId))).forEach(c => {
-          const key = `${c.identity.estudianteId}|${c.identity.actividadId}`;
-          map[key] = { ...map[key], ...c.patch } as unknown as CalificacionData;
-        });
         cacheSet(ck, map);
         if (mounted) setCalificacionesMatriz(map);
       } catch (e) {
@@ -2188,29 +2217,17 @@ export default function Calificaciones() {
       where("fecha", "==", fechaAsistencia),
       where("ambitoId", "==", ambitoIdParaBuscar),
     );
-    let active = true;
-    const apply = async () => {
-      const pending = await localChanges("asistencias");
-      if (!active) return;
-      const rows = rawAsistenciasDiaRef.current;
-      const merged = new Map(rows.map(r => [`${r.estudianteId}|${r.hora ?? 1}`, r]));
-      pending.filter(c => c.identity.gradoId === gradoEfectivoId && c.identity.fecha === fechaAsistencia && c.identity.ambitoId === ambitoIdParaBuscar).forEach(c => {
-        merged.set(`${c.identity.estudianteId}|${c.identity.hora}`, { ...c.patch, id: c.documentId || c.key } as unknown as AsistenciaData);
-      });
-      rawAsistenciasDiaRef.current = Array.from(merged.values());
-      reconstruirAsistencias(horasScopeRef.current);
-    };
-    const changed = () => { void readAvailable(q).then(snap => {
-      rawAsistenciasDiaRef.current = snap.docs.map(d => ({ ...d.data(), id: d.id }) as unknown as AsistenciaData);
-      return apply();
-    }).catch(console.error); };
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      rawAsistenciasDiaRef.current = snapshot.docs.map(d => ({ ...d.data(), id: d.id }) as unknown as AsistenciaData);
-      void apply().catch(console.error);
-    }, console.error);
-    window.addEventListener("eduX:offlineChanged", changed);
-    return () => { active = false; unsubscribe(); window.removeEventListener("eduX:offlineChanged", changed); };
-
+    return onSnapshot(
+      q,
+      (s) => {
+        rawAsistenciasDiaRef.current = s.docs.map((d) => {
+          const data = d.data() as unknown as AsistenciaData;
+          return { ...data, id: d.id };
+        });
+        reconstruirAsistencias(horasScopeRef.current);
+      },
+      (e) => console.error(e),
+    );
   }, [
     panel,
     gradoEfectivoId,
@@ -2244,27 +2261,18 @@ export default function Calificaciones() {
       where("fecha", "==", act.fecha),
       where("ambitoId", "==", ambitoIdActividad),
     );
-    let active = true;
-    let raw: AsistenciaData[] = [];
-    const apply = async () => {
-      const pending = await localChanges("asistencias");
-      if (!active) return;
-      const merged = new Map(raw.map(row => [`${row.estudianteId}|${row.hora ?? 1}`, row]));
-      pending.filter(c => c.identity.gradoId === gradoEfectivoId && c.identity.fecha === act.fecha && c.identity.ambitoId === ambitoIdActividad).forEach(c => {
-        merged.set(`${c.identity.estudianteId}|${c.identity.hora}`, c.patch as unknown as AsistenciaData);
-      });
-      const map: Record<string, EstadoAsistencia | undefined> = {};
-      merged.forEach(data => {
-        const estado = normalizarEstado(data.estado, data.v2);
-        if (!estadoBloqueaNota(map[data.estudianteId])) map[data.estudianteId] = estado;
-      });
-      setAsistenciasDiaActividad(map);
-    };
-    const changed = () => { void apply().catch(console.error); };
-    const unsubscribe = onSnapshot(q, snap => { raw = snap.docs.map(d => d.data() as AsistenciaData); changed(); }, console.error);
-    window.addEventListener("eduX:offlineChanged", changed);
-    return () => { active = false; unsubscribe(); window.removeEventListener("eduX:offlineChanged", changed); };
-
+    return onSnapshot(
+      q,
+      (s) => {
+        const map: Record<string, EstadoAsistencia | undefined> = {};
+        s.docs.forEach((d) => {
+          const data = d.data() as AsistenciaData;
+          map[data.estudianteId] = normalizarEstado(data.estado, data.v2);
+        });
+        setAsistenciasDiaActividad(map);
+      },
+      (e) => console.error(e),
+    );
   }, [
     panel,
     selectedActividadId,

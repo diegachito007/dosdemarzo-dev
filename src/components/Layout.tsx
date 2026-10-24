@@ -1,5 +1,4 @@
 import { useState, useEffect } from "react";
-import OfflineStatus from "./OfflineStatus";
 import type { ReactNode } from "react";
 import { useAuth } from "../context/AuthContext";
 import { useData } from "../context/DataContext";
@@ -307,8 +306,7 @@ export default function Layout({
         <button
           onClick={async () => {
             setShowDropdown(false);
-            try { await logout(); }
-            catch (error) { window.alert(error instanceof Error ? error.message : "No se pudo cerrar sesión."); }
+            await logout();
           }}
           className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-red-600 hover:bg-red-50 transition-colors"
         >
@@ -565,7 +563,6 @@ export default function Layout({
                 )}
               </div>
             )}
-            <OfflineStatus />
             {children}
           </main>
         </div>
@@ -603,8 +600,7 @@ export default function Layout({
               )}
             </div>
           )}
-          <OfflineStatus />
-            {children}
+          {children}
         </main>
       </div>
     </div>

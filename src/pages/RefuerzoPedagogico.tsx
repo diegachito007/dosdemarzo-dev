@@ -652,7 +652,6 @@ export default function RefuerzoPedagogico() {
   };
 
   const crearRefuerzo = async () => {
-    if (!navigator.onLine) { mostrarToast("info", "Requiere conexión", "Esta operación de refuerzo necesita internet."); return; }
     if (!form.gradoId || !form.destrezaId) {
       mostrarToast(
         "warning",
@@ -842,7 +841,6 @@ export default function RefuerzoPedagogico() {
   };
 
   const guardarSesion = async () => {
-    if (!navigator.onLine) { mostrarToast("info", "Requiere conexión", "Esta operación de refuerzo necesita internet."); return; }
     if (!sesionEdit || !procesoActivo) return;
     setIsSavingSesion(true);
     try {
@@ -893,7 +891,6 @@ export default function RefuerzoPedagogico() {
   };
 
   const eliminarRefuerzo = async () => {
-    if (!navigator.onLine) { mostrarToast("info", "Requiere conexión", "Esta operación de refuerzo necesita internet."); return; }
     if (!refuerzoAEliminar) return;
     setEliminandoRefuerzo(true);
     try {
@@ -971,7 +968,6 @@ export default function RefuerzoPedagogico() {
   const notaAplicarValida = aplicarNota.trim() !== "" && Number.isFinite(notaAplicarNum) && notaAplicarNum >= 0 && notaAplicarNum <= 10;
 
   const aplicarRefuerzo = async () => {
-    if (!navigator.onLine) { mostrarToast("info", "Requiere conexión", "Esta operación de refuerzo necesita internet."); return; }
     if (!aplicarPara || !procesoActivo) return;
     if (!notaAplicarValida) {
       mostrarToast("warning", "Nota no válida", "Ingresa una nota entre 0 y 10. El resultado aplicado tendrá un máximo de 7.");
@@ -1250,7 +1246,6 @@ export default function RefuerzoPedagogico() {
   };
 
   const guardarAvance = async () => {
-    if (!navigator.onLine) { mostrarToast("info", "Requiere conexión", "Esta operación de refuerzo necesita internet."); return; }
     if (!avanceEdit || !procesoActivo) return;
     if (!avanceForm.indicadores.trim() || !avanceForm.logros.trim() || !avanceForm.recomendaciones.trim()) {
       mostrarToast("warning", "Avance incompleto", "Completa indicadores de logro, logros de aprendizaje y recomendaciones.");

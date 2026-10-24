@@ -18,7 +18,10 @@ const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig);
 
-// Caché persistente de Firestore compartida entre pestañas.
+// ✅ NUEVO: Firestore con caché local persistente
+// - Los datos maestros se guardan en el navegador (IndexedDB)
+// - Las visitas repetidas solo leen del SERVIDOR los documentos que CAMBIARON
+// - El resto se sirve del caché = GRATIS (no se factura)
 export const db = initializeFirestore(app, {
   localCache: persistentLocalCache({
     tabManager: persistentMultipleTabManager(),

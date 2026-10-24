@@ -4,7 +4,6 @@ import {
   doc,
   documentId,
   getDocs,
-  getDocsFromServer,
   query,
   serverTimestamp,
   where,
@@ -129,12 +128,11 @@ const CHUNK = 30;
 const leerPorIds = async <T>(
   coleccion: string,
   ids: string[],
-  serverOnly = false,
 ): Promise<T[]> => {
   const out: T[] = [];
   for (let i = 0; i < ids.length; i += CHUNK) {
     const lote = ids.slice(i, i + CHUNK);
-    const snap = await (serverOnly ? getDocsFromServer : getDocs)(
+    const snap = await getDocs(
       query(collection(db, coleccion), where(documentId(), "in", lote)),
     );
     snap.docs.forEach((d) => out.push({ id: d.id, ...d.data() } as T));
@@ -157,16 +155,13 @@ export interface ResultadoRecalculo {
 
 export async function recalcularInsumos(
   actividadesAfectadas: string[],
-  serverOnly = false,
 ): Promise<ResultadoRecalculo> {
-  const read = serverOnly ? getDocsFromServer : getDocs;
   const ids = [...new Set(actividadesAfectadas.filter(Boolean))];
   if (ids.length === 0) return { ok: true, actualizados: 0 };
   try {
     const afectadas = await leerPorIds<ActividadConsolidable>(
       "actividades",
       ids,
-      serverOnly,
     );
     // Insumos candidatos: consolidados de las mismas destrezas/ámbitos.
     const claves = [
@@ -181,14 +176,14 @@ export async function recalcularInsumos(
       const lote = claves.slice(i, i + CHUNK);
       // Consultas de un solo campo (índices automáticos); el filtro
       // esConsolidado se aplica en el cliente.
-      const snap = await read(
+      const snap = await getDocs(
         query(collection(db, "actividades"), where("destrezaId", "in", lote)),
       );
       snap.docs.forEach((d) => {
         const a = { id: d.id, ...d.data() } as ActividadConsolidable;
         if (a.esConsolidado) candidatos.set(d.id, a);
       });
-      const snap2 = await read(
+      const snap2 = await getDocs(
         query(collection(db, "actividades"), where("ambitoId", "in", lote)),
       );
       snap2.docs.forEach((d) => {
@@ -211,9 +206,9 @@ export async function recalcularInsumos(
 
       const [fuentes, estudiantesInsumo, calsAgrupadas, calsInsumoSnap] =
         await Promise.all([
-          leerPorIds<ActividadConsolidable>("actividades", agrupadasIds, serverOnly),
+          leerPorIds<ActividadConsolidable>("actividades", agrupadasIds),
           insumo.gradoId
-            ? read(
+            ? getDocs(
                 query(
                   collection(db, "estudiantes"),
                   where("gradoId", "==", insumo.gradoId),
@@ -224,7 +219,7 @@ export async function recalcularInsumos(
             const arr: CalificacionConRefuerzo[] = [];
             for (let i = 0; i < agrupadasIds.length; i += CHUNK) {
               const lote = agrupadasIds.slice(i, i + CHUNK);
-              const snap = await read(
+              const snap = await getDocs(
                 query(
                   collection(db, "calificaciones"),
                   where("actividadId", "in", lote),
@@ -236,7 +231,7 @@ export async function recalcularInsumos(
             }
             return arr;
           })(),
-          read(
+          getDocs(
             query(
               collection(db, "calificaciones"),
               where("actividadId", "==", insumo.id),
