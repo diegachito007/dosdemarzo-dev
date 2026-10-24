@@ -844,8 +844,8 @@ export default function PPE() {
   if (!ready || loading) {
     return (
       <Layout>
-        <div className="mx-auto max-w-6xl p-6">
-          <div className="rounded-xl border bg-white p-8 text-center text-slate-500">
+        <div className="mx-auto max-w-6xl p-4">
+          <div className="rounded-lg border bg-[#FFFFFF] p-8 text-center text-[#6B7280]">
             Cargando módulo PPE…
           </div>
         </div>
@@ -855,30 +855,30 @@ export default function PPE() {
 
   return (
     <Layout>
-      <div className="mx-auto max-w-7xl space-y-6 p-4 sm:p-6">
-        <header className="flex flex-col gap-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+      <div className="space-y-3">
+        <header className="flex flex-col gap-3 rounded-lg border border-[#D8DEE6] bg-[#FFFFFF] p-3 shadow-[0_3px_12px_-8px_rgba(15,23,42,0.18)] sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <p className="text-xs font-bold uppercase tracking-[0.18em] text-emerald-700">
+            <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#244563]">
               Gestión docente
             </p>
-            <h1 className="mt-1 text-2xl font-bold text-slate-900">
+            <h1 className="text-base font-semibold tracking-tight text-[#244563]">
               Programa de Participación Estudiantil (PPE)
             </h1>
-            <p className="mt-1 text-sm text-slate-500">
+            <p className="mt-1 text-[11px] text-[#6B7280]">
               Selecciona participantes, registra asistencia y evalúa actividades
               de forma sencilla.
             </p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-1.5">
             <button
               onClick={() => setVista("principal")}
-              className={`rounded-lg px-4 py-2 text-sm font-semibold ${vista === "principal" ? "bg-emerald-700 text-white" : "border bg-white text-slate-700"}`}
+              className={`min-h-8 rounded-md px-2.5  text-[11px] font-semibold ${vista === "principal" ? "bg-[#244563] text-white" : "border bg-[#FFFFFF] text-[#4B5563]"} focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#244563]/40`}
             >
               Gestión PPE
             </button>
             <button
               onClick={() => setVista("reporte")}
-              className={`rounded-lg px-4 py-2 text-sm font-semibold ${vista === "reporte" ? "bg-emerald-700 text-white" : "border bg-white text-slate-700"}`}
+              className={`min-h-8 rounded-md px-2.5  text-[11px] font-semibold ${vista === "reporte" ? "bg-[#244563] text-white" : "border bg-[#FFFFFF] text-[#4B5563]"} focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#244563]/40`}
             >
               Reporte asistencias y notas
             </button>
@@ -887,7 +887,7 @@ export default function PPE() {
 
         {mensaje && (
           <div
-            className={`flex items-start justify-between rounded-lg border px-4 py-3 text-sm ${mensaje.tipo === "ok" ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-rose-200 bg-rose-50 text-rose-800"}`}
+            className={`flex items-start justify-between rounded-lg border px-2.5 py-3 text-[11px] ${mensaje.tipo === "ok" ? "border-[#C8D6E5] bg-[#EAF0F6] text-[#1B354D]" : "border-rose-200 bg-rose-50 text-rose-800"}`}
             role="status"
           >
             <span>{mensaje.texto}</span>
@@ -899,25 +899,25 @@ export default function PPE() {
 
         {vista === "principal" ? (
           <>
-            <div className="grid gap-4 md:grid-cols-2">
+            <div className="grid gap-3 md:grid-cols-2">
               <button
                 onClick={() => {
                   setSeleccionTemporal(estudianteIds);
                   setShowSelector(true);
                 }}
-                className="group rounded-2xl border border-slate-200 bg-white p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
+                className="group rounded-md border border-[#D8DEE6] bg-[#FFFFFF] p-3 text-left shadow-[0_3px_12px_-8px_rgba(15,23,42,0.18)] transition  hover:shadow-[0_6px_18px_-12px_rgba(15,23,42,0.24)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#244563]/40"
               >
-                <span className="mb-4 flex h-11 w-11 items-center justify-center rounded-xl bg-emerald-100 text-emerald-700">
+                <span className="mb-2 flex h-8 w-8 items-center justify-center rounded-lg bg-[#E2EAF3] text-[#244563]">
                   <FaUsers />
                 </span>
-                <h2 className="text-lg font-bold text-slate-900">
+                <h2 className="text-sm font-semibold text-[#273444]">
                   Seleccionar estudiantes
                 </h2>
-                <p className="mt-1 text-sm text-slate-500">
+                <p className="mt-1 text-[11px] text-[#6B7280]">
                   Elige un curso completo o estudiantes de distintos cursos
                   dentro de tus grados asignados.
                 </p>
-                <p className="mt-3 text-sm font-semibold text-emerald-700">
+                <p className="mt-3 text-[11px] font-semibold text-[#244563]">
                   {estudiantesPPE.length} estudiante(s) seleccionados · Editar
                   selección →
                 </p>
@@ -927,60 +927,60 @@ export default function PPE() {
                   setVista("principal");
                   setSeccion("asistencia");
                 }}
-                className="group rounded-2xl border border-slate-200 bg-white p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
+                className="group rounded-md border border-[#D8DEE6] bg-[#FFFFFF] p-3 text-left shadow-[0_3px_12px_-8px_rgba(15,23,42,0.18)] transition hover:-translate-y-0.5 hover:shadow-[0_6px_18px_-12px_rgba(15,23,42,0.24)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#244563]/40"
               >
-                <span className="mb-4 flex h-11 w-11 items-center justify-center rounded-xl bg-sky-100 text-sky-700">
+                <span className="mb-3 flex h-11 w-11 items-center justify-center rounded-lg bg-sky-100 text-sky-700">
                   <FaClipboardCheck />
                 </span>
-                <h2 className="text-lg font-bold text-slate-900">
+                <h2 className="text-sm font-semibold text-[#273444]">
                   Asistencia y actividades
                 </h2>
-                <p className="mt-1 text-sm text-slate-500">
+                <p className="mt-1 text-[11px] text-[#6B7280]">
                   Registra la asistencia de la sesión y asigna actividades con
                   calificación sobre 10.
                 </p>
-                <p className="mt-3 text-sm font-semibold text-sky-700">
+                <p className="mt-3 text-[11px] font-semibold text-sky-700">
                   Abrir registro →
                 </p>
               </button>
               <button
                 onClick={() => setVista("reporte")}
-                className="group rounded-2xl border border-slate-200 bg-white p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md md:col-span-2"
+                className="group rounded-md border border-[#D8DEE6] bg-[#FFFFFF] p-3 text-left shadow-[0_3px_12px_-8px_rgba(15,23,42,0.18)] transition hover:-translate-y-0.5 hover:shadow-[0_6px_18px_-12px_rgba(15,23,42,0.24)] md:col-span-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#244563]/40"
               >
-                <span className="mb-4 flex h-11 w-11 items-center justify-center rounded-xl bg-violet-100 text-violet-700">
+                <span className="mb-3 flex h-11 w-11 items-center justify-center rounded-lg bg-violet-100 text-violet-700">
                   <FaChartBar />
                 </span>
-                <h2 className="text-lg font-bold text-slate-900">
+                <h2 className="text-sm font-semibold text-[#273444]">
                   Reporte de asistencias y notas
                 </h2>
-                <p className="mt-1 text-sm text-slate-500">
+                <p className="mt-1 text-[11px] text-[#6B7280]">
                   Consulta asistencias, ausencias, notas registradas y promedio
                   de cada participante.
                 </p>
-                <p className="mt-3 text-sm font-semibold text-violet-700">
+                <p className="mt-3 text-[11px] font-semibold text-violet-700">
                   Ver reporte →
                 </p>
               </button>
             </div>
 
-            <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
-              <div className="flex flex-col gap-3 border-b border-slate-100 p-4 sm:flex-row sm:items-center sm:justify-between">
+            <section className="rounded-lg border border-[#D8DEE6] bg-[#FFFFFF] shadow-[0_3px_12px_-8px_rgba(15,23,42,0.18)]">
+              <div className="flex flex-col gap-3 border-b border-[#ECEFF3] p-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
-                  <h2 className="font-bold text-slate-900">Registro PPE</h2>
-                  <p className="text-sm text-slate-500">
+                  <h2 className="font-semibold text-[#273444]">Registro PPE</h2>
+                  <p className="text-[11px] text-[#6B7280]">
                     Solo aparecen los estudiantes que guardaste en tu selección.
                   </p>
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <button
                     onClick={() => setSeccion("asistencia")}
-                    className={`rounded-lg px-3 py-2 text-sm font-semibold ${seccion === "asistencia" ? "bg-slate-900 text-white" : "border text-slate-600"}`}
+                    className={`min-h-8 rounded-md px-3  text-[11px] font-semibold ${seccion === "asistencia" ? "bg-[#244563] text-white" : "border text-[#64748B]"} focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#244563]/40`}
                   >
                     Asistencia
                   </button>
                   <button
                     onClick={() => setSeccion("actividades")}
-                    className={`rounded-lg px-3 py-2 text-sm font-semibold ${seccion === "actividades" ? "bg-slate-900 text-white" : "border text-slate-600"}`}
+                    className={`min-h-8 rounded-md px-3  text-[11px] font-semibold ${seccion === "actividades" ? "bg-[#273444] text-white" : "border text-[#64748B]"} focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#244563]/40`}
                   >
                     Actividades y notas
                   </button>
@@ -988,11 +988,11 @@ export default function PPE() {
               </div>
               {estudiantesPPE.length === 0 ? (
                 <div className="p-8 text-center">
-                  <FaUsers className="mx-auto mb-3 text-3xl text-slate-300" />
-                  <p className="font-semibold text-slate-700">
+                  <FaUsers className="mx-auto mb-3 text-xl text-[#BFC9D4]" />
+                  <p className="font-semibold text-[#4B5563]">
                     Aún no has seleccionado estudiantes
                   </p>
-                  <p className="mt-1 text-sm text-slate-500">
+                  <p className="mt-1 text-[11px] text-[#6B7280]">
                     Abre “Seleccionar estudiantes” para crear tu lista PPE.
                   </p>
                   <button
@@ -1000,21 +1000,21 @@ export default function PPE() {
                       setSeleccionTemporal(estudianteIds);
                       setShowSelector(true);
                     }}
-                    className="mt-4 rounded-lg bg-emerald-700 px-4 py-2 text-sm font-semibold text-white"
+                    className="min-h-8 mt-4 rounded-md bg-[#244563] px-2.5  text-[11px] font-semibold text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#244563]/40"
                   >
                     Seleccionar estudiantes
                   </button>
                 </div>
               ) : seccion === "asistencia" ? (
                 <>
-                  <div className="flex flex-wrap items-end gap-3 p-4">
-                    <label className="text-sm font-medium text-slate-700">
+                  <div className="flex flex-wrap items-end gap-3 p-3">
+                    <label className="text-[11px] font-medium text-[#4B5563]">
                       Fecha de sesión
                       <input
                         type="date"
                         value={fecha}
                         onChange={(e) => setFecha(e.target.value)}
-                        className="mt-1 block rounded-lg border border-slate-300 px-3 py-2"
+                        className="h-8 mt-1 block rounded-md border border-[#BFC9D4] px-3  focus:border-[#244563] focus:outline-none bg-[#FFFFFF] text-[#374151]"
                       />
                     </label>
                     <button
@@ -1034,38 +1034,40 @@ export default function PPE() {
                         });
                       }}
                       disabled={saving || estudiantesPPE.length === 0}
-                      className="inline-flex items-center gap-2 rounded-lg border border-emerald-300 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-800 hover:bg-emerald-100 disabled:opacity-50"
+                      className="min-h-8 inline-flex items-center gap-2 rounded-md border border-[#A8BDD2] bg-[#EAF0F6] px-2.5  text-[11px] font-semibold text-[#1B354D] hover:bg-[#E2EAF3] disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#244563]/40"
                     >
                       <FaCheckCircle /> Todos presentes
                     </button>
                     <button
                       onClick={guardarAsistencias}
                       disabled={saving || !Object.keys(asistencias).length}
-                      className="inline-flex items-center gap-2 rounded-lg bg-emerald-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+                      className="min-h-8 inline-flex items-center gap-2 rounded-md bg-[#244563] px-2.5  text-[11px] font-semibold text-white disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#244563]/40"
                     >
                       <FaSave /> Guardar asistencia
                     </button>
                   </div>
                   <div className="overflow-x-auto">
-                    <table className="w-full min-w-180 text-sm">
-                      <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
+                    <table className="w-full min-w-160 text-[11px] border-collapse">
+                      <thead className="bg-[#ECEFF3] text-left text-[10px] uppercase tracking-wide text-[#6B7280]">
                         <tr>
-                          <th className="px-4 py-3">Estudiante</th>
-                          <th className="px-4 py-3">Grado</th>
-                          <th className="px-4 py-3">Estado de asistencia</th>
-                          <th className="px-4 py-3">Observación</th>
+                          <th className="px-2.5 py-1.5">Estudiante</th>
+                          <th className="px-2.5 py-1.5">Grado</th>
+                          <th className="px-2.5 py-1.5">
+                            Estado de asistencia
+                          </th>
+                          <th className="px-2.5 py-1.5">Observación</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
                         {estudiantesPPE.map((e) => (
-                          <tr key={e.id} className="hover:bg-slate-50">
-                            <td className="px-4 py-3 font-medium text-slate-800">
+                          <tr key={e.id} className="hover:bg-[#ECEFF3]">
+                            <td className="px-2.5 py-1.5 font-medium text-[#374151]">
                               {nombreCompleto(e)}
                             </td>
-                            <td className="px-4 py-3 text-slate-500">
+                            <td className="px-2.5 py-1.5 text-[#6B7280]">
                               {gradoNombre(e.gradoId)}
                             </td>
-                            <td className="px-4 py-3">
+                            <td className="px-2.5 py-1.5">
                               <select
                                 value={asistencias[e.id] ?? ""}
                                 onChange={(ev) =>
@@ -1074,7 +1076,7 @@ export default function PPE() {
                                     [e.id]: ev.target.value as EstadoPPE,
                                   }))
                                 }
-                                className="rounded-lg border border-slate-300 px-3 py-2"
+                                className="h-8 rounded-md border border-[#BFC9D4] px-3  focus:border-[#244563] focus:outline-none bg-[#FFFFFF] text-[#374151]"
                               >
                                 <option value="">Seleccionar…</option>
                                 <option value="presente">Presente</option>
@@ -1083,7 +1085,7 @@ export default function PPE() {
                                 <option value="atraso">Atraso</option>
                               </select>
                             </td>
-                            <td className="px-4 py-3">
+                            <td className="px-2.5 py-1.5">
                               <input
                                 value={observacionesAsistencia[e.id] ?? ""}
                                 onChange={(ev) =>
@@ -1093,7 +1095,7 @@ export default function PPE() {
                                   }))
                                 }
                                 placeholder="Opcional"
-                                className="w-full min-w-36 rounded-lg border border-slate-300 px-3 py-2"
+                                className="h-8 w-full min-w-36 rounded-md border border-[#BFC9D4] px-3  focus:border-[#244563] focus:outline-none bg-[#FFFFFF] text-[#374151]"
                               />
                             </td>
                           </tr>
@@ -1104,35 +1106,35 @@ export default function PPE() {
                 </>
               ) : (
                 <>
-                  <div className="grid gap-3 border-b border-slate-100 p-4 md:grid-cols-4">
-                    <label className="text-sm font-medium text-slate-700 md:col-span-2">
+                  <div className="grid gap-3 border-b border-[#ECEFF3] p-3 md:grid-cols-4">
+                    <label className="text-[11px] font-medium text-[#4B5563] md:col-span-2">
                       Nombre de actividad
                       <input
                         value={tituloActividad}
                         onChange={(e) => setTituloActividad(e.target.value)}
                         placeholder="Ej. Proyecto comunitario"
-                        className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2"
+                        className="h-8 mt-1 block w-full rounded-md border border-[#BFC9D4] px-3  focus:border-[#244563] focus:outline-none bg-[#FFFFFF] text-[#374151]"
                       />
                     </label>
-                    <label className="text-sm font-medium text-slate-700">
+                    <label className="text-[11px] font-medium text-[#4B5563]">
                       Fecha
                       <input
                         type="date"
                         value={fechaActividad}
                         onChange={(e) => setFechaActividad(e.target.value)}
-                        className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2"
+                        className="h-8 mt-1 block w-full rounded-md border border-[#BFC9D4] px-3  focus:border-[#244563] focus:outline-none bg-[#FFFFFF] text-[#374151]"
                       />
                     </label>
                     <div className="flex items-end">
                       <button
                         onClick={crearActividad}
                         disabled={saving || !tituloActividad.trim()}
-                        className="inline-flex items-center gap-2 rounded-lg bg-emerald-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+                        className="min-h-8 inline-flex items-center gap-2 rounded-md bg-[#244563] px-2.5  text-[11px] font-semibold text-white disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#244563]/40"
                       >
                         <FaPlus /> Crear actividad
                       </button>
                     </div>
-                    <label className="text-sm font-medium text-slate-700 md:col-span-4">
+                    <label className="text-[11px] font-medium text-[#4B5563] md:col-span-4">
                       Descripción (opcional)
                       <input
                         value={descripcionActividad}
@@ -1140,19 +1142,19 @@ export default function PPE() {
                           setDescripcionActividad(e.target.value)
                         }
                         placeholder="Detalle breve"
-                        className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2"
+                        className="h-8 mt-1 block w-full rounded-md border border-[#BFC9D4] px-3  focus:border-[#244563] focus:outline-none bg-[#FFFFFF] text-[#374151]"
                       />
                     </label>
                   </div>
-                  <div className="flex flex-wrap items-end gap-3 p-4">
-                    <label className="text-sm font-medium text-slate-700">
+                  <div className="flex flex-wrap items-end gap-3 p-3">
+                    <label className="text-[11px] font-medium text-[#4B5563]">
                       Actividad
                       <select
                         value={actividadSeleccionada}
                         onChange={(e) =>
                           setActividadSeleccionada(e.target.value)
                         }
-                        className="mt-1 block min-w-64 rounded-lg border border-slate-300 px-3 py-2"
+                        className="h-8 mt-1 block min-w-64 rounded-md border border-[#BFC9D4] px-3  focus:border-[#244563] focus:outline-none bg-[#FFFFFF] text-[#374151]"
                       >
                         <option value="">Seleccionar actividad…</option>
                         {actividades.map((a) => (
@@ -1165,33 +1167,33 @@ export default function PPE() {
                     <button
                       onClick={guardarNotas}
                       disabled={saving || !actividadSeleccionada}
-                      className="inline-flex items-center gap-2 rounded-lg bg-emerald-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+                      className="min-h-8 inline-flex items-center gap-2 rounded-md bg-[#244563] px-2.5  text-[11px] font-semibold text-white disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#244563]/40"
                     >
                       <FaSave /> Guardar notas
                     </button>
-                    <p className="text-xs text-slate-500">
+                    <p className="text-[10px] text-[#6B7280]">
                       Calificación de 0 a 10. Deja vacío si no corresponde.
                     </p>
                   </div>
                   <div className="overflow-x-auto">
-                    <table className="w-full min-w-150 text-sm">
-                      <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
+                    <table className="w-full min-w-130 text-[11px] border-collapse">
+                      <thead className="bg-[#ECEFF3] text-left text-[10px] uppercase tracking-wide text-[#6B7280]">
                         <tr>
-                          <th className="px-4 py-3">Estudiante</th>
-                          <th className="px-4 py-3">Grado</th>
-                          <th className="px-4 py-3">Nota / 10</th>
+                          <th className="px-2.5 py-1.5">Estudiante</th>
+                          <th className="px-2.5 py-1.5">Grado</th>
+                          <th className="px-2.5 py-1.5">Nota / 10</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
                         {estudiantesPPE.map((e) => (
                           <tr key={e.id}>
-                            <td className="px-4 py-3 font-medium">
+                            <td className="px-2.5 py-1.5 font-medium">
                               {nombreCompleto(e)}
                             </td>
-                            <td className="px-4 py-3 text-slate-500">
+                            <td className="px-2.5 py-1.5 text-[#6B7280]">
                               {gradoNombre(e.gradoId)}
                             </td>
-                            <td className="px-4 py-3">
+                            <td className="px-2.5 py-1.5">
                               <input
                                 type="number"
                                 min="0"
@@ -1204,7 +1206,7 @@ export default function PPE() {
                                     [e.id]: ev.target.value,
                                   }))
                                 }
-                                className="w-28 rounded-lg border border-slate-300 px-3 py-2"
+                                className="h-8 w-28 rounded-md border border-[#BFC9D4] px-3  focus:border-[#244563] focus:outline-none bg-[#FFFFFF] text-[#374151]"
                                 placeholder="0–10"
                               />
                             </td>
@@ -1218,13 +1220,13 @@ export default function PPE() {
             </section>
           </>
         ) : (
-          <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
-            <div className="flex flex-col gap-3 border-b border-slate-100 p-4 sm:flex-row sm:items-center sm:justify-between">
+          <section className="rounded-lg border border-[#D8DEE6] bg-[#FFFFFF] shadow-[0_3px_12px_-8px_rgba(15,23,42,0.18)]">
+            <div className="flex flex-col gap-3 border-b border-[#ECEFF3] p-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
-                <h2 className="font-bold text-slate-900">
+                <h2 className="font-semibold text-[#273444]">
                   Reporte de asistencias y notas
                 </h2>
-                <p className="text-sm text-slate-500">
+                <p className="text-[11px] text-[#6B7280]">
                   Cuenta asistencias, actividades calificadas y promedio dentro
                   del rango semanal, mensual o trimestral seleccionado.
                 </p>
@@ -1232,22 +1234,22 @@ export default function PPE() {
               <div className="flex flex-wrap gap-2">
                 <button
                   onClick={() => void cargarReporte()}
-                  className="rounded-lg border px-3 py-2 text-sm font-semibold text-slate-700"
+                  className="min-h-8 rounded-md border px-3  text-[11px] font-semibold text-[#4B5563] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#244563]/40"
                 >
                   Actualizar
                 </button>
                 <button
                   onClick={exportarReporteExcel}
                   disabled={!rangoReporteValido}
-                  className="inline-flex items-center gap-2 rounded-lg bg-emerald-700 px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+                  className="min-h-8 inline-flex items-center gap-2 rounded-md bg-[#244563] px-3  text-[11px] font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#244563]/40"
                 >
                   <FaFileExcel /> Exportar Excel
                 </button>
               </div>
             </div>
 
-            <div className="grid gap-3 border-b border-slate-100 bg-slate-50/70 p-4 sm:grid-cols-2 lg:grid-cols-4">
-              <label className="text-sm font-medium text-slate-700">
+            <div className="grid gap-3 border-b border-[#ECEFF3] bg-[#ECEFF3]/70 p-3 sm:grid-cols-2 lg:grid-cols-4">
+              <label className="text-[11px] font-medium text-[#4B5563]">
                 Tipo de reporte
                 <select
                   value={tipoPeriodoReporte}
@@ -1256,7 +1258,7 @@ export default function PPE() {
                       e.target.value as "semanal" | "mensual" | "trimestral",
                     )
                   }
-                  className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2"
+                  className="h-8 mt-1 block w-full rounded-md border border-[#BFC9D4] bg-[#FFFFFF] px-3  focus:border-[#244563] focus:outline-none text-[#374151]"
                 >
                   <option value="semanal">Semanal</option>
                   <option value="mensual">Mensual</option>
@@ -1264,27 +1266,27 @@ export default function PPE() {
                 </select>
               </label>
               {tipoPeriodoReporte === "semanal" && (
-                <label className="text-sm font-medium text-slate-700">
+                <label className="text-[11px] font-medium text-[#4B5563]">
                   Semana de referencia
                   <input
                     type="date"
                     value={semanaReporte}
                     onChange={(e) => setSemanaReporte(e.target.value)}
-                    className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2"
+                    className="h-8 mt-1 block w-full rounded-md border border-[#BFC9D4] bg-[#FFFFFF] px-3  focus:border-[#244563] focus:outline-none text-[#374151]"
                   />
-                  <span className="mt-1 block text-xs font-normal text-slate-500">
+                  <span className="mt-1 block text-[10px] font-normal text-[#6B7280]">
                     Se toma de lunes a viernes.
                   </span>
                 </label>
               )}
               {tipoPeriodoReporte === "mensual" && (
                 <>
-                  <label className="text-sm font-medium text-slate-700">
+                  <label className="text-[11px] font-medium text-[#4B5563]">
                     Mes
                     <select
                       value={mesReporte}
                       onChange={(e) => setMesReporte(e.target.value)}
-                      className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2"
+                      className="h-8 mt-1 block w-full rounded-md border border-[#BFC9D4] bg-[#FFFFFF] px-3  focus:border-[#244563] focus:outline-none text-[#374151]"
                     >
                       {MESES.map((mes, i) => (
                         <option key={mes} value={String(i)}>
@@ -1293,7 +1295,7 @@ export default function PPE() {
                       ))}
                     </select>
                   </label>
-                  <label className="text-sm font-medium text-slate-700">
+                  <label className="text-[11px] font-medium text-[#4B5563]">
                     Año
                     <input
                       type="number"
@@ -1301,18 +1303,18 @@ export default function PPE() {
                       max="2100"
                       value={anioReporte}
                       onChange={(e) => setAnioReporte(e.target.value)}
-                      className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2"
+                      className="h-8 mt-1 block w-full rounded-md border border-[#BFC9D4] bg-[#FFFFFF] px-3  focus:border-[#244563] focus:outline-none text-[#374151]"
                     />
                   </label>
                 </>
               )}
               {tipoPeriodoReporte === "trimestral" && (
-                <label className="text-sm font-medium text-slate-700">
+                <label className="text-[11px] font-medium text-[#4B5563]">
                   Periodo institucional
                   <select
                     value={periodoReporteEfectivo}
                     onChange={(e) => setPeriodoReporteId(e.target.value)}
-                    className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2"
+                    className="h-8 mt-1 block w-full rounded-md border border-[#BFC9D4] bg-[#FFFFFF] px-3  focus:border-[#244563] focus:outline-none text-[#374151]"
                   >
                     <option value="">Seleccionar periodo…</option>
                     {periodos.map((p) => (
@@ -1324,7 +1326,7 @@ export default function PPE() {
                 </label>
               )}
               <div className="flex items-end">
-                <p className="w-full rounded-lg border border-violet-100 bg-violet-50 px-3 py-2 text-xs text-violet-800">
+                <p className="w-full rounded-lg border border-violet-100 bg-violet-50 px-3 py-2 text-[10px] text-violet-800">
                   {rangoReporteValido
                     ? `${tipoPeriodoReporte === "trimestral" ? (periodos.find((p) => p.id === periodoReporteEfectivo)?.nombre ?? `Trimestre ${Math.max(1, periodos.findIndex((p) => p.id === periodoReporteEfectivo) + 1)}`) : tipoPeriodoReporte === "mensual" ? `${MESES[Number(mesReporte)]} de ${anioReporte}` : "Semana seleccionada"}: ${formatearFecha(fechaInicioReporte)} – ${formatearFecha(fechaFinReporte)}`
                     : "No hay fechas configuradas para el periodo seleccionado."}
@@ -1332,12 +1334,12 @@ export default function PPE() {
               </div>
             </div>
 
-            <div className="flex flex-wrap gap-2 p-4">
+            <div className="flex flex-wrap gap-2 p-3">
               {(["todo", "asistencia", "notas"] as const).map((f) => (
                 <button
                   key={f}
                   onClick={() => setFiltroReporte(f)}
-                  className={`rounded-full px-3 py-1.5 text-sm font-semibold ${filtroReporte === f ? "bg-violet-700 text-white" : "border text-slate-600"}`}
+                  className={`min-h-8 rounded-full px-3  text-[11px] font-semibold ${filtroReporte === f ? "bg-violet-700 text-white" : "border text-[#64748B]"} focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#244563]/40`}
                 >
                   {f === "todo"
                     ? "Todo"
@@ -1349,38 +1351,40 @@ export default function PPE() {
             </div>
 
             {!rangoReporteValido ? (
-              <div className="m-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+              <div className="m-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-[11px] text-amber-800">
                 Define el rango de fechas correspondiente al trimestre. Los
                 registros PPE existentes se filtran por fecha, ya que no
                 almacenan un identificador de trimestre.
               </div>
             ) : (
               <>
-                <div className="grid grid-cols-2 gap-3 px-4 pb-4 lg:grid-cols-4">
-                  <div className="rounded-xl border border-emerald-100 bg-emerald-50 p-3">
-                    <p className="text-xs font-medium text-emerald-700">
+                <div className="grid grid-cols-2 gap-3 px-2.5 pb-4 lg:grid-cols-4">
+                  <div className="rounded-lg border border-[#E2EAF3] bg-[#EAF0F6] p-3">
+                    <p className="text-[10px] font-medium text-[#244563]">
                       Presentes
                     </p>
-                    <p className="mt-1 text-2xl font-bold text-emerald-800">
+                    <p className="mt-1 text-2xl font-bold text-[#1B354D]">
                       {resumenReporte.reduce((s, r) => s + r.presentes, 0)}
                     </p>
                   </div>
-                  <div className="rounded-xl border border-sky-100 bg-sky-50 p-3">
-                    <p className="text-xs font-medium text-sky-700">Atrasos</p>
+                  <div className="rounded-lg border border-sky-100 bg-sky-50 p-3">
+                    <p className="text-[10px] font-medium text-sky-700">
+                      Atrasos
+                    </p>
                     <p className="mt-1 text-2xl font-bold text-sky-800">
                       {resumenReporte.reduce((s, r) => s + r.atrasos, 0)}
                     </p>
                   </div>
-                  <div className="rounded-xl border border-rose-100 bg-rose-50 p-3">
-                    <p className="text-xs font-medium text-rose-700">
+                  <div className="rounded-lg border border-rose-100 bg-rose-50 p-3">
+                    <p className="text-[10px] font-medium text-rose-700">
                       Ausencias
                     </p>
                     <p className="mt-1 text-2xl font-bold text-rose-800">
                       {resumenReporte.reduce((s, r) => s + r.ausencias, 0)}
                     </p>
                   </div>
-                  <div className="rounded-xl border border-violet-100 bg-violet-50 p-3">
-                    <p className="text-xs font-medium text-violet-700">
+                  <div className="rounded-lg border border-violet-100 bg-violet-50 p-3">
+                    <p className="text-[10px] font-medium text-violet-700">
                       Actividades calificadas
                     </p>
                     <p className="mt-1 text-2xl font-bold text-violet-800">
@@ -1389,26 +1393,26 @@ export default function PPE() {
                   </div>
                 </div>
                 <div className="overflow-x-auto">
-                  <table className="w-full min-w-262.5 text-sm">
-                    <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
+                  <table className="w-full min-w-262.5 text-[11px] border-collapse">
+                    <thead className="bg-[#ECEFF3] text-left text-[10px] uppercase tracking-wide text-[#6B7280]">
                       <tr>
-                        <th className="px-4 py-3">Estudiante</th>
-                        <th className="px-4 py-3">Grado</th>
+                        <th className="px-2.5 py-1.5">Estudiante</th>
+                        <th className="px-2.5 py-1.5">Grado</th>
                         {filtroReporte !== "notas" && (
                           <>
-                            <th className="px-4 py-3">Presentes</th>
-                            <th className="px-4 py-3">Atrasos</th>
-                            <th className="px-4 py-3">Ausencias</th>
-                            <th className="px-4 py-3">Justificadas</th>
-                            <th className="px-4 py-3">Total registros</th>
+                            <th className="px-2.5 py-1.5">Presentes</th>
+                            <th className="px-2.5 py-1.5">Atrasos</th>
+                            <th className="px-2.5 py-1.5">Ausencias</th>
+                            <th className="px-2.5 py-1.5">Justificadas</th>
+                            <th className="px-2.5 py-1.5">Total registros</th>
                           </>
                         )}
                         {filtroReporte !== "asistencia" && (
                           <>
-                            <th className="px-4 py-3">
+                            <th className="px-2.5 py-1.5">
                               Actividades calificadas
                             </th>
-                            <th className="px-4 py-3">Promedio / 10</th>
+                            <th className="px-2.5 py-1.5">Promedio / 10</th>
                           </>
                         )}
                       </tr>
@@ -1416,37 +1420,41 @@ export default function PPE() {
                     <tbody className="divide-y divide-slate-100">
                       {resumenReporte.map((r) => (
                         <tr key={r.estudiante.id}>
-                          <td className="px-4 py-3">
-                            <div className="font-semibold text-slate-800">
+                          <td className="px-2.5 py-1.5">
+                            <div className="font-semibold text-[#374151]">
                               {nombreCompleto(r.estudiante)}
                             </div>
                             <button
                               type="button"
                               onClick={() => setEstudianteDetalle(r.estudiante)}
-                              className="mt-1 inline-flex items-center gap-1.5 text-xs font-semibold text-violet-700 hover:text-violet-900"
+                              className="min-h-8 mt-1 inline-flex items-center gap-1.5 text-[10px] font-semibold text-violet-700 hover:text-violet-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#244563]/40"
                               aria-label={`Ver historial de ${nombreCompleto(r.estudiante)}`}
                             >
                               <FaEye /> Ver detalle
                             </button>
                           </td>
-                          <td className="px-4 py-3 text-slate-500">
+                          <td className="px-2.5 py-1.5 text-[#6B7280]">
                             {gradoNombre(r.estudiante.gradoId)}
                           </td>
                           {filtroReporte !== "notas" && (
                             <>
-                              <td className="px-4 py-3">{r.presentes}</td>
-                              <td className="px-4 py-3">{r.atrasos}</td>
-                              <td className="px-4 py-3">{r.ausencias}</td>
-                              <td className="px-4 py-3">{r.justificadas}</td>
-                              <td className="px-4 py-3 font-semibold">
+                              <td className="px-2.5 py-1.5">{r.presentes}</td>
+                              <td className="px-2.5 py-1.5">{r.atrasos}</td>
+                              <td className="px-2.5 py-1.5">{r.ausencias}</td>
+                              <td className="px-2.5 py-1.5">
+                                {r.justificadas}
+                              </td>
+                              <td className="px-2.5 py-1.5 font-semibold">
                                 {r.totalSesiones}
                               </td>
                             </>
                           )}
                           {filtroReporte !== "asistencia" && (
                             <>
-                              <td className="px-4 py-3">{r.notas.length}</td>
-                              <td className="px-4 py-3 font-semibold">
+                              <td className="px-2.5 py-1.5">
+                                {r.notas.length}
+                              </td>
+                              <td className="px-2.5 py-1.5 font-semibold">
                                 {r.promedio === null
                                   ? "—"
                                   : r.promedio.toFixed(2)}
@@ -1509,7 +1517,7 @@ export default function PPE() {
             atraso: "Atraso",
           };
           const colorEstado: Record<EstadoPPE, string> = {
-            presente: "bg-emerald-50 text-emerald-700",
+            presente: "bg-[#EAF0F6] text-[#1B354D]",
             ausente: "bg-rose-50 text-rose-700",
             justificado: "bg-amber-50 text-amber-700",
             atraso: "bg-sky-50 text-sky-700",
@@ -1517,7 +1525,7 @@ export default function PPE() {
 
           return (
             <div
-              className="fixed inset-0 z-60 flex items-center justify-center bg-slate-950/60 p-2 sm:p-4"
+              className="fixed inset-0 z-100 flex items-center justify-center bg-[#111827]/40 backdrop-blur-[2px] p-2 sm:p-3"
               role="dialog"
               aria-modal="true"
               aria-labelledby="ppe-detalle-title"
@@ -1526,10 +1534,10 @@ export default function PPE() {
                   setEstudianteDetalle(null);
               }}
             >
-              <div className="flex max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
-                <header className="flex items-start justify-between border-b border-slate-200 px-5 py-4">
+              <div className="flex max-h-[88vh] w-full max-w-5xl flex-col overflow-hidden rounded-lg bg-[#FFFFFF] shadow-[0_20px_50px_-28px_rgba(15,23,42,0.40)] border border-[#D8DEE6]">
+                <header className="flex items-start justify-between border-b border-[#D8DEE6] px-3 py-4">
                   <div>
-                    <p className="text-xs font-bold uppercase tracking-wider text-violet-700">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-violet-700">
                       Historial individual PPE ·{" "}
                       {tipoPeriodoReporte === "trimestral"
                         ? (periodos.find((p) => p.id === periodoReporteEfectivo)
@@ -1541,52 +1549,52 @@ export default function PPE() {
                     </p>
                     <h2
                       id="ppe-detalle-title"
-                      className="mt-1 text-xl font-bold text-slate-900"
+                      className="mt-1 text-sm font-semibold text-[#273444]"
                     >
                       {nombreCompleto(estudianteDetalle)}
                     </h2>
-                    <p className="mt-1 text-sm text-slate-500">
+                    <p className="mt-1 text-[11px] text-[#6B7280]">
                       {gradoNombre(estudianteDetalle.gradoId)}
                     </p>
                   </div>
                   <button
                     type="button"
                     onClick={() => setEstudianteDetalle(null)}
-                    className="rounded-lg p-2 text-slate-500 hover:bg-slate-100"
+                    className="min-h-8 rounded-md p-2 text-[#6B7280] hover:bg-[#ECEFF3] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#244563]/40"
                     aria-label="Cerrar detalle del estudiante"
                   >
                     <FaTimes />
                   </button>
                 </header>
 
-                <div className="overflow-y-auto p-4 sm:p-5">
+                <div className="overflow-y-auto p-3 sm:p-3">
                   <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-                    <div className="rounded-xl border border-emerald-100 bg-emerald-50 p-3">
-                      <p className="text-xs font-medium text-emerald-700">
+                    <div className="rounded-lg border border-[#E2EAF3] bg-[#EAF0F6] p-3">
+                      <p className="text-[10px] font-medium text-[#244563]">
                         Presentes
                       </p>
-                      <p className="mt-1 text-2xl font-bold text-emerald-800">
+                      <p className="mt-1 text-2xl font-bold text-[#1B354D]">
                         {presentes}
                       </p>
                     </div>
-                    <div className="rounded-xl border border-sky-100 bg-sky-50 p-3">
-                      <p className="text-xs font-medium text-sky-700">
+                    <div className="rounded-lg border border-sky-100 bg-sky-50 p-3">
+                      <p className="text-[10px] font-medium text-sky-700">
                         Atrasos
                       </p>
                       <p className="mt-1 text-2xl font-bold text-sky-800">
                         {atrasos}
                       </p>
                     </div>
-                    <div className="rounded-xl border border-rose-100 bg-rose-50 p-3">
-                      <p className="text-xs font-medium text-rose-700">
+                    <div className="rounded-lg border border-rose-100 bg-rose-50 p-3">
+                      <p className="text-[10px] font-medium text-rose-700">
                         Ausencias
                       </p>
                       <p className="mt-1 text-2xl font-bold text-rose-800">
                         {ausencias}
                       </p>
                     </div>
-                    <div className="rounded-xl border border-violet-100 bg-violet-50 p-3">
-                      <p className="text-xs font-medium text-violet-700">
+                    <div className="rounded-lg border border-violet-100 bg-violet-50 p-3">
+                      <p className="text-[10px] font-medium text-violet-700">
                         Promedio de notas
                       </p>
                       <p className="mt-1 text-2xl font-bold text-violet-800">
@@ -1595,28 +1603,28 @@ export default function PPE() {
                     </div>
                   </div>
 
-                  <div className="mt-5 grid gap-5 lg:grid-cols-2">
-                    <section className="overflow-hidden rounded-xl border border-slate-200">
-                      <div className="border-b border-slate-100 bg-slate-50 px-4 py-3">
-                        <h3 className="font-bold text-slate-800">
+                  <div className="mt-3 grid gap-3 lg:grid-cols-2">
+                    <section className="overflow-hidden rounded-lg border border-[#D8DEE6]">
+                      <div className="border-b border-[#ECEFF3] bg-[#ECEFF3] px-2.5 py-3">
+                        <h3 className="font-semibold text-[#374151]">
                           Asistencia por fecha
                         </h3>
-                        <p className="text-xs text-slate-500">
+                        <p className="text-[10px] text-[#6B7280]">
                           {asistenciasEstudiante.length} registro(s) ·{" "}
                           {justificadas} justificada(s)
                         </p>
                       </div>
                       {asistenciasEstudiante.length === 0 ? (
-                        <p className="p-5 text-sm text-slate-500">
+                        <p className="p-3 text-[11px] text-[#6B7280]">
                           No hay asistencias registradas para este estudiante.
                         </p>
                       ) : (
                         <div className="max-h-80 overflow-y-auto">
-                          <table className="w-full text-sm">
-                            <thead className="sticky top-0 bg-white text-left text-xs uppercase text-slate-500">
+                          <table className="w-full text-[11px] border-collapse">
+                            <thead className="sticky top-0 bg-[#FFFFFF] text-left text-[10px] uppercase text-[#6B7280]">
                               <tr>
-                                <th className="px-4 py-2">Fecha</th>
-                                <th className="px-4 py-2">
+                                <th className="px-2.5 py-2">Fecha</th>
+                                <th className="px-2.5 py-2">
                                   Estado y observación
                                 </th>
                               </tr>
@@ -1629,17 +1637,17 @@ export default function PPE() {
                                     `${registro.fecha}-${registro.estudianteId}`
                                   }
                                 >
-                                  <td className="whitespace-nowrap px-4 py-3 font-medium text-slate-700">
+                                  <td className="whitespace-nowrap px-2.5 py-1.5 font-medium text-[#4B5563]">
                                     {formatearFecha(registro.fecha)}
                                   </td>
-                                  <td className="px-4 py-3">
+                                  <td className="px-2.5 py-1.5">
                                     <span
-                                      className={`inline-flex rounded-full px-2 py-1 text-xs font-semibold ${colorEstado[registro.estado]}`}
+                                      className={`inline-flex rounded-full px-2 py-1 text-[10px] font-semibold ${colorEstado[registro.estado]}`}
                                     >
                                       {etiquetaEstado[registro.estado]}
                                     </span>
                                     {registro.observacion?.trim() && (
-                                      <p className="mt-1 text-xs text-slate-500">
+                                      <p className="mt-1 text-[10px] text-[#6B7280]">
                                         {registro.observacion}
                                       </p>
                                     )}
@@ -1652,26 +1660,28 @@ export default function PPE() {
                       )}
                     </section>
 
-                    <section className="overflow-hidden rounded-xl border border-slate-200">
-                      <div className="border-b border-slate-100 bg-slate-50 px-4 py-3">
-                        <h3 className="font-bold text-slate-800">
+                    <section className="overflow-hidden rounded-lg border border-[#D8DEE6]">
+                      <div className="border-b border-[#ECEFF3] bg-[#ECEFF3] px-2.5 py-3">
+                        <h3 className="font-semibold text-[#374151]">
                           Notas por actividad
                         </h3>
-                        <p className="text-xs text-slate-500">
+                        <p className="text-[10px] text-[#6B7280]">
                           {notasEstudiante.length} actividad(es) calificada(s)
                         </p>
                       </div>
                       {notasEstudiante.length === 0 ? (
-                        <p className="p-5 text-sm text-slate-500">
+                        <p className="p-3 text-[11px] text-[#6B7280]">
                           No hay notas registradas para este estudiante.
                         </p>
                       ) : (
                         <div className="max-h-80 overflow-y-auto">
-                          <table className="w-full text-sm">
-                            <thead className="sticky top-0 bg-white text-left text-xs uppercase text-slate-500">
+                          <table className="w-full text-[11px] border-collapse">
+                            <thead className="sticky top-0 bg-[#FFFFFF] text-left text-[10px] uppercase text-[#6B7280]">
                               <tr>
-                                <th className="px-4 py-2">Actividad / fecha</th>
-                                <th className="px-4 py-2 text-right">Nota</th>
+                                <th className="px-2.5 py-2">
+                                  Actividad / fecha
+                                </th>
+                                <th className="px-2.5 py-2 text-right">Nota</th>
                               </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-100">
@@ -1682,25 +1692,25 @@ export default function PPE() {
                                     `${registro.actividadId}-${registro.estudianteId}`
                                   }
                                 >
-                                  <td className="px-4 py-3">
-                                    <p className="font-semibold text-slate-800">
+                                  <td className="px-2.5 py-1.5">
+                                    <p className="font-semibold text-[#374151]">
                                       {registro.actividad?.titulo ??
                                         "Actividad no disponible"}
                                     </p>
-                                    <p className="mt-1 text-xs text-slate-500">
+                                    <p className="mt-1 text-[10px] text-[#6B7280]">
                                       {formatearFecha(
                                         registro.actividad?.fecha,
                                       )}
                                     </p>
                                     {registro.observacion?.trim() && (
-                                      <p className="mt-1 text-xs text-slate-500">
+                                      <p className="mt-1 text-[10px] text-[#6B7280]">
                                         {registro.observacion}
                                       </p>
                                     )}
                                   </td>
-                                  <td className="whitespace-nowrap px-4 py-3 text-right">
+                                  <td className="whitespace-nowrap px-2.5 py-1.5 text-right">
                                     <span
-                                      className={`inline-flex rounded-lg px-2.5 py-1 font-bold ${registro.nota >= 7 ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}
+                                      className={`inline-flex rounded-lg px-2.5 py-1 font-bold ${registro.nota >= 7 ? "bg-[#EAF0F6] text-[#244563]" : "bg-amber-50 text-amber-700"}`}
                                     >
                                       {registro.nota.toFixed(2)}/10
                                     </span>
@@ -1715,11 +1725,11 @@ export default function PPE() {
                   </div>
                 </div>
 
-                <footer className="flex justify-end border-t border-slate-200 bg-slate-50 px-5 py-3">
+                <footer className="flex justify-end border-t border-[#D8DEE6] bg-[#ECEFF3] px-3 py-3">
                   <button
                     type="button"
                     onClick={() => setEstudianteDetalle(null)}
-                    className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-700"
+                    className="min-h-8 rounded-md bg-[#273444] px-2.5  text-[11px] font-semibold text-white hover:bg-[#1B354D] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#244563]/40"
                   >
                     Cerrar detalle
                   </button>
@@ -1731,21 +1741,21 @@ export default function PPE() {
 
       {showSelector && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-2 sm:p-4"
+          className="fixed inset-0 z-100 flex items-center justify-center bg-[#111827]/40 backdrop-blur-[2px] p-2 sm:p-3"
           role="dialog"
           aria-modal="true"
           aria-labelledby="ppe-selector-title"
         >
-          <div className="flex max-h-[94vh] w-full max-w-6xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
-            <div className="flex items-start justify-between border-b border-slate-200 p-4 sm:p-5">
+          <div className="flex max-h-[88vh] w-full max-w-6xl flex-col overflow-hidden rounded-lg bg-[#FFFFFF] shadow-[0_20px_50px_-28px_rgba(15,23,42,0.40)] border border-[#D8DEE6]">
+            <div className="flex items-start justify-between border-b border-[#D8DEE6] p-3 sm:p-3">
               <div>
                 <h2
                   id="ppe-selector-title"
-                  className="text-xl font-bold text-slate-900"
+                  className="text-sm font-semibold text-[#273444]"
                 >
                   Seleccionar estudiantes para PPE
                 </h2>
-                <p className="mt-1 text-sm text-slate-500">
+                <p className="mt-1 text-[11px] text-[#6B7280]">
                   Filtra por grado, busca por nombre o código y marca
                   estudiantes individualmente.
                 </p>
@@ -1755,26 +1765,26 @@ export default function PPE() {
                   setSeleccionTemporal(estudianteIds);
                   setShowSelector(false);
                 }}
-                className="rounded-lg p-2 text-slate-500 hover:bg-slate-100"
+                className="min-h-8 rounded-md p-2 text-[#6B7280] hover:bg-[#ECEFF3] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#244563]/40"
                 aria-label="Cerrar"
               >
                 <FaTimes />
               </button>
             </div>
-            <div className="grid gap-3 border-b border-slate-100 p-4 md:grid-cols-[1fr_240px_auto_auto]">
+            <div className="grid gap-3 border-b border-[#ECEFF3] p-3 md:grid-cols-[1fr_240px_auto_auto]">
               <label className="relative block">
-                <FaSearch className="absolute left-3 top-3 text-slate-400" />
+                <FaSearch className="absolute left-3 top-3 text-[#9CA3AF]" />
                 <input
                   value={busqueda}
                   onChange={(e) => setBusqueda(e.target.value)}
                   placeholder="Buscar estudiante o código…"
-                  className="w-full rounded-lg border border-slate-300 py-2 pl-9 pr-3"
+                  className="h-8 w-full rounded-md border border-[#BFC9D4]  pl-9 pr-3 focus:border-[#244563] focus:outline-none bg-[#FFFFFF] text-[#374151]"
                 />
               </label>
               <select
                 value={filtroGrado}
                 onChange={(e) => setFiltroGrado(e.target.value)}
-                className="rounded-lg border border-slate-300 px-3 py-2"
+                className="h-8 rounded-md border border-[#BFC9D4] px-3  focus:border-[#244563] focus:outline-none bg-[#FFFFFF] text-[#374151]"
               >
                 <option value="todos">Todos mis grados</option>
                 {gradosPermitidos.map((g) => (
@@ -1792,7 +1802,7 @@ export default function PPE() {
                     ]),
                   ])
                 }
-                className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-800"
+                className="min-h-8 rounded-md border border-[#C8D6E5] bg-[#EAF0F6] px-3  text-[11px] font-semibold text-[#1B354D] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#244563]/40"
               >
                 Seleccionar visibles
               </button>
@@ -1804,35 +1814,35 @@ export default function PPE() {
                     ),
                   )
                 }
-                className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-600"
+                className="min-h-8 rounded-md border border-[#D8DEE6] px-3  text-[11px] font-semibold text-[#64748B] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#244563]/40"
               >
                 Quitar visibles
               </button>
             </div>
-            <div className="flex items-center justify-between bg-slate-50 px-4 py-2 text-sm">
-              <span className="font-semibold text-slate-700">
+            <div className="flex items-center justify-between bg-[#ECEFF3] px-2.5 py-2 text-[11px]">
+              <span className="font-semibold text-[#4B5563]">
                 {seleccionTemporal.length} seleccionados
               </span>
-              <span className="text-slate-500">
+              <span className="text-[#6B7280]">
                 {estudiantesFiltrados.length} resultados
               </span>
             </div>
-            <div className="flex-1 overflow-y-auto p-4">
+            <div className="flex-1 overflow-y-auto p-3">
               {gruposFiltrados.length === 0 ? (
-                <p className="py-10 text-center text-sm text-slate-500">
+                <p className="py-10 text-center text-[11px] text-[#6B7280]">
                   No hay estudiantes con esos filtros.
                 </p>
               ) : (
                 gruposFiltrados.map(([gradoId, lista]) => (
                   <section
                     key={gradoId}
-                    className="mb-5 overflow-hidden rounded-xl border border-slate-200"
+                    className="mb-5 overflow-hidden rounded-lg border border-[#D8DEE6]"
                   >
-                    <header className="flex items-center justify-between bg-slate-100 px-4 py-2">
-                      <h3 className="font-bold text-slate-800">
+                    <header className="flex items-center justify-between bg-[#ECEFF3] px-2.5 py-2">
+                      <h3 className="font-semibold text-[#374151]">
                         {gradoNombre(gradoId)}
                       </h3>
-                      <span className="text-xs font-semibold text-slate-500">
+                      <span className="text-[10px] font-semibold text-[#6B7280]">
                         {lista.length} estudiante(s)
                       </span>
                     </header>
@@ -1840,7 +1850,7 @@ export default function PPE() {
                       {lista.map((e) => (
                         <label
                           key={e.id}
-                          className="flex cursor-pointer items-center gap-3 rounded-lg p-3 hover:bg-emerald-50"
+                          className="flex cursor-pointer items-center gap-3 rounded-lg p-3 hover:bg-[#EAF0F6]"
                         >
                           <input
                             type="checkbox"
@@ -1852,18 +1862,18 @@ export default function PPE() {
                                   : prev.filter((id) => id !== e.id),
                               )
                             }
-                            className="h-4 w-4 accent-emerald-700"
+                            className="h-8 w-4 accent-emerald-700 focus:border-[#244563] focus:outline-none bg-[#FFFFFF] text-[#374151]"
                           />
                           <span className="min-w-0 flex-1">
-                            <span className="block truncate text-sm font-semibold text-slate-800">
+                            <span className="block truncate text-[11px] font-semibold text-[#374151]">
                               {nombreCompleto(e)}
                             </span>
-                            <span className="block text-xs text-slate-500">
+                            <span className="block text-[10px] text-[#6B7280]">
                               {e.cedula || "Sin código"}
                             </span>
                           </span>
                           {seleccionTemporal.includes(e.id) && (
-                            <FaCheckCircle className="shrink-0 text-emerald-600" />
+                            <FaCheckCircle className="shrink-0 text-[#244563]" />
                           )}
                         </label>
                       ))}
@@ -1872,8 +1882,8 @@ export default function PPE() {
                 ))
               )}
             </div>
-            <footer className="flex flex-col-reverse gap-2 border-t border-slate-200 bg-white p-4 sm:flex-row sm:items-center sm:justify-between">
-              <p className="text-sm text-slate-500">
+            <footer className="flex flex-col-reverse gap-2 border-t border-[#D8DEE6] bg-[#FFFFFF] p-3 sm:flex-row sm:items-center sm:justify-between">
+              <p className="text-[11px] text-[#6B7280]">
                 La selección es personal y solo afecta tu lista PPE.
               </p>
               <div className="flex gap-2">
@@ -1882,14 +1892,14 @@ export default function PPE() {
                     setSeleccionTemporal(estudianteIds);
                     setShowSelector(false);
                   }}
-                  className="rounded-lg border px-4 py-2 text-sm font-semibold text-slate-600"
+                  className="min-h-8 rounded-md border px-2.5  text-[11px] font-semibold text-[#64748B] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#244563]/40"
                 >
                   Cancelar
                 </button>
                 <button
                   onClick={guardarSeleccion}
                   disabled={saving}
-                  className="rounded-lg bg-emerald-700 px-5 py-2 text-sm font-semibold text-white disabled:opacity-50"
+                  className="min-h-8 rounded-md bg-[#244563] px-3  text-[11px] font-semibold text-white disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#244563]/40"
                 >
                   {saving ? "Guardando…" : "Guardar selección"}
                 </button>

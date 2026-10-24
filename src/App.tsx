@@ -29,12 +29,10 @@ import MigracionAsistencia from "./pages/MigracionAsistencia";
 import EnMantenimiento from "./pages/EnMantenimiento";
 import GestionMateriasDocentes from "./pages/GestionMateriasDocentes";
 
-// Formulario público y panel de administración
-import Matricula from "./pages/Matricula";
-import Matriculas from "./pages/Matriculas";
+
 
 function PrivateRoute({ children }: { children: ReactNode }) {
-  const { user, userData, loading } = useAuth();
+  const { user, userData, loading, authError, retryProfile, logout } = useAuth();
 
   // Configuración de mantenimiento, sincronizada en tiempo real desde Firestore.
   const [mantenimiento, setMantenimiento] = useState(false);
@@ -44,6 +42,7 @@ function PrivateRoute({ children }: { children: ReactNode }) {
   }>({});
 
   useEffect(() => {
+    if (loading || !user || !userData || userData.status !== "active") return;
     const unsubscribe = onSnapshot(
       doc(db, "configuracion", "sistema"),
       (snapshot) => {
@@ -64,7 +63,7 @@ function PrivateRoute({ children }: { children: ReactNode }) {
     );
 
     return () => unsubscribe();
-  }, []);
+  }, [loading, user, userData]);
 
   if (loading) {
     return (
@@ -81,14 +80,18 @@ function PrivateRoute({ children }: { children: ReactNode }) {
     return <Navigate to="/login" replace />;
   }
 
-  if (!userData) {
+  if (authError || !userData) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-50">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-4 border-blue-600 border-t-transparent mx-auto mb-3" />
-          <p className="text-slate-600 font-medium">
-            Verificando usuario...
+      <div className="min-h-screen flex items-center justify-center bg-slate-50 p-4">
+        <div role="alert" className="max-w-md rounded-xl border border-slate-200 bg-white p-6 text-center shadow-sm">
+          <h1 className="font-semibold text-slate-900">No se pudo verificar tu cuenta</h1>
+          <p className="mt-2 text-sm text-slate-600">
+            {authError || "No se pudo obtener tu perfil. Reintenta o contacta al administrador."}
           </p>
+          <div className="mt-4 flex justify-center gap-3">
+            <button type="button" onClick={retryProfile} className="rounded-lg bg-green-800 px-4 py-2 text-sm font-semibold text-white">Reintentar</button>
+            <button type="button" onClick={() => { void logout().catch(() => window.alert("No se pudo cerrar sesión. Intenta nuevamente.")); }} className="rounded-lg border border-slate-300 px-4 py-2 text-sm">Cerrar sesión</button>
+          </div>
         </div>
       </div>
     );
@@ -99,10 +102,14 @@ function PrivateRoute({ children }: { children: ReactNode }) {
   }
 
   if (userData.status === "rejected" || userData.status === "blocked") {
-    alert(
-      "Tu cuenta ha sido rechazada o bloqueada. Contacta al administrador.",
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50 p-4">
+        <div role="alert" className="text-center">
+          <p className="text-slate-700">Tu cuenta está bloqueada o rechazada. Contacta al administrador.</p>
+          <button type="button" onClick={() => { void logout().catch(() => window.alert("No se pudo cerrar sesión.")); }} className="mt-4 rounded-lg bg-green-800 px-4 py-2 text-white">Cerrar sesión</button>
+        </div>
+      </div>
     );
-    return <Navigate to="/login" replace />;
   }
 
   if (userData.status === "deleted") {
@@ -154,9 +161,6 @@ function AppRoutes() {
         path="/login"
         element={user ? <Navigate to="/" replace /> : <Login />}
       />
-
-      {/* Ruta pública: formulario de matrícula */}
-      <Route path="/matricula" element={<Matricula />} />
 
       {/* Rutas protegidas */}
       <Route
@@ -265,18 +269,6 @@ function AppRoutes() {
         element={
           <PrivateRoute>
             <Configuracion />
-          </PrivateRoute>
-        }
-      />
-
-      {/* Panel de gestión de matrículas: solo super_admin */}
-      <Route
-        path="/matriculas"
-        element={
-          <PrivateRoute>
-            <AdminRoute>
-              <Matriculas />
-            </AdminRoute>
           </PrivateRoute>
         }
       />

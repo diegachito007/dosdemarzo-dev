@@ -5,6 +5,7 @@ import {
   query,
   where,
   getDocs,
+  getDoc,
   addDoc,
   updateDoc,
   doc,
@@ -27,7 +28,6 @@ import { useAuth } from "../context/AuthContext";
 import { useData } from "../context/DataContext";
 import type { Estudiante } from "../types";
 import Layout from "../components/Layout";
-import ConfirmModal from "../components/ConfirmModal";
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
 import {
@@ -174,6 +174,11 @@ interface ConfiguracionInstitucional {
   nombreInstitucion: string;
   codigoAmie: string;
   nombreRector: string;
+  nombreVicerrector?: string;
+  nombreDirectorMatematica?: string;
+  nombreDirectorCienciasNaturales?: string;
+  nombreDirectorEstudiosSociales?: string;
+  nombreDirectorLenguaLiteratura?: string;
   updatedAt?: Timestamp | null;
   updatedBy?: string;
   createdAt?: Timestamp | null;
@@ -184,17 +189,17 @@ const ESTRATEGIAS: { value: EstrategiaNota; label: string; hint: string }[] = [
   {
     value: "reemplazar",
     label: "Reemplazar",
-    hint: "La nota de refuerzo SUSTITUYE cada nota baja",
+    hint: "Sustituye cada nota baja; máximo 7",
   },
   {
     value: "maxima",
     label: "Máxima",
-    hint: "Se conserva la mayor entre original y refuerzo",
+    hint: "La mayor entre original y refuerzo; máximo 7",
   },
   {
     value: "promediar",
     label: "Promediar",
-    hint: "(original + refuerzo) / 2 en cada actividad",
+    hint: "(original + refuerzo) / 2; resultado máximo 7",
   },
 ];
 
@@ -230,12 +235,19 @@ const eliminarUndefined = (valor: unknown): unknown => {
   return resultado;
 };
 
+const resultadoSinTope = (orig: number, ref: number, e: EstrategiaNota) =>
+  e === "reemplazar" ? ref : e === "maxima" ? Math.max(orig, ref) : (orig + ref) / 2;
+
 const notaFinalSegun = (orig: number, ref: number, e: EstrategiaNota) =>
-  e === "reemplazar"
-    ? ref
-    : e === "maxima"
-      ? Math.max(orig, ref)
-      : round2((orig + ref) / 2);
+  round2(Math.min(7, resultadoSinTope(orig, ref, e)));
+
+const detalleCalculo = (orig: number, ref: number, e: EstrategiaNota) => {
+  const resultado = resultadoSinTope(orig, ref, e);
+  const operacion = e === "reemplazar" ? `Reemplazar por ${ref}`
+    : e === "maxima" ? `Máxima entre ${orig} y ${ref}`
+    : `(${orig} + ${ref}) / 2`;
+  return `${operacion} = ${round2(resultado)}${resultado > 7 ? " · Se limita a 7" : ""}`;
+};
 
 const normalizarSesiones = (
   s: (SesionRefuerzo | string)[] | undefined,
@@ -353,6 +365,16 @@ export default function RefuerzoPedagogico() {
   const [tempSelectedIds, setTempSelectedIds] = useState<string[]>([]);
 
   const [aplicarPara, setAplicarPara] = useState<string | null>(null);
+  const [directorAreaCampo, setDirectorAreaCampo] = useState("");
+  useEffect(() => {
+    if (!user?.uid) return;
+    return onSnapshot(doc(db, "usuarios", user.uid), (snapshot) => {
+      setDirectorAreaCampo(snapshot.data()?.directorArea || "");
+    }, (error) => {
+      console.error("Error consultando director de área:", error);
+      setDirectorAreaCampo("");
+    });
+  }, [user?.uid]);
   const [aplicarNota, setAplicarNota] = useState("7");
   const [aplicarEstrategia, setAplicarEstrategia] =
     useState<EstrategiaNota>("reemplazar");
@@ -368,8 +390,6 @@ export default function RefuerzoPedagogico() {
   });
   const [isSavingAvance, setIsSavingAvance] = useState(false);
 
-  const [obsGenerales, setObsGenerales] = useState("");
-  const [isSavingObs, setIsSavingObs] = useState(false);
   const [refuerzoAEliminar, setRefuerzoAEliminar] =
     useState<RefuerzoProceso | null>(null);
   const [eliminandoRefuerzo, setEliminandoRefuerzo] = useState(false);
@@ -392,6 +412,11 @@ export default function RefuerzoPedagogico() {
     [],
   );
 
+  const camposDirector = ["nombreDirectorMatematica", "nombreDirectorCienciasNaturales", "nombreDirectorEstudiosSociales", "nombreDirectorLenguaLiteratura"] as const;
+  const campoDirector = camposDirector.find((campo) => campo === directorAreaCampo);
+  const nombreDirectorArea = campoDirector ? configInst?.[campoDirector] || "" : "";
+  const nombreVicerrector = configInst?.nombreVicerrector || "";
+
   const userUid = user?.uid;
 
   useEffect(() => {
@@ -406,10 +431,10 @@ export default function RefuerzoPedagogico() {
   // ✅ Cargar configuración institucional
   useEffect(() => {
     if (!ready) return;
-    getDocs(collection(db, "configuracionInstitucional"))
+    getDoc(doc(db, "configuracionInstitucional", "principal"))
       .then((snap) => {
-        if (!snap.empty) {
-          setConfigInst(snap.docs[0].data() as ConfiguracionInstitucional);
+        if (snap.exists()) {
+          setConfigInst(snap.data() as ConfiguracionInstitucional);
         }
       })
       .catch((e) => console.error("Error cargando config institucional:", e));
@@ -937,33 +962,23 @@ export default function RefuerzoPedagogico() {
     }
   };
 
-  const guardarObsGenerales = async () => {
-    if (!procesoActivo) return;
-    setIsSavingObs(true);
-    try {
-      await updateDoc(doc(db, "refuerzos", procesoActivo.id), {
-        observacionesGenerales: obsGenerales.trim(),
-        updatedAt: serverTimestamp(),
-      });
-      mostrarToast(
-        "success",
-        "Observaciones guardadas",
-        "Se actualizaron en el proceso.",
-      );
-    } catch (e: unknown) {
-      console.error(e);
-      const msg = e instanceof Error ? e.message : "No se pudo guardar.";
-      mostrarToast("error", "Error", msg);
-    } finally {
-      setIsSavingObs(false);
-    }
-  };
 
-  const notaAplicarNum = parseFloat(aplicarNota) || 0;
+
+  const notaAplicarNum = Number(aplicarNota.trim().replace(",", "."));
+  const notaAplicarValida = aplicarNota.trim() !== "" && Number.isFinite(notaAplicarNum) && notaAplicarNum >= 0 && notaAplicarNum <= 10;
 
   const aplicarRefuerzo = async () => {
     if (!aplicarPara || !procesoActivo) return;
-    if (notaAplicarNum <= 0 || notaAplicarNum > 10) return;
+    if (!notaAplicarValida) {
+      mostrarToast("warning", "Nota no válida", "Ingresa una nota entre 0 y 10. El resultado aplicado tendrá un máximo de 7.");
+      return;
+    }
+    const avance = fichasEst[aplicarPara];
+    if (!avance?.indicadores?.trim() || !avance.logros?.trim() || !avance.recomendaciones?.trim()) {
+      mostrarToast("warning", "Completa el avance individual", "Registra y guarda indicadores de logro, logros de aprendizaje y recomendaciones antes de aplicar la nota.");
+      return;
+    }
+
 
     setIsAplicando(true);
     try {
@@ -1051,11 +1066,15 @@ export default function RefuerzoPedagogico() {
         const fechaEvento = new Date().toISOString().split("T")[0];
         const detalleEvento = `Refuerzo pedagógico formal (${procesoActivo.materiaNombre})`;
         const entradaFormal = {
-          nota: round2(notaAplicarNum),
-          detalle: detalleEvento,
+          // Guardar el resultado como reemplazo evita que otros módulos vuelvan
+          // a promediarlo o calculen un valor superior al tope.
+          nota: notaFinalSegun(nb.nota, notaAplicarNum, aplicarEstrategia),
+          detalle: `${detalleEvento} · ${detalleCalculo(nb.nota, notaAplicarNum, aplicarEstrategia)} · Nota registrada: ${notaFinalSegun(nb.nota, notaAplicarNum, aplicarEstrategia)}`,
+          notaEvaluacion: round2(notaAplicarNum),
+          estrategiaSolicitada: aplicarEstrategia,
           fecha: fechaEvento,
           aplicadoPor: userUid || "",
-          estrategiaElegida: aplicarEstrategia,
+          estrategiaElegida: "reemplazar" as const,
           origen: "formal" as const,
         };
         const refuerzoConstruido = construirRefuerzoConHistorial(
@@ -1079,13 +1098,14 @@ export default function RefuerzoPedagogico() {
         // principales si todavía no está representado dentro del historial.
         if (refuerzoPrevio) {
           const origenAnterior = refuerzoPrevio.origen || "informal";
-          const yaExisteEnHistorial = historialPrevio.some((entrada) =>
-            entrada.nota === refuerzoPrevio.nota &&
-            entrada.detalle === refuerzoPrevio.detalle &&
-            entrada.fecha === refuerzoPrevio.fecha &&
-            (entrada.origen || "informal") === origenAnterior &&
-            (entrada.estrategiaElegida || "promediar") ===
-              (refuerzoPrevio.estrategiaElegida || "promediar"),
+          const yaExisteEnHistorial = historialPrevio.some(
+            (entrada) =>
+              entrada.nota === refuerzoPrevio.nota &&
+              entrada.detalle === refuerzoPrevio.detalle &&
+              entrada.fecha === refuerzoPrevio.fecha &&
+              (entrada.origen || "informal") === origenAnterior &&
+              (entrada.estrategiaElegida || "promediar") ===
+                (refuerzoPrevio.estrategiaElegida || "promediar"),
           );
 
           if (!yaExisteEnHistorial) {
@@ -1094,19 +1114,19 @@ export default function RefuerzoPedagogico() {
               detalle: refuerzoPrevio.detalle,
               fecha: refuerzoPrevio.fecha,
               aplicadoPor: refuerzoPrevio.aplicadoPor || "",
-              estrategiaElegida: refuerzoPrevio.estrategiaElegida || "promediar",
+              estrategiaElegida:
+                refuerzoPrevio.estrategiaElegida || "promediar",
               origen: origenAnterior,
             });
           }
         }
 
-        const historialCompleto = [
-          ...historialPrevio,
-          entradaFormal,
-        ].map((entrada, index) => ({
-          ...entrada,
-          numero: index + 1,
-        }));
+        const historialCompleto = [...historialPrevio, entradaFormal].map(
+          (entrada, index) => ({
+            ...entrada,
+            numero: index + 1,
+          }),
+        );
         const nuevoRefuerzo = {
           ...refuerzoConstruido,
           ...entradaFormal,
@@ -1172,14 +1192,16 @@ export default function RefuerzoPedagogico() {
           (fichaExistente?.historialAplicaciones?.length || 0) + 1,
         refuerzoId: procesoActivo.id,
         fecha: fechaAplicacion,
-        notaRefuerzo: round2(notaAplicarNum),
+        notaRefuerzo: round2(Math.min(7, notaAplicarNum)),
+        notaEvaluacion: round2(notaAplicarNum),
         estrategiaAplicada: aplicarEstrategia,
         actividadesAplicadas: notasBajas.length - omitidos,
       };
 
       if (fichaExistente) {
         await updateDoc(doc(db, "refuerzoEstudiantes", fichaExistente.id), {
-          notaRefuerzo: round2(notaAplicarNum),
+          notaRefuerzo: round2(Math.min(7, notaAplicarNum)),
+        notaEvaluacion: round2(notaAplicarNum),
           estrategiaAplicada: aplicarEstrategia,
           aplicado: true,
           aplicadoEl: serverTimestamp(),
@@ -1193,7 +1215,8 @@ export default function RefuerzoPedagogico() {
           indicadores: "",
           logros: "",
           recomendaciones: "",
-          notaRefuerzo: round2(notaAplicarNum),
+          notaRefuerzo: round2(Math.min(7, notaAplicarNum)),
+        notaEvaluacion: round2(notaAplicarNum),
           estrategiaAplicada: aplicarEstrategia,
           aplicado: true,
           aplicadoEl: serverTimestamp(),
@@ -1205,7 +1228,7 @@ export default function RefuerzoPedagogico() {
       mostrarToast(
         "success",
         "Refuerzo aplicado",
-        `Se aplicó nota ${notaAplicarNum} a ${aplicadas} actividad(es)` +
+        `Se aplicó el refuerzo a ${aplicadas} actividad(es), con un máximo de 7 por actividad.` +
           (omitidos > 0 ? ` (${omitidos} omitidas).` : "."),
       );
 
@@ -1224,6 +1247,10 @@ export default function RefuerzoPedagogico() {
 
   const guardarAvance = async () => {
     if (!avanceEdit || !procesoActivo) return;
+    if (!avanceForm.indicadores.trim() || !avanceForm.logros.trim() || !avanceForm.recomendaciones.trim()) {
+      mostrarToast("warning", "Avance incompleto", "Completa indicadores de logro, logros de aprendizaje y recomendaciones.");
+      return;
+    }
     setIsSavingAvance(true);
     try {
       const fichaExistente = fichasEst[avanceEdit];
@@ -1258,7 +1285,6 @@ export default function RefuerzoPedagogico() {
 
   const seleccionarProceso = useCallback((p: RefuerzoProceso | null) => {
     setProcesoActivo(p);
-    setObsGenerales(p?.observacionesGenerales || "");
   }, []);
 
   // ✅ Funciones de generación de PDF actualizadas
@@ -1630,7 +1656,7 @@ export default function RefuerzoPedagogico() {
       userData?.displayName ||
       "Docente";
 
-    const nombreRector = configInst?.nombreRector || "MSc. Viviana Carlosama";
+
 
     const fechaActual = new Date().toLocaleDateString("es-EC", {
       day: "2-digit",
@@ -1912,37 +1938,33 @@ export default function RefuerzoPedagogico() {
     // 9. FIRMAS
     // =====================================================
 
-    verificarEspacio(24);
-
-    const firmaY = y;
-
+    const espacioEntreFirmas = 20;
+    const anchoBloqueFirma = (anchoPagina - margenIzquierdo - margenDerecho - espacioEntreFirmas) / 2;
+    const centrosFirma = [
+      margenIzquierdo + anchoBloqueFirma / 2,
+      anchoPagina - margenDerecho - anchoBloqueFirma / 2,
+    ];
     doc.setFont("helvetica", "normal");
     doc.setFontSize(8.5);
-
-    // Líneas para las firmas manuales.
-    doc.text(
-      "f) ---------------------------------------",
-      margenIzquierdo,
-      firmaY,
+    const nombresFirma: string[][] = [nombreDocente, nombreVicerrector].map((nombre) =>
+      doc.splitTextToSize(sanitizeText(nombre), anchoBloqueFirma - 4) as string[],
     );
-
-    doc.text(
-      "f) ---------------------------------------",
-      anchoPagina / 2 + 8,
-      firmaY,
-    );
-
-    // Nombres.
-    doc.text(sanitizeText(nombreDocente), margenIzquierdo, firmaY + 5);
-
-    doc.text(sanitizeText(nombreRector), anchoPagina / 2 + 8, firmaY + 5);
-
-    // Cargos.
-    doc.setFont("helvetica", "bold");
-
-    doc.text("DOCENTE", margenIzquierdo + 18, firmaY + 10);
-
-    doc.text("VICERRECTOR", anchoPagina / 2 + 15, firmaY + 10);
+    const altoNombres = Math.max(...nombresFirma.map((lineas) => lineas.length)) * 4;
+    verificarEspacio(18 + altoNombres);
+    const firmaY = y;
+    const anchoLineaFirma = Math.min(55, anchoBloqueFirma - 8);
+    centrosFirma.forEach((centro, indice) => {
+      doc.setDrawColor(0, 0, 0);
+      doc.setLineWidth(0.2);
+      doc.line(centro - anchoLineaFirma / 2, firmaY, centro + anchoLineaFirma / 2, firmaY);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8.5);
+      nombresFirma[indice].forEach((linea, fila) => {
+        doc.text(linea, centro, firmaY + 5 + fila * 4, { align: "center" });
+      });
+      doc.setFont("helvetica", "bold");
+      doc.text(indice === 0 ? "DOCENTE" : "VICERRECTOR", centro, firmaY + altoNombres + 6, { align: "center" });
+    });
 
     // =====================================================
     // 10. DESCARGAR PDF
@@ -3497,11 +3519,11 @@ export default function RefuerzoPedagogico() {
       },
       {
         rol: "REVISADO - DIRECTOR DE ÁREA",
-        nombre: "Lic. Elena Criollo",
+        nombre: nombreDirectorArea,
       },
       {
         rol: "APROBADO - VICERRECTOR",
-        nombre: "MSc. Amílcar Narváez",
+        nombre: nombreVicerrector,
       },
     ];
 
@@ -4463,27 +4485,7 @@ export default function RefuerzoPedagogico() {
       ).lastAutoTable.finalY + 8;
 
     // =====================================================
-    // 7. OBSERVACIONES GENERALES
-    // =====================================================
-
-    const observaciones = procesoActivo.observacionesGenerales || "";
-
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(9.5);
-
-    verificarEspacio(10);
-
-    doc.text(sanitizeText("OBSERVACIONES GENERALES"), margenIzquierdo, y);
-
-    y += 5;
-
-    escribirParrafo(observaciones, {
-      tamano: 9,
-      espacioDespues: 5,
-    });
-
-    // =====================================================
-    // 8. FIRMAS
+    // 7. FIRMAS
     // =====================================================
 
     const firmas = [
@@ -4494,12 +4496,12 @@ export default function RefuerzoPedagogico() {
 
       {
         rol: "REVISADO POR",
-        nombre: "Lic. Elena Criollo",
+        nombre: nombreDirectorArea,
       },
 
       {
         rol: "APROBADO POR",
-        nombre: "MSc. Amílcar Narváez",
+        nombre: nombreVicerrector,
       },
     ];
 
@@ -4584,6 +4586,14 @@ export default function RefuerzoPedagogico() {
         );
         return;
       }
+      if (["notificacion", "planificacion", "avances"].includes(tipo) && !nombreVicerrector.trim()) {
+        mostrarToast("warning", "Vicerrector sin registrar", "Registra el nombre del vicerrector en Configuración Institucional.");
+        return;
+      }
+      if (["planificacion", "avances"].includes(tipo) && !nombreDirectorArea.trim()) {
+        mostrarToast("warning", "Director de área pendiente", "Selecciona y guarda tu director en Mi Perfil y verifica su nombre en Configuración Institucional.");
+        return;
+      }
       switch (tipo) {
         case "nomina":
           generarNominaPDF();
@@ -4621,17 +4631,17 @@ export default function RefuerzoPedagogico() {
 
   const toastConfig = {
     success: {
-      bg: "border-green-400",
-      iconBg: "bg-green-500",
-      titleColor: "text-green-900",
-      msgColor: "text-green-700",
+      bg: "border-[#6687A5]",
+      iconBg: "bg-[#244563]",
+      titleColor: "text-[#173047]",
+      msgColor: "text-[#1B354D]",
       icon: FaCheckCircle,
     },
     error: {
       bg: "border-red-400",
-      iconBg: "bg-red-500",
+      iconBg: "bg-[#C93F45]",
       titleColor: "text-red-900",
-      msgColor: "text-red-700",
+      msgColor: "text-[#AD3038]",
       icon: FaTimesCircle,
     },
     warning: {
@@ -4642,10 +4652,10 @@ export default function RefuerzoPedagogico() {
       icon: FaExclamationTriangle,
     },
     info: {
-      bg: "border-blue-400",
-      iconBg: "bg-blue-500",
-      titleColor: "text-blue-900",
-      msgColor: "text-blue-700",
+      bg: "border-[#6687A5]",
+      iconBg: "bg-[#244563]",
+      titleColor: "text-[#173047]",
+      msgColor: "text-[#1B354D]",
       icon: FaInfoCircle,
     },
   };
@@ -4653,8 +4663,8 @@ export default function RefuerzoPedagogico() {
   if (!ready) {
     return (
       <Layout>
-        <div className="flex items-center justify-center py-20">
-          <FaSpinner className="animate-spin text-3xl text-amber-500" />
+        <div className="flex items-center justify-center py-10">
+          <FaSpinner className="animate-spin text-xl text-amber-500" />
         </div>
       </Layout>
     );
@@ -4662,17 +4672,17 @@ export default function RefuerzoPedagogico() {
 
   return (
     <Layout>
-      <div className="mb-4 flex items-center justify-between gap-2 flex-wrap">
+      <div className="mb-3 flex items-center justify-between gap-2 flex-wrap">
         <div className="flex items-center gap-3">
           {procesoActivo && (
             <button
               onClick={() => seleccionarProceso(null)}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold transition-all"
+              className="min-h-8 inline-flex items-center gap-1.5 px-3  bg-[#ECEFF3] hover:bg-[#D8DEE6] text-[#4B5563] rounded-md text-[10px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#244563]/40"
             >
               <FaArrowLeft className="text-[10px]" /> Volver
             </button>
           )}
-          <h1 className="text-xl font-bold text-slate-800">
+          <h1 className="text-base font-semibold tracking-tight text-[#244563]">
             {procesoActivo
               ? "Refuerzo Pedagógico"
               : "Mis Refuerzos Pedagógicos"}
@@ -4683,26 +4693,26 @@ export default function RefuerzoPedagogico() {
       {!procesoActivo && (
         <>
           {loadingProcesos ? (
-            <div className="text-center py-16">
-              <FaSpinner className="animate-spin text-4xl text-amber-500 mx-auto mb-3" />
-              <p className="text-slate-600 text-sm font-medium">
+            <div className="text-center py-8">
+              <FaSpinner className="animate-spin text-2xl text-amber-500 mx-auto mb-3" />
+              <p className="text-[#64748B] text-[11px] font-medium">
                 Cargando refuerzos...
               </p>
             </div>
           ) : procesos.length === 0 ? (
-            <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-12 text-center">
-              <div className="bg-slate-100 rounded-full p-5 mb-4 inline-block">
-                <FaClipboardList className="text-4xl text-slate-400" />
+            <div className="bg-[#FFFFFF] rounded-lg shadow-[0_3px_12px_-8px_rgba(15,23,42,0.18)] border border-[#D8DEE6] px-4 py-8 text-center">
+              <div className="bg-[#ECEFF3] rounded-full p-3 mb-3 inline-block">
+                <FaClipboardList className="text-2xl text-[#9CA3AF]" />
               </div>
-              <h3 className="text-lg font-bold text-slate-800 mb-2">
+              <h3 className="text-sm font-semibold text-[#374151] mb-2">
                 Sin refuerzos creados
               </h3>
-              <p className="text-slate-600 text-sm">
+              <p className="text-[#64748B] text-[11px]">
                 Crea tu primer refuerzo pedagógico desde Reporte Notas.
               </p>
             </div>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
               {procesos.map((p) => {
                 const numEst = Object.keys(p.bajos).length;
                 const numSes = normalizarSesiones(p.sesiones).length;
@@ -4710,19 +4720,19 @@ export default function RefuerzoPedagogico() {
                   <div key={p.id} className="relative">
                     <button
                       onClick={() => seleccionarProceso(p)}
-                      className="w-full bg-white rounded-xl shadow-sm border border-slate-200 p-5 text-left hover:shadow-md hover:border-indigo-300 transition-all"
+                      className="w-full bg-[#FFFFFF] rounded-md shadow-[0_3px_12px_-8px_rgba(15,23,42,0.18)] border border-[#D8DEE6] p-3 text-left hover:shadow-[0_6px_18px_-12px_rgba(15,23,42,0.24)] hover:border-[#C8D6E5] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#244563]/40"
                     >
                       <div className="flex items-start justify-between gap-2 mb-3">
                         <div>
-                          <h3 className="font-bold text-slate-900 text-sm">
+                          <h3 className="font-semibold text-[#273444] text-[11px]">
                             {p.materiaNombre}
                           </h3>
-                          <p className="text-xs text-slate-500">
+                          <p className="text-[10px] text-[#6B7280]">
                             {p.gradoNombre}
                           </p>
                         </div>
                       </div>
-                      <div className="flex gap-3 text-xs text-slate-600 mb-2">
+                      <div className="flex gap-3 text-[10px] text-[#64748B] mb-2">
                         <span className="flex items-center gap-1">
                           <FaUsers className="text-[10px]" /> {numEst} est.
                         </span>
@@ -4731,17 +4741,17 @@ export default function RefuerzoPedagogico() {
                           ses.
                         </span>
                       </div>
-                      <p className="text-[11px] text-slate-400">
+                      <p className="text-[11px] text-[#9CA3AF]">
                         Creado: {p.fechaCreacion.split("T")[0]}
                       </p>
                     </button>
                     <button
                       onClick={() => setRefuerzoAEliminar(p)}
                       disabled={eliminandoRefuerzo}
-                      className="absolute -top-2 -right-2 p-2 rounded-full bg-red-500 hover:bg-red-600 text-white shadow-md border-2 border-white transition-colors disabled:opacity-50"
+                      className="absolute -top-2 -right-2 p-2 rounded-full bg-[#C93F45] hover:bg-[#C93F45] text-white shadow-md border-2 border-white transition-colors disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#244563]/40"
                       title="Eliminar refuerzo"
                     >
-                      <FaTrash className="text-xs" />
+                      <FaTrash className="text-[10px]" />
                     </button>
                   </div>
                 );
@@ -4753,25 +4763,25 @@ export default function RefuerzoPedagogico() {
 
       {procesoActivo && (
         <>
-          <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4 mb-4">
+          <div className="bg-[#FFFFFF] rounded-lg shadow-[0_3px_12px_-8px_rgba(15,23,42,0.18)] border border-[#D8DEE6] p-3 mb-3">
             <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
               <div>
-                <h2 className="font-bold text-slate-900 text-lg">
+                <h2 className="font-semibold text-[#273444] text-sm">
                   {procesoActivo.materiaNombre}
                 </h2>
-                <p className="text-sm text-slate-500">
+                <p className="text-[11px] text-[#6B7280]">
                   {procesoActivo.gradoNombre} ·{" "}
                   {Object.keys(procesoActivo.bajos).length} estudiantes con
                   notas bajas
                 </p>
               </div>
             </div>
-            <div className="flex gap-1 border-b border-slate-200">
+            <div className="inline-flex flex-wrap gap-0.5 rounded-md border border-[#D8DEE6] bg-[#ECEFF3] p-0.5">
               {(["estudiantes", "sesiones", "documentos"] as const).map((t) => (
                 <button
                   key={t}
                   onClick={() => setTab(t)}
-                  className={`px-4 py-2 text-sm font-semibold border-b-2 transition-all ${tab === t ? "border-indigo-600 text-indigo-600" : "border-transparent text-slate-500 hover:text-slate-700"}`}
+                  className={`min-h-8 px-2.5 text-[11px] font-semibold border-b-2 transition-colors ${tab === t ? "border-transparent bg-[#244563] text-white ring-1 ring-[#C96522]/70" : "border-transparent text-[#6B7280] hover:text-[#4B5563]"} focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#244563]/40`}
                 >
                   {t === "estudiantes" && " Estudiantes"}
                   {t === "sesiones" && "📅 Sesiones"}
@@ -4782,8 +4792,8 @@ export default function RefuerzoPedagogico() {
           </div>
 
           {tab === "estudiantes" && (
-            <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden p-4">
-              <h3 className="font-semibold text-slate-800 mb-4">
+            <div className="bg-[#FFFFFF] rounded-lg shadow-[0_3px_12px_-8px_rgba(15,23,42,0.18)] border border-[#D8DEE6] overflow-hidden p-3">
+              <h3 className="font-semibold text-[#374151] mb-3">
                 Estudiantes con notas menores a 7
               </h3>
               <div className="space-y-2">
@@ -4793,14 +4803,14 @@ export default function RefuerzoPedagogico() {
                   return (
                     <div
                       key={est.id}
-                      className="border rounded-lg p-3 transition-all border-l-4 border-orange-200 bg-orange-50/30"
+                      className="border rounded-lg p-3 transition-colors border-l-4 border-orange-200 bg-orange-50/30"
                     >
                       <div className="flex items-center justify-between gap-3">
                         <div className="flex-1 min-w-0">
-                          <div className="font-semibold text-slate-900 text-sm truncate">
+                          <div className="font-semibold text-[#273444] text-[11px] truncate">
                             {est.apellidos} {est.nombres}
                           </div>
-                          <div className="text-xs text-slate-500 mt-0.5">
+                          <div className="text-[10px] text-[#6B7280] mt-0.5">
                             {bajas.length} actividad(es) con nota baja
                             {bajas.some((n) => n.esConsolidado) && (
                               <span className="ml-1 text-purple-600 font-bold">
@@ -4809,21 +4819,33 @@ export default function RefuerzoPedagogico() {
                             )}
                           </div>
                         </div>
-                        <div className="flex items-center gap-2">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <button type="button" onClick={() => {
+                            setAvanceEdit(est.id);
+                            setAvanceForm({ indicadores: ficha?.indicadores || "", logros: ficha?.logros || "", recomendaciones: ficha?.recomendaciones || "" });
+                          }} className="min-h-8 rounded-md border border-[#BFC9D4] bg-white px-2.5 text-[10px] font-semibold text-[#244563] hover:bg-[#EAF0F6]">
+                            {ficha?.indicadores?.trim() && ficha.logros?.trim() && ficha.recomendaciones?.trim() ? "Editar avance" : "Registrar avance"}
+                          </button>
                           {ficha?.aplicado ? (
-                            <span className="text-[10px] px-2 py-1 rounded-full bg-green-100 text-green-700 font-bold">
+                            <span className="text-[10px] px-2 py-1 rounded-full bg-[#E2EAF3] text-[#1B354D] font-bold">
                               ✓ Refuerzo: {ficha.notaRefuerzo}
                             </span>
                           ) : (
                             <button
                               onClick={() => {
+                                if (!ficha?.indicadores?.trim() || !ficha.logros?.trim() || !ficha.recomendaciones?.trim()) {
+                                  setAvanceEdit(est.id);
+                                  setAvanceForm({ indicadores: ficha?.indicadores || "", logros: ficha?.logros || "", recomendaciones: ficha?.recomendaciones || "" });
+                                  mostrarToast("info", "Primero registra el avance", "Guarda los tres campos individuales y luego aplica la nota.");
+                                  return;
+                                }
                                 setAplicarPara(est.id);
                                 setAplicarNota("7");
                                 setAplicarEstrategia("reemplazar");
                               }}
-                              className="inline-flex items-center gap-1 bg-orange-100 hover:bg-orange-200 text-orange-700 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all"
+                              className="min-h-8 inline-flex items-center gap-1 bg-orange-100 hover:bg-orange-200 text-orange-700 px-2.5  rounded-md text-[10px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#244563]/40"
                             >
-                              <FaSyncAlt className="text-xs" /> Aplicar
+                              <FaSyncAlt className="text-[10px]" /> Aplicar
                             </button>
                           )}
                         </div>
@@ -4836,10 +4858,10 @@ export default function RefuerzoPedagogico() {
           )}
 
           {tab === "sesiones" && (
-            <div className="space-y-4">
+            <div className="space-y-3">
               {sesionesOrdenadas.length === 0 ? (
-                <div className="text-center py-8 text-slate-500 bg-white rounded-xl border border-slate-200">
-                  <FaCalendarAlt className="text-3xl mx-auto mb-2 text-slate-300" />
+                <div className="text-center py-8 text-[#6B7280] bg-[#FFFFFF] rounded-lg border border-[#D8DEE6]">
+                  <FaCalendarAlt className="text-xl mx-auto mb-2 text-[#BFC9D4]" />
                   <p>No hay sesiones registradas para este refuerzo.</p>
                 </div>
               ) : (
@@ -4848,19 +4870,19 @@ export default function RefuerzoPedagogico() {
                   return (
                     <div
                       key={i}
-                      className="bg-white rounded-xl shadow-sm border border-slate-200 p-4"
+                      className="bg-[#FFFFFF] rounded-lg shadow-[0_3px_12px_-8px_rgba(15,23,42,0.18)] border border-[#D8DEE6] p-3"
                     >
                       <div className="flex items-center justify-between gap-3 mb-3">
                         <div className="flex items-center gap-2">
-                          <div className="w-8 h-8 rounded-lg bg-indigo-100 text-indigo-700 flex items-center justify-center font-bold text-sm">
+                          <div className="w-8 h-8 rounded-lg bg-[#EAF0F6] text-[#1B354D] flex items-center justify-center font-bold text-[11px]">
                             {i + 1}
                           </div>
                           <div>
-                            <h4 className="font-semibold text-slate-900 text-sm">
+                            <h4 className="font-semibold text-[#273444] text-[11px]">
                               {s.fecha}
                             </h4>
                             {s.horaInicio && (
-                              <p className="text-[11px] text-slate-500">
+                              <p className="text-[11px] text-[#6B7280]">
                                 {s.horaInicio} a {s.horaFin}
                               </p>
                             )}
@@ -4881,27 +4903,27 @@ export default function RefuerzoPedagogico() {
                               },
                             )
                           }
-                          className="inline-flex items-center gap-1 bg-slate-100 hover:bg-slate-200 text-slate-700 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all"
+                          className="min-h-8 inline-flex items-center gap-1 bg-[#ECEFF3] hover:bg-[#D8DEE6] text-[#4B5563] px-2.5  rounded-md text-[10px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#244563]/40"
                         >
                           <FaEdit className="text-[10px]" />{" "}
                           {sesionReg ? "Editar registro" : "Registrar sesión"}
                         </button>
                       </div>
                       {sesionReg && (
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-[10px]">
                           <div>
-                            <p className="font-semibold text-slate-600 mb-1">
+                            <p className="font-semibold text-[#64748B] mb-1">
                               Actividad realizada (opcional)
                             </p>
-                            <p className="text-slate-700">
+                            <p className="text-[#4B5563]">
                               {sesionReg.indicadores || "—"}
                             </p>
                           </div>
                           <div>
-                            <p className="font-semibold text-slate-600 mb-1">
+                            <p className="font-semibold text-[#64748B] mb-1">
                               Observaciones
                             </p>
-                            <p className="text-slate-700">
+                            <p className="text-[#4B5563]">
                               {sesionReg.observaciones || "—"}
                             </p>
                           </div>
@@ -4916,19 +4938,19 @@ export default function RefuerzoPedagogico() {
 
           {tab === "documentos" && (
             <div className="space-y-3">
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                 {[
                   {
                     id: "nomina",
                     label: "1. Nómina de Estudiantes",
                     icon: FaUsers,
-                    color: "bg-blue-600",
+                    color: "bg-[#244563]",
                   },
                   {
                     id: "notificacion",
                     label: "2. Notificación a Padres de Familia",
                     icon: FaFileSignature,
-                    color: "bg-cyan-600",
+                    color: "bg-[#244563]",
                   },
                   {
                     id: "acta",
@@ -4940,7 +4962,7 @@ export default function RefuerzoPedagogico() {
                     id: "autorizacion",
                     label: "4. Autorización de Refuerzo",
                     icon: FaFileSignature,
-                    color: "bg-red-600",
+                    color: "bg-[#C93F45]",
                   },
                   {
                     id: "planificacion",
@@ -4952,7 +4974,7 @@ export default function RefuerzoPedagogico() {
                     id: "asistencia",
                     label: "6. Registro de Asistencia",
                     icon: FaUserCheck,
-                    color: "bg-green-600",
+                    color: "bg-[#244563]",
                   },
                   {
                     id: "avances",
@@ -4975,53 +4997,22 @@ export default function RefuerzoPedagogico() {
                           | "avances",
                       )
                     }
-                    className="bg-white rounded-xl shadow-sm border border-slate-200 p-5 text-left hover:shadow-md hover:border-indigo-300 transition-all"
+                    className="min-h-8 bg-[#FFFFFF] rounded-md shadow-[0_3px_12px_-8px_rgba(15,23,42,0.18)] border border-[#D8DEE6] p-3 text-left hover:shadow-[0_6px_18px_-12px_rgba(15,23,42,0.24)] hover:border-[#C8D6E5] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#244563]/40"
                   >
                     <div
                       className={`${d.color} w-10 h-10 rounded-lg flex items-center justify-center mb-3`}
                     >
-                      <d.icon className="text-white text-lg" />
+                      <d.icon className="text-white text-sm" />
                     </div>
-                    <h4 className="font-semibold text-slate-900 text-sm">
+                    <h4 className="font-semibold text-[#273444] text-[11px]">
                       {d.label}
                     </h4>
-                    <p className="text-[11px] text-slate-500 mt-1 flex items-center gap-1">
-                      <FaFilePdf className="text-red-500" /> Descargar PDF
+                    <p className="text-[11px] text-[#6B7280] mt-1 flex items-center gap-1">
+                      <FaFilePdf className="text-[#C93F45]" /> Descargar PDF
                       oficial
                     </p>
                   </button>
                 ))}
-              </div>
-              <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4">
-                <label className="block text-xs font-bold text-slate-600 uppercase mb-1">
-                  Observaciones generales del proceso (opcional)
-                </label>
-                <p className="text-xs text-slate-500 mb-2">
-                  Se incluirán en los documentos de Planificación y Avances. Las
-                  observaciones específicas de cada clase se registran en
-                  Sesiones, junto con la asistencia.
-                </p>
-                <textarea
-                  value={obsGenerales}
-                  onChange={(e) => setObsGenerales(e.target.value)}
-                  rows={3}
-                  placeholder="Ej.: Se recomienda continuar reforzando las operaciones básicas y el trabajo autónomo..."
-                  className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500"
-                />
-                <div className="flex justify-end mt-2">
-                  <button
-                    onClick={guardarObsGenerales}
-                    disabled={isSavingObs}
-                    className="inline-flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-all"
-                  >
-                    {isSavingObs ? (
-                      <FaSpinner className="animate-spin text-xs" />
-                    ) : (
-                      <FaSave className="text-xs" />
-                    )}{" "}
-                    Guardar observaciones
-                  </button>
-                </div>
               </div>
             </div>
           )}
@@ -5029,21 +5020,21 @@ export default function RefuerzoPedagogico() {
       )}
 
       {showCrear && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+        <div className="fixed inset-0 bg-[#111827]/40 backdrop-blur-[2px] flex items-center justify-center z-100 p-3">
           <div
-            className="bg-white rounded-2xl shadow-2xl w-full p-6 flex flex-col"
-            style={{ maxWidth: "1600px", maxHeight: "95vh" }}
+            className="bg-[#FFFFFF] rounded-lg shadow-[0_20px_50px_-28px_rgba(15,23,42,0.40)] w-full p-4 flex flex-col border border-[#D8DEE6]"
+            style={{ maxWidth: "1280px", maxHeight: "88vh" }}
           >
-            <div className="flex items-center justify-between mb-4 pb-4 border-b border-slate-200 shrink-0">
+            <div className="flex items-center justify-between mb-3 pb-4 border-b border-[#D8DEE6] shrink-0">
               <div className="flex items-center gap-3">
-                <div className="bg-indigo-100 p-3 rounded-xl">
-                  <FaSyncAlt className="text-indigo-600 text-xl" />
+                <div className="bg-[#EAF0F6] p-3 rounded-lg">
+                  <FaSyncAlt className="text-[#244563] text-sm" />
                 </div>
                 <div>
-                  <h3 className="text-xl font-bold text-slate-900">
+                  <h3 className="text-sm font-semibold text-[#273444]">
                     Nuevo Proceso de Refuerzo Pedagógico
                   </h3>
-                  <p className="text-sm text-slate-500">
+                  <p className="text-[11px] text-[#6B7280]">
                     Configure la planificación y seleccione directamente a los
                     estudiantes que requieren refuerzo
                   </p>
@@ -5051,35 +5042,35 @@ export default function RefuerzoPedagogico() {
               </div>
               <button
                 onClick={() => setShowCrear(false)}
-                className="text-slate-400 hover:text-slate-600 p-2 hover:bg-slate-100 rounded-lg transition-all"
+                className="min-h-8 text-[#9CA3AF] hover:text-[#64748B] p-2 hover:bg-[#ECEFF3] rounded-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#244563]/40"
               >
-                <FaTimes className="text-xl" />
+                <FaTimes className="text-sm" />
               </button>
             </div>
-            <div className="flex-1 min-h-0 overflow-y-auto space-y-5 pr-1">
-              <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(340px,0.9fr)] gap-5">
-                <div className="flex flex-col gap-4 min-w-0 pr-1">
-                  <div className="bg-linear-to-br from-indigo-50 to-purple-50 rounded-xl p-4 border border-indigo-100 shrink-0">
-                    <h4 className="text-sm font-bold text-indigo-900 uppercase tracking-wide mb-3 flex items-center gap-2">
-                      <FaInfoCircle className="text-indigo-500" /> Datos del
+            <div className="flex-1 min-h-0 overflow-y-auto space-y-3 pr-1">
+              <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(300px,0.9fr)] gap-3">
+                <div className="flex flex-col gap-3 min-w-0 pr-1">
+                  <div className="bg-[#ECEFF3] rounded-lg p-3 border border-[#EAF0F6] shrink-0">
+                    <h4 className="text-[11px] font-semibold text-[#244563] uppercase tracking-wide mb-3 flex items-center gap-2">
+                      <FaInfoCircle className="text-[#244563]" /> Datos del
                       Refuerzo
                     </h4>
-                    <div className="grid grid-cols-2 gap-4">
+                    <div className="grid grid-cols-2 gap-3">
                       <div>
-                        <label className="block text-[11px] font-semibold text-slate-600 uppercase mb-1">
+                        <label className="block text-[11px] font-semibold text-[#64748B] uppercase mb-1">
                           Grado
                         </label>
-                        <div className="bg-white border border-indigo-200 rounded-lg px-3 py-2.5 text-sm font-semibold text-slate-800">
+                        <div className="bg-[#FFFFFF] border border-[#C8D6E5] rounded-lg px-3 py-1.5 text-[11px] font-semibold text-[#374151]">
                           {form.gradoId
                             ? `${grados.find((g) => g.id === form.gradoId)?.nombre || "—"} ${grados.find((g) => g.id === form.gradoId)?.paralelo || ""}`
                             : "—"}
                         </div>
                       </div>
                       <div>
-                        <label className="block text-[11px] font-semibold text-slate-600 uppercase mb-1">
+                        <label className="block text-[11px] font-semibold text-[#64748B] uppercase mb-1">
                           Asignatura
                         </label>
-                        <div className="bg-white border border-indigo-200 rounded-lg px-3 py-2.5 text-sm font-semibold text-slate-800">
+                        <div className="bg-[#FFFFFF] border border-[#C8D6E5] rounded-lg px-3 py-1.5 text-[11px] font-semibold text-[#374151]">
                           {form.destrezaId
                             ? destrezas.find((d) => d.id === form.destrezaId)
                                 ?.nombre || "—"
@@ -5088,7 +5079,7 @@ export default function RefuerzoPedagogico() {
                       </div>
                     </div>
                     <div className="mt-3">
-                      <label className="block text-[11px] font-semibold text-slate-600 uppercase mb-1">
+                      <label className="block text-[11px] font-semibold text-[#64748B] uppercase mb-1">
                         Fecha de corte
                       </label>
                       <input
@@ -5097,13 +5088,13 @@ export default function RefuerzoPedagogico() {
                         onChange={(e) =>
                           setForm({ ...form, fechaCorte: e.target.value })
                         }
-                        className="w-full border border-indigo-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 bg-white"
+                        className="h-8 w-full border border-[#C8D6E5] rounded-md px-3  text-[11px] focus:ring-2 focus:ring-[#244563]/20 bg-[#FFFFFF] focus:border-[#244563] focus:outline-none text-[#374151]"
                       />
                     </div>
                   </div>
-                  <div className="bg-white rounded-xl border border-slate-200 p-4 shrink-0">
+                  <div className="bg-[#FFFFFF] rounded-lg border border-[#D8DEE6] p-3 shrink-0">
                     <div className="flex items-center justify-between mb-3">
-                      <h4 className="text-sm font-bold text-slate-800 uppercase tracking-wide flex items-center gap-2">
+                      <h4 className="text-[11px] font-semibold text-[#374151] uppercase tracking-wide flex items-center gap-2">
                         <FaCalendarAlt className="text-amber-500" /> Sesiones (
                         {form.sesiones.filter((s) => s.fecha).length})
                       </h4>
@@ -5121,7 +5112,7 @@ export default function RefuerzoPedagogico() {
                             ],
                           })
                         }
-                        className="text-xs text-indigo-600 hover:text-indigo-700 font-semibold flex items-center gap-1"
+                        className="min-h-8 text-[10px] text-[#244563] hover:text-[#1B354D] font-semibold flex items-center gap-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#244563]/40"
                       >
                         <FaPlus className="text-[10px]" /> Agregar sesión
                       </button>
@@ -5141,9 +5132,9 @@ export default function RefuerzoPedagogico() {
                         return (
                           <div
                             key={i}
-                            className="flex items-center gap-2 p-2 bg-slate-50 rounded-lg border border-slate-200"
+                            className="flex items-center gap-2 p-2 bg-[#ECEFF3] rounded-lg border border-[#D8DEE6]"
                           >
-                            <div className="w-8 h-8 rounded-lg bg-amber-100 text-amber-700 flex items-center justify-center font-bold text-xs shrink-0">
+                            <div className="w-8 h-8 rounded-lg bg-amber-100 text-amber-700 flex items-center justify-center font-bold text-[10px] shrink-0">
                               {i + 1}
                             </div>
                             <div className="flex-1 min-w-0">
@@ -5159,7 +5150,7 @@ export default function RefuerzoPedagogico() {
                                     };
                                     setForm({ ...form, sesiones: newSes });
                                   }}
-                                  className="flex-1 border border-slate-300 rounded px-2 py-1.5 text-xs focus:ring-2 focus:ring-indigo-500 bg-white"
+                                  className="h-8 flex-1 border border-[#BFC9D4] rounded px-2 py-1.5 text-[10px] focus:ring-2 focus:ring-[#244563]/20 bg-[#FFFFFF] focus:border-[#244563] focus:outline-none text-[#374151]"
                                 />
                                 <input
                                   type="time"
@@ -5173,7 +5164,7 @@ export default function RefuerzoPedagogico() {
                                     setForm({ ...form, sesiones: newSes });
                                   }}
                                   placeholder="Inicio"
-                                  className="w-20 border border-slate-300 rounded px-2 py-1.5 text-xs focus:ring-2 focus:ring-indigo-500 bg-white"
+                                  className="h-8 w-20 border border-[#BFC9D4] rounded px-2 py-1.5 text-[10px] focus:ring-2 focus:ring-[#244563]/20 bg-[#FFFFFF] focus:border-[#244563] focus:outline-none text-[#374151]"
                                 />
                                 <input
                                   type="time"
@@ -5187,11 +5178,11 @@ export default function RefuerzoPedagogico() {
                                     setForm({ ...form, sesiones: newSes });
                                   }}
                                   placeholder="Fin"
-                                  className="w-20 border border-slate-300 rounded px-2 py-1.5 text-xs focus:ring-2 focus:ring-indigo-500 bg-white"
+                                  className="h-8 w-20 border border-[#BFC9D4] rounded px-2 py-1.5 text-[10px] focus:ring-2 focus:ring-[#244563]/20 bg-[#FFFFFF] focus:border-[#244563] focus:outline-none text-[#374151]"
                                 />
                               </div>
                               {s.fecha && (
-                                <p className="text-[10px] text-slate-500 mt-1 capitalize">
+                                <p className="text-[10px] text-[#6B7280] mt-1 capitalize">
                                   {fechaLegible}
                                   {s.horaInicio &&
                                     s.horaFin &&
@@ -5207,10 +5198,10 @@ export default function RefuerzoPedagogico() {
                                   );
                                   setForm({ ...form, sesiones: newSes });
                                 }}
-                                className="p-1.5 bg-red-100 hover:bg-red-200 text-red-700 rounded-lg shrink-0"
+                                className="min-h-8 p-1.5 bg-red-100 hover:bg-red-200 text-[#AD3038] rounded-md shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#244563]/40"
                                 title="Eliminar sesión"
                               >
-                                <FaTimes className="text-xs" />
+                                <FaTimes className="text-[10px]" />
                               </button>
                             )}
                           </div>
@@ -5219,25 +5210,25 @@ export default function RefuerzoPedagogico() {
                     </div>
                   </div>
                 </div>
-                <div className="flex flex-col gap-4 min-h-0">
-                  <div className="bg-white rounded-xl border border-slate-200 p-4 flex flex-col min-h-0">
+                <div className="flex flex-col gap-3 min-h-0">
+                  <div className="bg-[#FFFFFF] rounded-lg border border-[#D8DEE6] p-3 flex flex-col min-h-0">
                     <div className="flex items-start justify-between gap-3 mb-3">
                       <div>
-                        <h4 className="text-sm font-bold text-slate-800 uppercase tracking-wide flex items-center gap-2">
-                          <FaUsers className="text-green-500" /> Estudiantes que
+                        <h4 className="text-[11px] font-semibold text-[#374151] uppercase tracking-wide flex items-center gap-2">
+                          <FaUsers className="text-[#244563]" /> Estudiantes que
                           requieren refuerzo
                         </h4>
-                        <p className="text-xs text-slate-500 mt-1">
+                        <p className="text-[10px] text-[#6B7280] mt-1">
                           Selecciona únicamente a quienes se incluirán en este
                           proceso.
                         </p>
                       </div>
-                      <span className="px-2.5 py-1 rounded-full bg-indigo-50 text-indigo-700 text-xs font-bold whitespace-nowrap">
+                      <span className="px-2.5 py-1 rounded-full bg-[#EAF0F6] text-[#1B354D] text-[10px] font-bold whitespace-nowrap">
                         {tempSelectedIds.length} seleccionados
                       </span>
                     </div>
                     <div className="flex items-center justify-between gap-2 mb-3">
-                      <p className="text-xs text-slate-500">
+                      <p className="text-[10px] text-[#6B7280]">
                         {isPreviewing
                           ? "Buscando estudiantes con notas bajas..."
                           : `${estudiantesPreview.length} estudiante(s) detectado(s)`}
@@ -5251,7 +5242,7 @@ export default function RefuerzoPedagogico() {
                             )
                           }
                           disabled={!estudiantesPreview.length}
-                          className="text-xs font-semibold text-indigo-600 hover:text-indigo-800 disabled:opacity-40"
+                          className="min-h-8 text-[10px] font-semibold text-[#244563] hover:text-[#1B354D] disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#244563]/40"
                         >
                           Seleccionar todos
                         </button>
@@ -5259,7 +5250,7 @@ export default function RefuerzoPedagogico() {
                           type="button"
                           onClick={() => setTempSelectedIds([])}
                           disabled={!tempSelectedIds.length}
-                          className="text-xs font-semibold text-slate-500 hover:text-slate-700 disabled:opacity-40"
+                          className="min-h-8 text-[10px] font-semibold text-[#6B7280] hover:text-[#4B5563] disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#244563]/40"
                         >
                           Limpiar
                         </button>
@@ -5267,12 +5258,12 @@ export default function RefuerzoPedagogico() {
                     </div>
                     <div className="min-h-37.5 max-h-70 overflow-y-auto space-y-2 pr-1">
                       {estudiantesPreview.length === 0 ? (
-                        <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center">
-                          <FaUsers className="mx-auto text-2xl text-slate-300 mb-2" />
-                          <p className="text-sm font-medium text-slate-600">
+                        <div className="rounded-lg border border-dashed border-[#BFC9D4] bg-[#ECEFF3] px-4 py-8 text-center">
+                          <FaUsers className="mx-auto text-2xl text-[#BFC9D4] mb-2" />
+                          <p className="text-[11px] font-medium text-[#64748B]">
                             No hay estudiantes detectados
                           </p>
-                          <p className="text-xs text-slate-500 mt-1">
+                          <p className="text-[10px] text-[#6B7280] mt-1">
                             Verifica el grado, la asignatura y las
                             calificaciones.
                           </p>
@@ -5287,7 +5278,7 @@ export default function RefuerzoPedagogico() {
                           return (
                             <label
                               key={est.id}
-                              className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${seleccionado ? "border-indigo-300 bg-indigo-50/70" : "border-slate-200 hover:bg-slate-50"}`}
+                              className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${seleccionado ? "border-[#C8D6E5] bg-[#EAF0F6]/70" : "border-[#D8DEE6] hover:bg-[#ECEFF3]"}`}
                             >
                               <input
                                 type="checkbox"
@@ -5301,13 +5292,13 @@ export default function RefuerzoPedagogico() {
                                       : prev.filter((id) => id !== est.id),
                                   )
                                 }
-                                className="w-4 h-4 text-indigo-600 rounded focus:ring-indigo-500 shrink-0"
+                                className="w-4 h-4 text-[#244563] rounded focus:ring-[#244563]/20 shrink-0 focus:border-[#244563] focus:outline-none"
                               />
                               <div className="flex-1 min-w-0">
-                                <p className="text-sm font-semibold text-slate-900 truncate">
+                                <p className="text-[11px] font-semibold text-[#273444] truncate">
                                   {est.apellidos} {est.nombres}
                                 </p>
-                                <p className="text-xs text-slate-500">
+                                <p className="text-[10px] text-[#6B7280]">
                                   {notasEst.length} actividad(es) con nota baja
                                   {tieneInsumos && (
                                     <span className="ml-1 text-purple-600 font-bold">
@@ -5316,7 +5307,7 @@ export default function RefuerzoPedagogico() {
                                   )}
                                 </p>
                               </div>
-                              <span className="px-2 py-1 rounded-full bg-red-100 text-red-700 text-[10px] font-bold shrink-0">
+                              <span className="px-2 py-1 rounded-full bg-red-100 text-[#AD3038] text-[10px] font-bold shrink-0">
                                 {notasEst.length} &lt; 7
                               </span>
                             </label>
@@ -5327,9 +5318,9 @@ export default function RefuerzoPedagogico() {
                   </div>
                 </div>
               </div>
-              <div className="bg-white rounded-xl border border-slate-200 p-4">
+              <div className="bg-[#FFFFFF] rounded-lg border border-[#D8DEE6] p-3">
                 <div className="mb-3">
-                  <label className="block text-xs font-bold text-slate-700 uppercase mb-1.5">
+                  <label className="block text-[10px] font-bold text-[#4B5563] uppercase mb-1.5">
                     Objetivo del Refuerzo *
                   </label>
                   <textarea
@@ -5339,38 +5330,38 @@ export default function RefuerzoPedagogico() {
                     }
                     rows={3}
                     placeholder="Describa el propósito del refuerzo y el aprendizaje que se espera fortalecer..."
-                    className="w-full border border-slate-300 rounded-lg px-3 py-2.5 text-sm focus:ring-2 focus:ring-indigo-500 resize-y"
+                    className="w-full border border-[#BFC9D4] rounded-md px-3 py-1.5 text-[11px] focus:ring-2 focus:ring-[#244563]/20 resize-y focus:border-[#244563] focus:outline-none bg-[#FFFFFF] text-[#374151]"
                   />
                 </div>
                 <div className="flex items-center justify-between gap-3 mb-3">
-                  <h4 className="text-sm font-bold text-slate-800 uppercase tracking-wide">
+                  <h4 className="text-[11px] font-semibold text-[#374151] uppercase tracking-wide">
                     Planificación pedagógica
                   </h4>
-                  <span className="text-xs text-slate-500">
+                  <span className="text-[10px] text-[#6B7280]">
                     Completa las cuatro columnas
                   </span>
                 </div>
-                <div className="overflow-x-auto rounded-lg border border-slate-300">
-                  <table className="w-full min-w-250 table-fixed border-collapse">
+                <div className="overflow-x-auto rounded-lg border border-[#BFC9D4]">
+                  <table className="w-full min-w-200 table-fixed border-collapse">
                     <thead>
-                      <tr className="bg-slate-100 text-slate-700">
-                        <th className="w-1/4 border-r border-slate-300 px-3 py-3 text-left text-[11px] font-bold uppercase">
+                      <tr className="bg-[#ECEFF3] text-[#4B5563]">
+                        <th className="w-1/4 border-r border-[#BFC9D4] px-3 py-1.5 text-left text-[11px] font-semibold uppercase">
                           Destrezas a reforzar *
                         </th>
-                        <th className="w-1/4 border-r border-slate-300 px-3 py-3 text-left text-[11px] font-bold uppercase">
+                        <th className="w-1/4 border-r border-[#BFC9D4] px-3 py-1.5 text-left text-[11px] font-semibold uppercase">
                           Estrategias metodológicas *
                         </th>
-                        <th className="w-1/4 border-r border-slate-300 px-3 py-3 text-left text-[11px] font-bold uppercase">
+                        <th className="w-1/4 border-r border-[#BFC9D4] px-3 py-1.5 text-left text-[11px] font-semibold uppercase">
                           Recursos didácticos *
                         </th>
-                        <th className="w-1/4 px-3 py-3 text-left text-[11px] font-bold uppercase">
+                        <th className="w-1/4 px-3 py-1.5 text-left text-[11px] font-semibold uppercase">
                           Evaluación *
                         </th>
                       </tr>
                     </thead>
                     <tbody>
                       <tr className="align-top">
-                        <td className="border-r border-slate-300 p-2.5">
+                        <td className="border-r border-[#BFC9D4] p-2.5">
                           <textarea
                             value={form.destrezasTexto}
                             onChange={(e) =>
@@ -5381,10 +5372,10 @@ export default function RefuerzoPedagogico() {
                             }
                             rows={8}
                             placeholder="Destrezas con criterio de desempeño que se van a reforzar..."
-                            className="w-full min-h-45 border border-slate-200 rounded-md px-2.5 py-2 text-sm focus:ring-2 focus:ring-indigo-500 resize-y"
+                            className="w-full min-h-45 border border-[#D8DEE6] rounded-md px-2.5 py-2 text-[11px] focus:ring-2 focus:ring-[#244563]/20 resize-y focus:border-[#244563] focus:outline-none bg-[#FFFFFF] text-[#374151]"
                           />
                         </td>
-                        <td className="border-r border-slate-300 p-2.5">
+                        <td className="border-r border-[#BFC9D4] p-2.5">
                           <textarea
                             value={form.estrategias}
                             onChange={(e) =>
@@ -5392,10 +5383,10 @@ export default function RefuerzoPedagogico() {
                             }
                             rows={8}
                             placeholder="Anticipación, construcción del conocimiento y consolidación..."
-                            className="w-full min-h-45 border border-slate-200 rounded-md px-2.5 py-2 text-sm focus:ring-2 focus:ring-indigo-500 resize-y"
+                            className="w-full min-h-45 border border-[#D8DEE6] rounded-md px-2.5 py-2 text-[11px] focus:ring-2 focus:ring-[#244563]/20 resize-y focus:border-[#244563] focus:outline-none bg-[#FFFFFF] text-[#374151]"
                           />
                         </td>
-                        <td className="border-r border-slate-300 p-2.5">
+                        <td className="border-r border-[#BFC9D4] p-2.5">
                           <textarea
                             value={form.recursos}
                             onChange={(e) =>
@@ -5403,7 +5394,7 @@ export default function RefuerzoPedagogico() {
                             }
                             rows={8}
                             placeholder="Materiales, textos, fichas, recursos digitales..."
-                            className="w-full min-h-45 border border-slate-200 rounded-md px-2.5 py-2 text-sm focus:ring-2 focus:ring-indigo-500 resize-y"
+                            className="w-full min-h-45 border border-[#D8DEE6] rounded-md px-2.5 py-2 text-[11px] focus:ring-2 focus:ring-[#244563]/20 resize-y focus:border-[#244563] focus:outline-none bg-[#FFFFFF] text-[#374151]"
                           />
                         </td>
                         <td className="p-2.5">
@@ -5414,7 +5405,7 @@ export default function RefuerzoPedagogico() {
                             }
                             rows={8}
                             placeholder="Técnicas, instrumentos y criterios para valorar los avances..."
-                            className="w-full min-h-45 border border-slate-200 rounded-md px-2.5 py-2 text-sm focus:ring-2 focus:ring-indigo-500 resize-y"
+                            className="w-full min-h-45 border border-[#D8DEE6] rounded-md px-2.5 py-2 text-[11px] focus:ring-2 focus:ring-[#244563]/20 resize-y focus:border-[#244563] focus:outline-none bg-[#FFFFFF] text-[#374151]"
                           />
                         </td>
                       </tr>
@@ -5423,7 +5414,7 @@ export default function RefuerzoPedagogico() {
                 </div>
               </div>
             </div>
-            <div className="flex gap-3 mt-6 pt-4 border-t border-slate-200 shrink-0">
+            <div className="flex gap-3 mt-3 pt-4 border-t border-[#D8DEE6] shrink-0">
               <button
                 onClick={crearRefuerzo}
                 disabled={
@@ -5432,18 +5423,19 @@ export default function RefuerzoPedagogico() {
                   tempSelectedIds.length === 0 ||
                   form.sesiones.filter((s) => s.fecha).length === 0
                 }
-                className="flex-1 inline-flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white px-6 py-3 rounded-lg text-sm font-semibold transition-all shadow-md"
+                className="min-h-8 flex-1 inline-flex items-center justify-center gap-2 bg-[#244563] hover:bg-[#1B354D] disabled:bg-[#BFC9D4] disabled:cursor-not-allowed text-white px-4 py-3 rounded-md text-[11px] font-semibold transition-colors shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#244563]/40"
               >
                 {isCreating ? (
                   <>
-                    <FaSpinner className="animate-spin text-xs" /> Creando
+                    <FaSpinner className="animate-spin text-[10px]" /> Creando
                     refuerzo...
                   </>
                 ) : (
                   <>
-                    <FaCheck className="text-xs" /> Generar Refuerzo Pedagógico
+                    <FaCheck className="text-[10px]" /> Generar Refuerzo
+                    Pedagógico
                     {tempSelectedIds.length > 0 && (
-                      <span className="ml-1 px-2 py-0.5 bg-white/20 rounded-full text-[11px]">
+                      <span className="ml-1 px-2 py-0.5 bg-[#FFFFFF]/20 rounded-full text-[11px]">
                         {tempSelectedIds.length} est.
                       </span>
                     )}
@@ -5455,7 +5447,7 @@ export default function RefuerzoPedagogico() {
                   setShowCrear(false);
                   navigate("/reporte-notas");
                 }}
-                className="px-6 py-3 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg text-sm font-semibold transition-all"
+                className="min-h-8 px-4 py-3 bg-[#D8DEE6] hover:bg-[#BFC9D4] text-[#4B5563] rounded-md text-[11px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#244563]/40"
               >
                 Cancelar
               </button>
@@ -5465,22 +5457,22 @@ export default function RefuerzoPedagogico() {
       )}
 
       {aplicarPara && procesoActivo && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full p-6 max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-bold text-slate-900">
+        <div className="fixed inset-0 bg-[#111827]/40 backdrop-blur-[2px] flex items-center justify-center z-100 p-3">
+          <div className="bg-[#FFFFFF] rounded-lg shadow-[0_20px_50px_-28px_rgba(15,23,42,0.40)] max-w-lg w-full p-4 max-h-[88vh] overflow-y-auto border border-[#D8DEE6]">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-semibold text-[#273444]">
                 Aplicar nota de refuerzo
               </h3>
               <button
                 onClick={() => setAplicarPara(null)}
-                className="text-slate-400 hover:text-slate-600"
+                className="min-h-8 text-[#9CA3AF] hover:text-[#64748B] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#244563]/40"
               >
                 <FaTimes />
               </button>
             </div>
-            <div className="mb-4">
-              <label className="block text-xs font-bold text-slate-600 uppercase mb-1">
-                Nota de refuerzo *
+            <div className="mb-3">
+              <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">
+                Nota obtenida en el refuerzo (0 a 10) *
               </label>
               <input
                 type="text"
@@ -5488,11 +5480,11 @@ export default function RefuerzoPedagogico() {
                 value={aplicarNota}
                 onChange={(e) => setAplicarNota(e.target.value)}
                 placeholder="Ej: 7"
-                className="w-28 border-2 border-slate-300 rounded-lg px-3 py-2 text-center text-sm font-bold focus:ring-2 focus:ring-indigo-500"
+                className="h-8 w-28 border-2 border-[#BFC9D4] rounded-md px-3  text-center text-[11px] font-bold focus:ring-2 focus:ring-[#244563]/20 focus:border-[#244563] focus:outline-none bg-[#FFFFFF] text-[#374151]"
               />
             </div>
-            <div className="mb-4">
-              <label className="block text-xs font-bold text-slate-600 uppercase mb-1">
+            <div className="mb-3">
+              <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">
                 Estrategia para aplicar la nota *
               </label>
               <select
@@ -5500,7 +5492,7 @@ export default function RefuerzoPedagogico() {
                 onChange={(e) =>
                   setAplicarEstrategia(e.target.value as EstrategiaNota)
                 }
-                className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 bg-white"
+                className="h-8 w-full border border-[#BFC9D4] rounded-md px-3  text-[11px] focus:ring-2 focus:ring-[#244563]/20 bg-[#FFFFFF] focus:border-[#244563] focus:outline-none text-[#374151]"
               >
                 {ESTRATEGIAS.map((s) => (
                   <option key={s.value} value={s.value}>
@@ -5509,15 +5501,19 @@ export default function RefuerzoPedagogico() {
                 ))}
               </select>
             </div>
-            <div className="mb-4 p-3 bg-slate-50 border border-slate-200 rounded-lg">
-              <p className="text-xs font-bold text-slate-700 mb-2">
+            <p className="mb-3 text-[11px] text-[#64748B]">
+              La nota final registrada nunca supera 7. En Promediar se calcula primero
+              el promedio con la nota obtenida y después se aplica el tope.
+            </p>
+            <div className="mb-3 p-3 bg-[#ECEFF3] border border-[#D8DEE6] rounded-lg">
+              <p className="text-[10px] font-bold text-[#4B5563] mb-2">
                 Vista previa del efecto:
               </p>
               <div className="space-y-1 max-h-48 overflow-y-auto">
                 {(procesoActivo.bajos[aplicarPara] || []).map((b, i) => (
                   <div
                     key={i}
-                    className="flex items-center justify-between text-[11px] text-slate-700"
+                    className="flex items-center justify-between text-[11px] text-[#4B5563]"
                   >
                     <span className="truncate">
                       {b.esConsolidado && (
@@ -5526,27 +5522,21 @@ export default function RefuerzoPedagogico() {
                         </span>
                       )}
                       {b.tipo} · {b.detalle} ({b.fecha})
-                    </span>
-                    <span className="shrink-0 ml-2 font-bold">
-                      <span className="text-red-600">{b.nota}</span>
-                      <span className="mx-1">→</span>
-                      <span
-                        className={
-                          notaFinalSegun(
-                            b.nota,
-                            notaAplicarNum,
-                            aplicarEstrategia,
-                          ) >= 7
-                            ? "text-green-600"
-                            : "text-amber-600"
-                        }
-                      >
-                        {notaFinalSegun(
-                          b.nota,
-                          notaAplicarNum,
-                          aplicarEstrategia,
-                        )}
+                      <span className="ml-1.5 inline-flex items-center rounded border border-[#D8DEE6] bg-[#FFFFFF] px-1.5 py-0.5 text-[10px] font-semibold text-[#C93F45]">
+                        Nota original: {b.nota}
                       </span>
+                    </span>
+                    <span className="shrink-0 ml-2 text-right">
+                      {notaAplicarValida ? (
+                        <>
+                          <span className="block text-[10px] text-[#64748B]">
+                            {detalleCalculo(b.nota, notaAplicarNum, aplicarEstrategia)}
+                          </span>
+                          <span className="font-bold text-[#244563]">
+                            Se registrará: {notaFinalSegun(b.nota, notaAplicarNum, aplicarEstrategia).toFixed(2)}
+                          </span>
+                        </>
+                      ) : <span className="text-[#64748B]">Ingresa una nota de 0 a 10</span>}
                     </span>
                   </div>
                 ))}
@@ -5554,23 +5544,23 @@ export default function RefuerzoPedagogico() {
             </div>
             <div className="flex gap-2">
               <button
+                onClick={() => setAplicarPara(null)}
+                className="min-h-8 flex-1 bg-[#D8DEE6] hover:bg-[#BFC9D4] text-[#4B5563] px-4  rounded-md text-[11px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#244563]/40"
+              >
+                Cancelar
+              </button>
+              <button
                 onClick={aplicarRefuerzo}
-                disabled={isAplicando}
-                className="flex-1 inline-flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white px-4 py-2.5 rounded-lg text-sm font-semibold transition-all"
+                disabled={isAplicando || !notaAplicarValida}
+                className="min-h-8 flex-1 inline-flex items-center justify-center gap-2 bg-[#244563] hover:bg-[#1B354D] disabled:opacity-50 text-white px-4  rounded-md text-[11px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#244563]/40"
               >
                 {isAplicando ? (
-                  <FaSpinner className="animate-spin text-xs" />
+                  <FaSpinner className="animate-spin text-[10px]" />
                 ) : (
-                  <FaCheck className="text-xs" />
+                  <FaCheck className="text-[10px]" />
                 )}{" "}
                 Aplicar a {(procesoActivo.bajos[aplicarPara] || []).length}{" "}
                 nota(s)
-              </button>
-              <button
-                onClick={() => setAplicarPara(null)}
-                className="flex-1 bg-slate-200 hover:bg-slate-300 text-slate-700 px-4 py-2.5 rounded-lg text-sm font-semibold transition-all"
-              >
-                Cancelar
               </button>
             </div>
           </div>
@@ -5578,10 +5568,10 @@ export default function RefuerzoPedagogico() {
       )}
 
       {sesionEdit && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full p-6 max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-bold text-slate-900 capitalize">
+        <div className="fixed inset-0 bg-[#111827]/40 backdrop-blur-[2px] flex items-center justify-center z-100 p-3">
+          <div className="bg-[#FFFFFF] rounded-lg shadow-[0_20px_50px_-28px_rgba(15,23,42,0.40)] max-w-2xl w-full p-4 max-h-[88vh] overflow-y-auto border border-[#D8DEE6]">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-semibold text-[#273444] capitalize">
                 Sesión {sesionEdit.fecha}
                 {(() => {
                   const s = sesionesOrdenadas.find(
@@ -5594,16 +5584,16 @@ export default function RefuerzoPedagogico() {
               </h3>
               <button
                 onClick={() => setSesionEdit(null)}
-                className="text-slate-400 hover:text-slate-600"
+                className="min-h-8 text-[#9CA3AF] hover:text-[#64748B] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#244563]/40"
               >
                 <FaTimes />
               </button>
             </div>
-            <div className="mb-4">
-              <p className="text-xs font-bold text-slate-600 uppercase mb-2">
+            <div className="mb-3">
+              <p className="text-[10px] font-bold text-[#64748B] uppercase mb-2">
                 Asistencia y novedades por estudiante
               </p>
-              <p className="text-xs text-slate-500 mb-2">
+              <p className="text-[10px] text-[#6B7280] mb-2">
                 Registra la asistencia y, si hace falta, una observación
                 individual.
               </p>
@@ -5613,10 +5603,10 @@ export default function RefuerzoPedagogico() {
                   return (
                     <div
                       key={est.id}
-                      className="p-2 bg-slate-50 rounded-lg space-y-2"
+                      className="p-2 bg-[#ECEFF3] rounded-lg space-y-2"
                     >
                       <div className="flex items-center justify-between gap-2">
-                        <span className="text-xs font-medium text-slate-800 truncate">
+                        <span className="text-[10px] font-medium text-[#374151] truncate">
                           {est.apellidos} {est.nombres}
                         </span>
                         <div className="flex gap-1 shrink-0">
@@ -5632,7 +5622,7 @@ export default function RefuerzoPedagogico() {
                                   },
                                 })
                               }
-                              className={`w-8 h-8 rounded-lg text-xs font-bold transition-all ${val === v ? (v === "P" ? "bg-green-600 text-white" : v === "I" ? "bg-red-600 text-white" : "bg-blue-600 text-white") : "bg-white text-slate-600 border border-slate-300 hover:bg-slate-100"}`}
+                              className={`w-8 h-8 rounded-md text-[10px] font-bold transition-colors ${val === v ? (v === "P" ? "bg-[#244563] text-white" : v === "I" ? "bg-[#C93F45] text-white" : "bg-[#244563] text-white") : "bg-[#FFFFFF] text-[#64748B] border border-[#BFC9D4] hover:bg-[#ECEFF3]"} focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#244563]/40`}
                               title={
                                 v === "P"
                                   ? "Presente"
@@ -5662,16 +5652,16 @@ export default function RefuerzoPedagogico() {
                         }
                         placeholder="Observación individual (opcional): llegó tarde, tarea incompleta…"
                         aria-label={`Observación de ${est.apellidos} ${est.nombres}`}
-                        className="w-full border border-slate-200 rounded-md px-2.5 py-1.5 text-xs focus:ring-2 focus:ring-indigo-500"
+                        className="h-8 w-full border border-[#D8DEE6] rounded-md px-2.5 py-1.5 text-[10px] focus:ring-2 focus:ring-[#244563]/20 focus:border-[#244563] focus:outline-none bg-[#FFFFFF] text-[#374151]"
                       />
                     </div>
                   );
                 })}
               </div>
             </div>
-            <div className="space-y-2 mb-4">
+            <div className="space-y-2 mb-3">
               <div>
-                <label className="block text-xs font-bold text-slate-600 uppercase mb-1">
+                <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">
                   Actividad realizada (opcional)
                 </label>
                 <input
@@ -5684,11 +5674,11 @@ export default function RefuerzoPedagogico() {
                       indicadores: e.target.value,
                     })
                   }
-                  className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500"
+                  className="h-8 w-full border border-[#BFC9D4] rounded-md px-3  text-[11px] focus:ring-2 focus:ring-[#244563]/20 focus:border-[#244563] focus:outline-none bg-[#FFFFFF] text-[#374151]"
                 />
               </div>
               <div>
-                <label className="block text-xs font-bold text-slate-600 uppercase mb-1">
+                <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">
                   Observaciones generales (opcional)
                 </label>
                 <textarea
@@ -5701,7 +5691,7 @@ export default function RefuerzoPedagogico() {
                     })
                   }
                   rows={2}
-                  className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500"
+                  className="w-full border border-[#BFC9D4] rounded-md px-3 py-2 text-[11px] focus:ring-2 focus:ring-[#244563]/20 focus:border-[#244563] focus:outline-none bg-[#FFFFFF] text-[#374151]"
                 />
               </div>
             </div>
@@ -5709,18 +5699,18 @@ export default function RefuerzoPedagogico() {
               <button
                 onClick={guardarSesion}
                 disabled={isSavingSesion}
-                className="flex-1 inline-flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white px-4 py-2.5 rounded-lg text-sm font-semibold transition-all"
+                className="min-h-8 flex-1 inline-flex items-center justify-center gap-2 bg-[#244563] hover:bg-[#1B354D] disabled:opacity-50 text-white px-4  rounded-md text-[11px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#244563]/40"
               >
                 {isSavingSesion ? (
-                  <FaSpinner className="animate-spin text-xs" />
+                  <FaSpinner className="animate-spin text-[10px]" />
                 ) : (
-                  <FaSave className="text-xs" />
+                  <FaSave className="text-[10px]" />
                 )}{" "}
                 Guardar sesión
               </button>
               <button
                 onClick={() => setSesionEdit(null)}
-                className="flex-1 bg-slate-200 hover:bg-slate-300 text-slate-700 px-4 py-2.5 rounded-lg text-sm font-semibold transition-all"
+                className="min-h-8 flex-1 bg-[#D8DEE6] hover:bg-[#BFC9D4] text-[#4B5563] px-4  rounded-md text-[11px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#244563]/40"
               >
                 Cerrar
               </button>
@@ -5730,20 +5720,20 @@ export default function RefuerzoPedagogico() {
       )}
 
       {avanceEdit && procesoActivo && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full p-6 max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-bold text-slate-900">
+        <div className="fixed inset-0 bg-[#111827]/40 backdrop-blur-[2px] flex items-center justify-center z-100 p-3">
+          <div className="bg-[#FFFFFF] rounded-lg shadow-[0_20px_50px_-28px_rgba(15,23,42,0.40)] max-w-lg w-full p-4 max-h-[88vh] overflow-y-auto border border-[#D8DEE6]">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-semibold text-[#273444]">
                 Registro de Avance
               </h3>
               <button
                 onClick={() => setAvanceEdit(null)}
-                className="text-slate-400 hover:text-slate-600"
+                className="min-h-8 text-[#9CA3AF] hover:text-[#64748B] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#244563]/40"
               >
                 <FaTimes />
               </button>
             </div>
-            <p className="text-sm text-slate-600 mb-4">
+            <p className="text-[11px] text-[#64748B] mb-3">
               {
                 estudiantesDelProceso.find((e) => e.id === avanceEdit)
                   ?.apellidos
@@ -5752,7 +5742,7 @@ export default function RefuerzoPedagogico() {
             </p>
             <div className="space-y-3">
               <div>
-                <label className="block text-xs font-bold text-slate-600 uppercase mb-1">
+                <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">
                   Indicadores de logro
                 </label>
                 <textarea
@@ -5765,11 +5755,11 @@ export default function RefuerzoPedagogico() {
                   }
                   rows={2}
                   placeholder="Ej: Identifica correctamente..."
-                  className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500"
+                  className="w-full border border-[#BFC9D4] rounded-md px-3 py-2 text-[11px] focus:ring-2 focus:ring-[#244563]/20 focus:border-[#244563] focus:outline-none bg-[#FFFFFF] text-[#374151]"
                 />
               </div>
               <div>
-                <label className="block text-xs font-bold text-slate-600 uppercase mb-1">
+                <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">
                   Logros de aprendizaje
                 </label>
                 <textarea
@@ -5779,11 +5769,11 @@ export default function RefuerzoPedagogico() {
                   }
                   rows={2}
                   placeholder="Ej: Reconoce funciones del Estado..."
-                  className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500"
+                  className="w-full border border-[#BFC9D4] rounded-md px-3 py-2 text-[11px] focus:ring-2 focus:ring-[#244563]/20 focus:border-[#244563] focus:outline-none bg-[#FFFFFF] text-[#374151]"
                 />
               </div>
               <div>
-                <label className="block text-xs font-bold text-slate-600 uppercase mb-1">
+                <label className="block text-[10px] font-bold text-[#64748B] uppercase mb-1">
                   Recomendaciones
                 </label>
                 <textarea
@@ -5796,26 +5786,26 @@ export default function RefuerzoPedagogico() {
                   }
                   rows={2}
                   placeholder="Ej: Continuar reforzando con ejemplos..."
-                  className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500"
+                  className="w-full border border-[#BFC9D4] rounded-md px-3 py-2 text-[11px] focus:ring-2 focus:ring-[#244563]/20 focus:border-[#244563] focus:outline-none bg-[#FFFFFF] text-[#374151]"
                 />
               </div>
             </div>
-            <div className="flex gap-2 mt-5">
+            <div className="flex gap-2 mt-3">
               <button
                 onClick={guardarAvance}
                 disabled={isSavingAvance}
-                className="flex-1 inline-flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white px-4 py-2.5 rounded-lg text-sm font-semibold transition-all"
+                className="min-h-8 flex-1 inline-flex items-center justify-center gap-2 bg-[#244563] hover:bg-[#1B354D] disabled:opacity-50 text-white px-4  rounded-md text-[11px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#244563]/40"
               >
                 {isSavingAvance ? (
-                  <FaSpinner className="animate-spin text-xs" />
+                  <FaSpinner className="animate-spin text-[10px]" />
                 ) : (
-                  <FaSave className="text-xs" />
+                  <FaSave className="text-[10px]" />
                 )}{" "}
                 Guardar avance
               </button>
               <button
                 onClick={() => setAvanceEdit(null)}
-                className="flex-1 bg-slate-200 hover:bg-slate-300 text-slate-700 px-4 py-2.5 rounded-lg text-sm font-semibold transition-all"
+                className="min-h-8 flex-1 bg-[#D8DEE6] hover:bg-[#BFC9D4] text-[#4B5563] px-4  rounded-md text-[11px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#244563]/40"
               >
                 Cancelar
               </button>
@@ -5824,42 +5814,59 @@ export default function RefuerzoPedagogico() {
         </div>
       )}
 
-      <ConfirmModal
-        isOpen={!!refuerzoAEliminar}
-        title="Eliminar refuerzo"
-        message={`¿Eliminar el refuerzo de ${refuerzoAEliminar?.materiaNombre ?? ""} (${refuerzoAEliminar?.gradoNombre ?? ""})? Se borrarán también sus sesiones, las fichas de avance de los estudiantes y se revertirán las notas de refuerzo ya aplicadas. Esta acción no se puede deshacer.`}
-        confirmText={eliminandoRefuerzo ? "Eliminando..." : "Sí, eliminar"}
-        cancelText="Cancelar"
-        type="danger"
-        onConfirm={eliminarRefuerzo}
-        onCancel={() => setRefuerzoAEliminar(null)}
-      />
+      {refuerzoAEliminar && (
+        <div className="fixed inset-0 z-100 flex items-center justify-center bg-[#111827]/40 p-3 backdrop-blur-[2px] sm:p-4">
+          <div role="alertdialog" aria-modal="true" aria-labelledby="eliminar-refuerzo-titulo" aria-describedby="eliminar-refuerzo-descripcion" aria-busy={eliminandoRefuerzo} className="flex max-h-[88vh] w-full max-w-sm flex-col overflow-hidden rounded-lg border border-[#D8DEE6] bg-[#FFFFFF] shadow-[0_20px_50px_-28px_rgba(15,23,42,0.40)]">
+            <div className="flex min-h-0 items-start gap-3 overflow-y-auto px-4 py-3.5">
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#ECEFF3] text-[#4B5563]">
+                <FaTrash className="text-sm" />
+              </span>
+              <div className="min-w-0 flex-1">
+                <h3 id="eliminar-refuerzo-titulo" className="text-sm font-semibold text-[#273444]">Eliminar refuerzo</h3>
+                <div id="eliminar-refuerzo-descripcion" className="mt-1 space-y-3 text-[11px] leading-relaxed text-[#64748B]">
+                  <p>¿Eliminar el refuerzo de {refuerzoAEliminar.materiaNombre ?? ""} ({refuerzoAEliminar.gradoNombre ?? ""})?</p>
+                  <p>Se borrarán también sus sesiones, las fichas de avance de los estudiantes y se revertirán las notas de refuerzo ya aplicadas. Esta acción no se puede deshacer.</p>
+                </div>
+              </div>
+            </div>
+            <div className="flex shrink-0 flex-col gap-2 border-t border-[#E4E8EE] bg-[#ECEFF3] px-4 py-2.5 sm:flex-row sm:justify-end">
+              <button type="button" autoFocus onClick={() => setRefuerzoAEliminar(null)} disabled={eliminandoRefuerzo} className="inline-flex h-8 items-center justify-center rounded-md border border-[#BFC9D4] bg-[#FFFFFF] px-3 text-[11px] font-semibold text-[#4B5563] transition-colors hover:bg-[#ECEFF3] disabled:cursor-not-allowed disabled:opacity-50">Cancelar</button>
+              <button type="button" onClick={eliminarRefuerzo} disabled={eliminandoRefuerzo} className="inline-flex h-8 items-center justify-center gap-1.5 rounded-md bg-[#C93F45] px-3 text-[11px] font-semibold text-white transition-colors hover:bg-[#AD3038] disabled:cursor-not-allowed disabled:opacity-50">
+                {eliminandoRefuerzo ? <FaSpinner className="animate-spin text-[10px]" /> : <FaTrash className="text-[10px]" />}
+                {eliminandoRefuerzo ? "Eliminando..." : "Sí, eliminar"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
-      <div className="fixed top-4 right-4 z-100 space-y-2 pointer-events-none max-w-sm w-full">
+      <div className="fixed top-4 right-4 z-110 space-y-2 pointer-events-none max-w-sm w-full">
         {toasts.map((t) => {
           const c = toastConfig[t.type];
           const Icon = c.icon;
           return (
             <div
               key={t.id}
-              className={`pointer-events-auto bg-white border-l-4 ${c.bg} rounded-lg shadow-2xl p-4 flex items-start gap-3`}
+              className={`pointer-events-auto bg-[#FFFFFF] border-l-4 ${c.bg} rounded-lg shadow-[0_20px_50px_-28px_rgba(15,23,42,0.40)] p-3 flex items-start gap-3 border border-[#D8DEE6]`}
             >
               <div
                 className={`${c.iconBg} w-8 h-8 rounded-full flex items-center justify-center shrink-0`}
               >
-                <Icon className="text-white text-sm" />
+                <Icon className="text-white text-[11px]" />
               </div>
               <div className="flex-1 min-w-0">
-                <p className={`font-semibold text-sm ${c.titleColor}`}>
+                <p className={`font-semibold text-[11px] ${c.titleColor}`}>
                   {t.title}
                 </p>
                 {t.message && (
-                  <p className={`text-xs ${c.msgColor} mt-0.5`}>{t.message}</p>
+                  <p className={`text-[10px] ${c.msgColor} mt-0.5`}>
+                    {t.message}
+                  </p>
                 )}
               </div>
               <button
                 onClick={() => setToasts((p) => p.filter((x) => x.id !== t.id))}
-                className="text-slate-400 hover:text-slate-600"
+                className="min-h-8 text-[#9CA3AF] hover:text-[#64748B] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#244563]/40"
               >
                 <FaTimes className="w-4 h-4" />
               </button>

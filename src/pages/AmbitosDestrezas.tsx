@@ -34,14 +34,12 @@ import {
   FaTimesCircle,
   FaQuestionCircle,
 } from "react-icons/fa";
-
 interface Toast {
   id: string;
   type: "success" | "error" | "warning" | "info";
   title: string;
   message?: string;
 }
-
 interface ConfirmModalState {
   isOpen: boolean;
   title: string;
@@ -53,10 +51,8 @@ interface ConfirmModalState {
   onConfirm: () => void;
   onCancel: () => void;
 }
-
 export default function AmbitosDestrezas() {
   const { user } = useAuth();
-
   const {
     grados: todosLosGrados,
     ambitos: todosLosAmbitosContext,
@@ -64,10 +60,11 @@ export default function AmbitosDestrezas() {
     anioActivo,
     ready,
   } = useData();
-
   const [isSaving, setIsSaving] = useState(false);
   const [selectedGradoId, setSelectedGradoId] = useState("");
-  const [currentView, setCurrentView] = useState<"ambitos" | "destrezas">("ambitos");
+  const [currentView, setCurrentView] = useState<"ambitos" | "destrezas">(
+    "ambitos",
+  );
   const [selectedAmbitoId, setSelectedAmbitoId] = useState<string | null>(null);
   const [showAmbitoForm, setShowAmbitoForm] = useState(false);
   const [editingAmbitoId, setEditingAmbitoId] = useState<string | null>(null);
@@ -75,23 +72,20 @@ export default function AmbitosDestrezas() {
     nombre: "",
     orden: 0,
   });
-
   const [isAmbitoMassive, setIsAmbitoMassive] = useState(false);
   const [ambitoMassiveData, setAmbitoMassiveData] = useState("");
   const [parsedAmbitos, setParsedAmbitos] = useState<string[]>([]);
   const [showConfirmAmbitoModal, setShowConfirmAmbitoModal] = useState(false);
-
   const [showDestrezaForm, setShowDestrezaForm] = useState(false);
-  const [editingDestrezaId, setEditingDestrezaId] = useState<string | null>(null);
+  const [editingDestrezaId, setEditingDestrezaId] = useState<string | null>(
+    null,
+  );
   const [destrezaMassiveData, setDestrezaMassiveData] = useState("");
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
-
   const [showCopyModal, setShowCopyModal] = useState(false);
   const [selectedDestGrados, setSelectedDestGrados] = useState<string[]>([]);
   const [isCopying, setIsCopying] = useState(false);
-
   const [toasts, setToasts] = useState<Toast[]>([]);
-
   const [confirmModal, setConfirmModal] = useState<ConfirmModalState>({
     isOpen: false,
     title: "",
@@ -99,85 +93,79 @@ export default function AmbitosDestrezas() {
     onConfirm: () => {},
     onCancel: () => {},
   });
-
   const destrezaFormRef = useRef<HTMLDivElement>(null);
-
   const grados = (() => {
     if (!anioActivo) return [];
     return todosLosGrados
       .filter((g) => g.anioLectivoId === anioActivo.id && g.activo)
       .sort((a, b) => (a.orden || 0) - (b.orden || 0));
   })();
-
-  const gradoEfectivoId = selectedGradoId || (grados.length > 0 ? grados[0].id : "");
-
+  const gradoEfectivoId =
+    selectedGradoId || (grados.length > 0 ? grados[0].id : "");
   const ambitos = (() => {
     if (!gradoEfectivoId) return [];
     return todosLosAmbitosContext
       .filter((a) => a.gradoId === gradoEfectivoId)
       .sort((a, b) => a.nombre.localeCompare(b.nombre));
   })();
-
   const destrezas = (() => {
     if (!gradoEfectivoId) return [];
     return todasLasDestrezasContext
       .filter((d) => d.gradoId === gradoEfectivoId)
       .sort((a, b) => (a.orden || 0) - (b.orden || 0));
   })();
-
   const todosLosAmbitos = (() => {
-    return [...todosLosAmbitosContext].sort((a, b) => a.nombre.localeCompare(b.nombre));
+    return [...todosLosAmbitosContext].sort((a, b) =>
+      a.nombre.localeCompare(b.nombre),
+    );
   })();
-
-  const mostrarToast = useCallback((
-    type: Toast["type"],
-    title: string,
-    message?: string,
-    duration = 4000,
-  ) => {
-    const id = `toast-${Date.now()}-${Math.random()}`;
-    const toast: Toast = { id, type, title, message };
-    setToasts((prev) => [...prev, toast]);
-    setTimeout(() => {
-      setToasts((prev) => prev.filter((t) => t.id !== id));
-    }, duration);
-  }, []);
-
+  const mostrarToast = useCallback(
+    (type: Toast["type"], title: string, message?: string, duration = 4000) => {
+      const id = `toast-${Date.now()}-${Math.random()}`;
+      const toast: Toast = { id, type, title, message };
+      setToasts((prev) => [...prev, toast]);
+      setTimeout(() => {
+        setToasts((prev) => prev.filter((t) => t.id !== id));
+      }, duration);
+    },
+    [],
+  );
   const cerrarToast = useCallback((id: string) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
-
-  const confirmar = useCallback((
-    title: string,
-    message: string,
-    options?: {
-      confirmText?: string;
-      cancelText?: string;
-      confirmColor?: string;
-      icon?: React.ComponentType<{ className?: string }>;
-    },
-  ): Promise<boolean> => {
-    return new Promise((resolve) => {
-      setConfirmModal({
-        isOpen: true,
-        title,
-        message,
-        confirmText: options?.confirmText || "Confirmar",
-        cancelText: options?.cancelText || "Cancelar",
-        confirmColor: options?.confirmColor || "bg-red-600 hover:bg-red-700",
-        icon: options?.icon || FaQuestionCircle,
-        onConfirm: () => {
-          setConfirmModal((prev) => ({ ...prev, isOpen: false }));
-          resolve(true);
-        },
-        onCancel: () => {
-          setConfirmModal((prev) => ({ ...prev, isOpen: false }));
-          resolve(false);
-        },
+  const confirmar = useCallback(
+    (
+      title: string,
+      message: string,
+      options?: {
+        confirmText?: string;
+        cancelText?: string;
+        confirmColor?: string;
+        icon?: React.ComponentType<{ className?: string }>;
+      },
+    ): Promise<boolean> => {
+      return new Promise((resolve) => {
+        setConfirmModal({
+          isOpen: true,
+          title,
+          message,
+          confirmText: options?.confirmText || "Confirmar",
+          cancelText: options?.cancelText || "Cancelar",
+          confirmColor: options?.confirmColor || "bg-red-600 hover:bg-red-700",
+          icon: options?.icon || FaQuestionCircle,
+          onConfirm: () => {
+            setConfirmModal((prev) => ({ ...prev, isOpen: false }));
+            resolve(true);
+          },
+          onCancel: () => {
+            setConfirmModal((prev) => ({ ...prev, isOpen: false }));
+            resolve(false);
+          },
+        });
       });
-    });
-  }, []);
-
+    },
+    [],
+  );
   const resetAmbitoForm = useCallback(() => {
     setAmbitoFormData({ nombre: "", orden: 0 });
     setEditingAmbitoId(null);
@@ -188,105 +176,93 @@ export default function AmbitosDestrezas() {
     setShowConfirmAmbitoModal(false);
     setValidationErrors([]);
   }, []);
-
   const resetDestrezaForm = useCallback(() => {
     setDestrezaMassiveData("");
     setEditingDestrezaId(null);
     setShowDestrezaForm(false);
     setValidationErrors([]);
   }, []);
-
-  const parseAmbitosMassiveData = (data: string): { ambitos: string[]; parseErrors: string[] } => {
+  const parseAmbitosMassiveData = (
+    data: string,
+  ): { ambitos: string[]; parseErrors: string[] } => {
     const lines = data.trim().split("\n");
     const ambitosList: string[] = [];
     const parseErrors: string[] = [];
-
     lines.forEach((line, index) => {
       const trimmedLine = line.trim();
       if (!trimmedLine) return;
-
       if (trimmedLine.length < 1) {
-        parseErrors.push(`Línea ${index + 1}: El nombre del ámbito no puede estar vacío.`);
+        parseErrors.push(
+          `Línea ${index + 1}: El nombre del ámbito no puede estar vacío.`,
+        );
         return;
       }
-
       ambitosList.push(trimmedLine);
     });
-
     return { ambitos: ambitosList, parseErrors };
   };
-
   const validarAmbitosMasivos = (ambitosList: string[]): string[] => {
     const allErrors: string[] = [];
     const nombresVistos = new Set<string>();
-
     ambitosList.forEach((nombre, index) => {
       const errors: string[] = [];
-
       if (nombresVistos.has(nombre.toLowerCase())) {
         errors.push(`Ámbito "${nombre}" duplicado en el lote`);
       }
       nombresVistos.add(nombre.toLowerCase());
-
       const existe = ambitos.some(
         (a) => a.nombre.toLowerCase() === nombre.toLowerCase(),
       );
       if (existe) {
         errors.push(`Ya existe un ámbito llamado "${nombre}" en este grado`);
       }
-
       if (errors.length > 0) {
         allErrors.push(`Línea ${index + 1}: ${errors.join(", ")}`);
       }
     });
-
     return allErrors;
   };
-
   const guardarAmbitosMasivos = () => {
     if (!ambitoMassiveData.trim()) {
-      setValidationErrors(["No hay datos para procesar. Ingrese al menos un ámbito."]);
+      setValidationErrors([
+        "No hay datos para procesar. Ingrese al menos un ámbito.",
+      ]);
       return;
     }
-
     if (!gradoEfectivoId) {
       setValidationErrors(["Debe seleccionar un grado antes de registrar."]);
       return;
     }
-
-    const { ambitos: ambitosList, parseErrors } = parseAmbitosMassiveData(ambitoMassiveData);
-
+    const { ambitos: ambitosList, parseErrors } =
+      parseAmbitosMassiveData(ambitoMassiveData);
     if (parseErrors.length > 0) {
       setValidationErrors(parseErrors);
       setParsedAmbitos([]);
       return;
     }
-
     if (ambitosList.length === 0) {
-      setValidationErrors(["No se encontraron ámbitos válidos. Verifique el formato."]);
+      setValidationErrors([
+        "No se encontraron ámbitos válidos. Verifique el formato.",
+      ]);
       return;
     }
-
     const errors = validarAmbitosMasivos(ambitosList);
     if (errors.length > 0) {
       setValidationErrors(errors);
       setParsedAmbitos([]);
       return;
     }
-
     setParsedAmbitos(ambitosList);
     setValidationErrors([]);
     setShowConfirmAmbitoModal(true);
   };
-
   // ✅ OPTIMIZADO: writeBatch para atomicidad y eficiencia
   async function confirmarGuardadoAmbitosMasivos() {
     setShowConfirmAmbitoModal(false);
     setIsSaving(true);
-
     try {
-      const maxOrden = ambitos.length > 0 ? Math.max(...ambitos.map((a) => a.orden || 0)) : 0;
-
+      const maxOrden =
+        ambitos.length > 0 ? Math.max(...ambitos.map((a) => a.orden || 0)) : 0;
       const batch = writeBatch(db);
       parsedAmbitos.forEach((nombre, index) => {
         const nuevoRef = doc(collection(db, "ambitos"));
@@ -299,7 +275,6 @@ export default function AmbitosDestrezas() {
           createdBy: user?.uid,
         });
       });
-
       await batch.commit();
       resetAmbitoForm();
       mostrarToast(
@@ -309,12 +284,15 @@ export default function AmbitosDestrezas() {
       );
     } catch (error) {
       console.error("Error guardando ámbitos masivos:", error);
-      mostrarToast("error", "Error al guardar", "No se pudieron guardar los ámbitos.");
+      mostrarToast(
+        "error",
+        "Error al guardar",
+        "No se pudieron guardar los ámbitos.",
+      );
     } finally {
       setIsSaving(false);
     }
   }
-
   async function guardarAmbito() {
     const errors: string[] = [];
     if (!ambitoFormData.nombre.trim()) {
@@ -329,13 +307,14 @@ export default function AmbitosDestrezas() {
         a.id !== editingAmbitoId,
     );
     if (existe) {
-      errors.push(`Ya existe un ámbito llamado "${ambitoFormData.nombre}" en este grado`);
+      errors.push(
+        `Ya existe un ámbito llamado "${ambitoFormData.nombre}" en este grado`,
+      );
     }
     if (errors.length > 0) {
       setValidationErrors(errors);
       return;
     }
-
     setIsSaving(true);
     try {
       if (editingAmbitoId) {
@@ -345,7 +324,10 @@ export default function AmbitosDestrezas() {
           updatedAt: serverTimestamp(),
         });
       } else {
-        const maxOrden = ambitos.length > 0 ? Math.max(...ambitos.map((a) => a.orden || 0)) : 0;
+        const maxOrden =
+          ambitos.length > 0
+            ? Math.max(...ambitos.map((a) => a.orden || 0))
+            : 0;
         await addDoc(collection(db, "ambitos"), {
           nombre: ambitoFormData.nombre.trim(),
           gradoId: gradoEfectivoId,
@@ -363,41 +345,51 @@ export default function AmbitosDestrezas() {
       resetAmbitoForm();
     } catch (error) {
       console.error("Error guardando ámbito:", error);
-      mostrarToast("error", "Error al guardar", "No se pudo guardar el ámbito.");
+      mostrarToast(
+        "error",
+        "Error al guardar",
+        "No se pudo guardar el ámbito.",
+      );
     } finally {
       setIsSaving(false);
     }
   }
-
   // ✅ OPTIMIZADO: writeBatch para copiar ámbitos y destrezas (antes hacía await por cada addDoc)
   async function copiarAGrados() {
     if (selectedDestGrados.length === 0) {
-      mostrarToast("warning", "Selecciona grados de destino", "Debes seleccionar al menos un grado para copiar.");
+      mostrarToast(
+        "warning",
+        "Selecciona grados de destino",
+        "Debes seleccionar al menos un grado para copiar.",
+      );
       return;
     }
     if (ambitos.length === 0) {
-      mostrarToast("warning", "Sin ámbitos para copiar", "El grado actual no tiene ámbitos para copiar.");
+      mostrarToast(
+        "warning",
+        "Sin ámbitos para copiar",
+        "El grado actual no tiene ámbitos para copiar.",
+      );
       return;
     }
-
     setIsCopying(true);
     try {
       const batch = writeBatch(db);
       let ambitosCreados = 0;
       let destrezasCreadas = 0;
-
       for (const destGradoId of selectedDestGrados) {
-        const ambitosDestContext = todosLosAmbitosContext.filter(a => a.gradoId === destGradoId);
+        const ambitosDestContext = todosLosAmbitosContext.filter(
+          (a) => a.gradoId === destGradoId,
+        );
         const ambitosCreadosMap: Record<string, string> = {};
-
         for (const ambitoOrigen of ambitos) {
-          let ambitoDestId = ambitosCreadosMap[ambitoOrigen.nombre.toLowerCase()];
-          
+          let ambitoDestId =
+            ambitosCreadosMap[ambitoOrigen.nombre.toLowerCase()];
           if (!ambitoDestId) {
             const existenteEnDestino = ambitosDestContext.find(
-              (a) => a.nombre.toLowerCase() === ambitoOrigen.nombre.toLowerCase(),
+              (a) =>
+                a.nombre.toLowerCase() === ambitoOrigen.nombre.toLowerCase(),
             );
-            
             if (existenteEnDestino) {
               ambitoDestId = existenteEnDestino.id;
             } else {
@@ -411,30 +403,28 @@ export default function AmbitosDestrezas() {
                 createdBy: user?.uid,
               });
               ambitoDestId = nuevoRef.id;
-              ambitosCreadosMap[ambitoOrigen.nombre.toLowerCase()] = ambitoDestId;
+              ambitosCreadosMap[ambitoOrigen.nombre.toLowerCase()] =
+                ambitoDestId;
               ambitosCreados++;
             }
           }
-
           const destrezasOrigen = todasLasDestrezasContext
             .filter((d) => d.ambitoId === ambitoOrigen.id)
             .sort((a, b) => (a.orden || 0) - (b.orden || 0));
-
-          const destrezasDestContext = todasLasDestrezasContext.filter(d => d.ambitoId === ambitoDestId);
+          const destrezasDestContext = todasLasDestrezasContext.filter(
+            (d) => d.ambitoId === ambitoDestId,
+          );
           const destrezasCreadasEnLoop = new Set<string>();
-
-          let ordenMax = destrezasDestContext.length > 0
-            ? Math.max(...destrezasDestContext.map((d) => d.orden || 0))
-            : 0;
-
+          let ordenMax =
+            destrezasDestContext.length > 0
+              ? Math.max(...destrezasDestContext.map((d) => d.orden || 0))
+              : 0;
           for (const destrezaOrigen of destrezasOrigen) {
             const lowerDesc = destrezaOrigen.descripcion.toLowerCase();
-            
             const existeEnContexto = destrezasDestContext.some(
               (d) => d.descripcion.toLowerCase() === lowerDesc,
             );
             const existeEnLoop = destrezasCreadasEnLoop.has(lowerDesc);
-            
             if (!existeEnContexto && !existeEnLoop) {
               ordenMax += 1;
               const nuevoRef = doc(collection(db, "destrezas"));
@@ -454,9 +444,7 @@ export default function AmbitosDestrezas() {
           }
         }
       }
-
       await batch.commit();
-
       mostrarToast(
         "success",
         "Copia completada",
@@ -467,12 +455,15 @@ export default function AmbitosDestrezas() {
       setSelectedDestGrados([]);
     } catch (error) {
       console.error("Error copiando ámbitos y destrezas:", error);
-      mostrarToast("error", "Error al copiar", "No se pudieron copiar ámbitos y destrezas.");
+      mostrarToast(
+        "error",
+        "Error al copiar",
+        "No se pudieron copiar ámbitos y destrezas.",
+      );
     } finally {
       setIsCopying(false);
     }
   }
-
   const toggleDestGrado = (gradoId: string) => {
     setSelectedDestGrados((prev) =>
       prev.includes(gradoId)
@@ -480,7 +471,6 @@ export default function AmbitosDestrezas() {
         : [...prev, gradoId],
     );
   };
-
   async function analizarYGuardarDestrezas() {
     const errors: string[] = [];
     if (!selectedAmbitoId) {
@@ -493,14 +483,11 @@ export default function AmbitosDestrezas() {
       setValidationErrors(errors);
       return;
     }
-
     const lineasLimpias = destrezaMassiveData
       .split("\n")
       .map((l) => l.trim())
       .filter((l) => l.length > 0);
-
     const usaPuntos = lineasLimpias.some((l) => l.endsWith("."));
-
     let destrezasList: string[];
     if (usaPuntos) {
       destrezasList = destrezaMassiveData
@@ -510,23 +497,26 @@ export default function AmbitosDestrezas() {
     } else {
       destrezasList = lineasLimpias;
     }
-
     if (destrezasList.length === 0) {
-      setValidationErrors(["No se encontraron destrezas válidas. Escribe al menos una."]);
+      setValidationErrors([
+        "No se encontraron destrezas válidas. Escribe al menos una.",
+      ]);
       return;
     }
-
-    const ambitoDestrezas = destrezas.filter((d) => d.ambitoId === selectedAmbitoId);
+    const ambitoDestrezas = destrezas.filter(
+      (d) => d.ambitoId === selectedAmbitoId,
+    );
     const duplicadas = destrezasList.filter((d) =>
       ambitoDestrezas.some(
         (existente) => existente.descripcion.toLowerCase() === d.toLowerCase(),
       ),
     );
     if (duplicadas.length > 0) {
-      setValidationErrors([`${duplicadas.length} destreza(s) ya existe(n) en este ámbito.`]);
+      setValidationErrors([
+        `${duplicadas.length} destreza(s) ya existe(n) en este ámbito.`,
+      ]);
       return;
     }
-
     const vistas = new Set<string>();
     const duplicadasInternas: string[] = [];
     destrezasList.forEach((d) => {
@@ -537,15 +527,15 @@ export default function AmbitosDestrezas() {
       vistas.add(lower);
     });
     if (duplicadasInternas.length > 0) {
-      setValidationErrors([`${duplicadasInternas.length} destreza(s) duplicada(s) en el lote.`]);
+      setValidationErrors([
+        `${duplicadasInternas.length} destreza(s) duplicada(s) en el lote.`,
+      ]);
       return;
     }
-
     setIsSaving(true);
     try {
       const ambito = ambitos.find((a) => a.id === selectedAmbitoId);
       if (!ambito) throw new Error("Ámbito no encontrado");
-
       // ✅ OPTIMIZADO: writeBatch para atomicidad
       const batch = writeBatch(db);
       destrezasList.forEach((texto, index) => {
@@ -562,7 +552,6 @@ export default function AmbitosDestrezas() {
           createdBy: user?.uid,
         });
       });
-
       await batch.commit();
       resetDestrezaForm();
       mostrarToast(
@@ -572,12 +561,15 @@ export default function AmbitosDestrezas() {
       );
     } catch (error) {
       console.error("Error guardando destrezas:", error);
-      mostrarToast("error", "Error al guardar", "No se pudieron guardar las destrezas.");
+      mostrarToast(
+        "error",
+        "Error al guardar",
+        "No se pudieron guardar las destrezas.",
+      );
     } finally {
       setIsSaving(false);
     }
   }
-
   const handleEditAmbito = (ambito: Ambito) => {
     setAmbitoFormData({ nombre: ambito.nombre, orden: ambito.orden || 0 });
     setEditingAmbitoId(ambito.id);
@@ -585,13 +577,11 @@ export default function AmbitosDestrezas() {
     setIsAmbitoMassive(false);
     setValidationErrors([]);
   };
-
   // ✅ OPTIMIZADO: writeBatch para eliminar ámbito + destrezas (antes hacía Promise.all + deleteDoc separado)
   async function handleDeleteAmbito(id: string) {
     const ambito = ambitos.find((a) => a.id === id);
     const destrezasDelAmbito = destrezas.filter((d) => d.ambitoId === id);
     let confirmado: boolean;
-
     if (destrezasDelAmbito.length > 0) {
       confirmado = await confirmar(
         `Eliminar "${ambito?.nombre || "ámbito"}"`,
@@ -616,19 +606,15 @@ export default function AmbitosDestrezas() {
       );
     }
     if (!confirmado) return;
-
     try {
       const batch = writeBatch(db);
-      
       if (destrezasDelAmbito.length > 0) {
         destrezasDelAmbito.forEach((d) => {
           batch.delete(doc(db, "destrezas", d.id));
         });
       }
       batch.delete(doc(db, "ambitos", id));
-      
       await batch.commit();
-
       mostrarToast(
         "success",
         "Ámbito eliminado",
@@ -636,10 +622,13 @@ export default function AmbitosDestrezas() {
       );
     } catch (error) {
       console.error("Error eliminando:", error);
-      mostrarToast("error", "Error al eliminar", "No se pudo eliminar el ámbito.");
+      mostrarToast(
+        "error",
+        "Error al eliminar",
+        "No se pudo eliminar el ámbito.",
+      );
     }
   }
-
   async function handleDeleteDestreza(id: string) {
     const destreza = destrezas.find((d) => d.id === id);
     const confirmado = await confirmar(
@@ -653,22 +642,27 @@ export default function AmbitosDestrezas() {
       },
     );
     if (!confirmado) return;
-
     try {
       await deleteDoc(doc(db, "destrezas", id));
-      mostrarToast("success", "Destreza eliminada", "La destreza fue eliminada correctamente.");
+      mostrarToast(
+        "success",
+        "Destreza eliminada",
+        "La destreza fue eliminada correctamente.",
+      );
     } catch (error) {
       console.error("Error eliminando:", error);
-      mostrarToast("error", "Error al eliminar", "No se pudo eliminar la destreza.");
+      mostrarToast(
+        "error",
+        "Error al eliminar",
+        "No se pudo eliminar la destreza.",
+      );
     }
   }
-
   const handleEditDestreza = (destreza: Destreza) => {
     setDestrezaMassiveData(destreza.descripcion);
     setEditingDestrezaId(destreza.id);
     setShowDestrezaForm(true);
     setValidationErrors([]);
-
     setTimeout(() => {
       destrezaFormRef.current?.scrollIntoView({
         behavior: "smooth",
@@ -676,13 +670,11 @@ export default function AmbitosDestrezas() {
       });
     }, 100);
   };
-
   async function guardarDestrezaIndividual() {
     if (!destrezaMassiveData.trim()) {
       setValidationErrors(["La destreza no puede estar vacía"]);
       return;
     }
-
     setIsSaving(true);
     try {
       const ambito = ambitos.find((a) => a.id === selectedAmbitoId);
@@ -716,37 +708,35 @@ export default function AmbitosDestrezas() {
       resetDestrezaForm();
     } catch (error) {
       console.error("Error:", error);
-      mostrarToast("error", "Error al guardar", "No se pudo guardar la destreza.");
+      mostrarToast(
+        "error",
+        "Error al guardar",
+        "No se pudo guardar la destreza.",
+      );
     } finally {
       setIsSaving(false);
     }
   }
-
   const getDestrezasByAmbito = (ambitoId: string) => {
     return destrezas.filter((d) => d.ambitoId === ambitoId);
   };
-
   const irADestrezas = (ambitoId: string) => {
     setSelectedAmbitoId(ambitoId);
     setCurrentView("destrezas");
     setValidationErrors([]);
   };
-
   const volverAAmbitos = () => {
     setCurrentView("ambitos");
     setSelectedAmbitoId(null);
     resetDestrezaForm();
   };
-
   const handlePrint = () => {
     const gradoActual = grados.find((g) => g.id === gradoEfectivoId);
     if (!gradoActual) return;
-
     const ambitosConDestrezas = ambitos.map((ambito) => ({
       ...ambito,
       destrezas: destrezas.filter((d) => d.ambitoId === ambito.id),
     }));
-
     const printContent = `
     <!DOCTYPE html>
     <html>
@@ -790,7 +780,6 @@ export default function AmbitosDestrezas() {
     </body>
     </html>
   `;
-
     const printWindow = window.open("", "_blank");
     if (printWindow) {
       printWindow.document.write(printContent);
@@ -801,7 +790,6 @@ export default function AmbitosDestrezas() {
       }, 500);
     }
   };
-
   const toastConfig = {
     success: {
       bg: "bg-green-50 border-green-400",
@@ -832,27 +820,31 @@ export default function AmbitosDestrezas() {
       icon: FaInfoCircle,
     },
   };
-
   const ConfirmIcon = confirmModal.icon || FaQuestionCircle;
-
   if (!ready) {
     return (
-      <Layout title="Ámbitos y Destrezas" subtitle="Configura competencias y destrezas" showBack>
-        <div className="flex items-center justify-center py-20">
+      <Layout
+        title="Ámbitos y Destrezas"
+        subtitle="Configura competencias y destrezas"
+        showBack
+      >
+        <div className="flex items-center justify-center py-12">
           <div className="text-center">
-            <div className="animate-spin rounded-full h-10 w-10 border-2 border-blue-600 border-t-transparent mx-auto mb-3"></div>
-            <p className="text-slate-600 text-sm font-medium">Cargando...</p>
+            <div className="animate-spin rounded-full h-10 w-10 border-2 border-[#174C35] border-t-transparent mx-auto mb-3"></div>
+            <p className="text-[#55645A] text-[11px] font-medium">
+              Cargando...
+            </p>
           </div>
         </div>
       </Layout>
     );
   }
-
   const ambitoSeleccionado = ambitos.find((a) => a.id === selectedAmbitoId);
-  const destrezasDelAmbito = selectedAmbitoId ? getDestrezasByAmbito(selectedAmbitoId) : [];
+  const destrezasDelAmbito = selectedAmbitoId
+    ? getDestrezasByAmbito(selectedAmbitoId)
+    : [];
   const gradoOrigen = grados.find((g) => g.id === gradoEfectivoId);
   const gradosDestino = grados.filter((g) => g.id !== gradoEfectivoId);
-
   return (
     <Layout
       title="Ámbitos y Destrezas"
@@ -860,46 +852,49 @@ export default function AmbitosDestrezas() {
       showBack
     >
       {anioActivo && (
-        <div className="bg-blue-50 border border-blue-200 rounded-lg px-4 py-3 mb-6">
-          <div className="flex items-center gap-2 text-blue-800">
-            <FaCalendarAlt className="text-sm" />
-            <span className="text-sm font-medium">Trabajando con año lectivo:</span>
-            <span className="text-base font-bold text-blue-900">{anioActivo.nombre}</span>
+        <div className="bg-[#F7F6F2] border border-[#DCD7CB] rounded-lg px-4 py-3 mb-3">
+          <div className="flex items-center gap-2 text-[#55645A]">
+            <FaCalendarAlt className="text-[11px]" />
+            <span className="text-[11px] font-medium">
+              Trabajando con año lectivo:
+            </span>
+            <span className="text-[11px] font-bold text-[#28352E]">
+              {anioActivo.nombre}
+            </span>
           </div>
         </div>
       )}
-
       {!anioActivo && (
-        <div className="bg-yellow-50 border border-yellow-200 rounded-lg px-4 py-3 mb-6">
+        <div className="bg-yellow-50 border border-yellow-200 rounded-lg px-4 py-3 mb-3">
           <div className="flex items-start gap-2">
             <FaInfoCircle className="text-yellow-600 mt-0.5" />
             <div>
-              <h4 className="text-yellow-800 font-semibold text-sm mb-1">
+              <h4 className="text-yellow-800 font-semibold text-[11px] mb-1">
                 No hay año lectivo activo
               </h4>
-              <p className="text-yellow-700 text-sm">
-                Debes crear y activar un año lectivo primero en el módulo de Años Lectivos.
+              <p className="text-yellow-700 text-[11px]">
+                Debes crear y activar un año lectivo primero en el módulo de
+                Años Lectivos.
               </p>
             </div>
           </div>
         </div>
       )}
-
-      <div className="bg-white rounded-xl shadow-sm border border-slate-200 mb-6 p-4">
-        <h3 className="text-base font-bold text-slate-800 mb-3 flex items-center gap-2">
-          <FaBook className="text-purple-600" />
+      <div className="bg-[#FFFDF8] rounded-lg shadow-sm border border-[#DCD7CB] mb-3 p-3">
+        <h3 className="text-[11px] font-bold text-[#28352E] mb-3 flex items-center gap-2">
+          <FaBook className="text-[#55645A]" />
           Selecciona un Grado
         </h3>
-
         {grados.length === 0 ? (
-          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 flex items-start gap-3">
+          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 flex items-start gap-3">
             <FaInfoCircle className="text-yellow-600 mt-0.5" />
             <div>
-              <h4 className="text-yellow-800 font-semibold text-sm">
+              <h4 className="text-yellow-800 font-semibold text-[11px]">
                 No hay grados disponibles
               </h4>
-              <p className="text-yellow-700 text-sm">
-                Debes crear y activar grados para el año lectivo vigente antes de registrar ámbitos.
+              <p className="text-yellow-700 text-[11px]">
+                Debes crear y activar grados para el año lectivo vigente antes
+                de registrar ámbitos.
               </p>
             </div>
           </div>
@@ -917,38 +912,38 @@ export default function AmbitosDestrezas() {
                     setSelectedGradoId(grado.id);
                     volverAAmbitos();
                   }}
-                  className={`p-3 rounded-lg border-2 transition-all duration-200 text-left text-sm ${
+                  className={`p-2 rounded-md border transition-all duration-200 text-left text-[11px] ${
                     isSelected
-                      ? "border-purple-500 bg-purple-50 shadow-sm"
-                      : "border-slate-200 hover:border-purple-300 hover:bg-slate-50"
+                      ? "border-[#174C35] bg-[#E8EFE9] shadow-sm"
+                      : "border-[#DCD7CB] hover:border-[#C9C1B1] hover:bg-[#F7F6F2]"
                   }`}
                 >
                   <div className="flex items-center gap-2">
                     <div
-                      className={`w-8 h-8 rounded flex items-center justify-center text-white font-bold text-xs ${
-                        isSelected
-                          ? "bg-linear-to-br from-purple-500 to-indigo-600"
-                          : "bg-linear-to-br from-slate-400 to-slate-500"
+                      className={`w-8 h-8 rounded flex items-center justify-center text-white font-bold text-[10px] ${
+                        isSelected ? "bg-[#174C35]" : "bg-[#9AA59C]"
                       }`}
                     >
                       {grado.paralelo}
                     </div>
                     <div className="flex-1 min-w-0">
-                      <div className="font-semibold text-slate-900 truncate">
+                      <div className="font-semibold text-[#1E2A24] truncate">
                         {grado.nombre}
                       </div>
-                      <div className="text-slate-500 text-xs flex items-center gap-1">
+                      <div className="text-[#667269] text-[10px] flex items-center gap-1">
                         {ambitosCount > 0 ? (
-                          <span className="text-purple-600 font-medium">
+                          <span className="text-[#55645A] font-medium">
                             {ambitosCount} ámbito{ambitosCount !== 1 ? "s" : ""}
                           </span>
                         ) : (
-                          <span className="text-orange-600 font-medium">Sin ámbitos</span>
+                          <span className="text-orange-600 font-medium">
+                            Sin ámbitos
+                          </span>
                         )}
                       </div>
                     </div>
                     {isSelected && (
-                      <FaUserCheck className="text-purple-600 text-xs shrink-0" />
+                      <FaUserCheck className="text-[#55645A] text-[10px] shrink-0" />
                     )}
                   </div>
                 </button>
@@ -957,30 +952,32 @@ export default function AmbitosDestrezas() {
           </div>
         )}
       </div>
-
       {currentView === "destrezas" && ambitoSeleccionado && (
-        <div className="mb-4 flex items-center gap-2 text-sm">
+        <div className="mb-4 flex items-center gap-2 text-[11px]">
           <button
             onClick={volverAAmbitos}
-            className="inline-flex items-center gap-1 text-blue-600 hover:text-blue-700 font-medium"
+            className="inline-flex items-center gap-1 text-[#174C35] hover:text-blue-700 font-medium"
           >
-            <FaArrowLeft className="text-xs" /> Ámbitos
+            <FaArrowLeft className="text-[10px]" /> Ámbitos
           </button>
           <span className="text-slate-400">/</span>
-          <span className="text-slate-700 font-medium">{ambitoSeleccionado.nombre}</span>
+          <span className="text-[#48564D] font-medium">
+            {ambitoSeleccionado.nombre}
+          </span>
           <span className="text-slate-400">/</span>
-          <span className="text-slate-500">Destrezas</span>
+          <span className="text-[#667269]">Destrezas</span>
         </div>
       )}
-
       {currentView === "ambitos" && gradoEfectivoId && (
-        <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-          <div className="bg-linear-to-r from-purple-600 to-purple-700 px-5 py-4 flex items-center justify-between">
+        <div className="bg-[#FFFDF8] rounded-lg shadow-sm border border-[#DCD7CB] overflow-hidden">
+          <div className="bg-[#F7F6F2] border-b border-[#DCD7CB] px-3 py-2 flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <FaBook className="text-white text-xl" />
+              <FaBook className="text-[#667269] text-[11px]" />
               <div>
-                <h3 className="text-white font-semibold text-base">Ámbitos</h3>
-                <p className="text-white/80 text-xs">
+                <h3 className="text-[#48564D] font-semibold text-[11px]">
+                  Ámbitos
+                </h3>
+                <p className="text-[#667269] text-[10px]">
                   {ambitos.length} ámbito(s) registrado(s)
                 </p>
               </div>
@@ -992,35 +989,34 @@ export default function AmbitosDestrezas() {
                   setShowCopyModal(true);
                 }}
                 disabled={ambitos.length === 0 || isSaving}
-                className="inline-flex items-center gap-2 bg-white/20 hover:bg-white/30 text-white px-3 py-1.5 rounded-lg transition-all text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                className="inline-flex items-center gap-2 bg-[#174C35] hover:bg-[#103827] text-white h-8 px-2.5 rounded-lg transition-all text-[11px] font-medium disabled:opacity-50 disabled:cursor-not-allowed"
                 title="Copiar ámbitos y destrezas a otros grados"
               >
-                <FaCopy className="text-xs" /> Copiar
+                <FaCopy className="text-[10px]" /> Copiar
               </button>
               <button
                 onClick={handlePrint}
                 disabled={ambitos.length === 0}
-                className="inline-flex items-center gap-2 bg-white/20 hover:bg-white/30 text-white px-3 py-1.5 rounded-lg transition-all text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                className="inline-flex items-center gap-2 bg-[#174C35] hover:bg-[#103827] text-white h-8 px-2.5 rounded-lg transition-all text-[11px] font-medium disabled:opacity-50 disabled:cursor-not-allowed"
                 title="Imprimir respaldo del grado"
               >
-                <FaPrint className="text-xs" /> Imprimir
+                <FaPrint className="text-[10px]" /> Imprimir
               </button>
               <button
                 onClick={() => setShowAmbitoForm(!showAmbitoForm)}
                 disabled={isSaving}
-                className="inline-flex items-center gap-2 bg-white/20 hover:bg-white/30 text-white px-3 py-1.5 rounded-lg transition-all text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                className="inline-flex items-center gap-2 bg-[#174C35] hover:bg-[#103827] text-white h-8 px-2.5 rounded-lg transition-all text-[11px] font-medium disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                <FaPlus className="text-xs" />
+                <FaPlus className="text-[10px]" />
                 {showAmbitoForm ? "Cancelar" : "Nuevo Ámbito"}
               </button>
             </div>
           </div>
-
-          <div className="p-5">
+          <div className="p-3">
             {showAmbitoForm && (
-              <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 mb-4">
+              <div className="bg-[#F7F6F2] border border-[#DCD7CB] rounded-lg p-3 mb-4">
                 <div className="flex items-center justify-between mb-3">
-                  <h4 className="text-sm font-semibold text-slate-800">
+                  <h4 className="text-[11px] font-semibold text-[#28352E]">
                     {editingAmbitoId
                       ? "Editar Ámbito"
                       : isAmbitoMassive
@@ -1036,53 +1032,55 @@ export default function AmbitosDestrezas() {
                         setParsedAmbitos([]);
                         setValidationErrors([]);
                       }}
-                      className="text-xs text-purple-600 hover:text-purple-700 font-medium"
+                      className="text-[10px] text-[#55645A] hover:text-[#55645A] font-medium"
                     >
                       {isAmbitoMassive ? "Modo Individual" : "Modo Masivo"}
                     </button>
                   )}
                 </div>
-
                 {validationErrors.length > 0 && (
                   <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-3">
-                    <ul className="text-red-700 text-sm space-y-1">
+                    <ul className="text-red-700 text-[11px] space-y-1">
                       {validationErrors.map((error, idx) => (
                         <li key={idx}>• {error}</li>
                       ))}
                     </ul>
                   </div>
                 )}
-
                 {!isAmbitoMassive ? (
-                  <div className="space-y-3">
+                  <div className="space-y-2">
                     <div>
-                      <label className="block text-xs font-semibold text-slate-700 mb-1">
+                      <label className="block text-[10px] font-semibold text-[#48564D] mb-1">
                         Nombre *
                       </label>
                       <input
                         type="text"
                         value={ambitoFormData.nombre}
                         onChange={(e) =>
-                          setAmbitoFormData({ ...ambitoFormData, nombre: e.target.value })
+                          setAmbitoFormData({
+                            ...ambitoFormData,
+                            nombre: e.target.value,
+                          })
                         }
                         placeholder="Ej: Comunicación Oral"
                         disabled={isSaving}
-                        className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-purple-500 disabled:bg-slate-100 disabled:cursor-not-allowed"
+                        className="w-full border border-[#C9C1B1] rounded-lg px-3 py-2 text-[11px] focus:ring-2 focus:ring-[#174C35]/30 disabled:bg-[#F1EFE9] disabled:cursor-not-allowed"
                       />
                     </div>
                     <div className="flex gap-2">
                       <button
                         onClick={guardarAmbito}
                         disabled={isSaving}
-                        className="flex-1 inline-flex items-center justify-center gap-2 bg-purple-600 hover:bg-purple-700 text-white px-3 py-2 rounded-lg text-sm font-medium disabled:opacity-70 disabled:cursor-not-allowed"
+                        className="flex-1 inline-flex items-center justify-center gap-2 bg-[#174C35] hover:bg-[#103827] text-white h-8 px-2.5 rounded-md text-[11px] font-medium disabled:opacity-70 disabled:cursor-not-allowed"
                       >
                         {isSaving ? (
                           <>
-                            <FaSpinner className="text-xs animate-spin" /> Guardando...
+                            <FaSpinner className="text-[10px] animate-spin" />{" "}
+                            Guardando...
                           </>
                         ) : (
                           <>
-                            <FaCheck className="text-xs" />
+                            <FaCheck className="text-[10px]" />
                             {editingAmbitoId ? "Actualizar" : "Guardar"}
                           </>
                         )}
@@ -1090,16 +1088,16 @@ export default function AmbitosDestrezas() {
                       <button
                         onClick={resetAmbitoForm}
                         disabled={isSaving}
-                        className="flex-1 inline-flex items-center justify-center gap-2 bg-slate-200 hover:bg-slate-300 text-slate-700 px-3 py-2 rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="flex-1 inline-flex items-center justify-center gap-2 bg-[#F1EFE9] hover:bg-[#E7E2D8] text-[#48564D] h-8 px-2.5 rounded-md text-[11px] font-medium disabled:opacity-50 disabled:cursor-not-allowed"
                       >
-                        <FaTimes className="text-xs" /> Cancelar
+                        <FaTimes className="text-[10px]" /> Cancelar
                       </button>
                     </div>
                   </div>
                 ) : (
-                  <div className="space-y-3">
+                  <div className="space-y-2">
                     <div>
-                      <label className="block text-xs font-semibold text-slate-700 mb-1">
+                      <label className="block text-[10px] font-semibold text-[#48564D] mb-1">
                         Ámbitos (uno por línea) *
                       </label>
                       <textarea
@@ -1108,46 +1106,50 @@ export default function AmbitosDestrezas() {
                         disabled={isSaving}
                         placeholder={`Ejemplo:\nComunicación Oral\nPensamiento Lógico\nComprensión del Medio Natural`}
                         rows={8}
-                        className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm font-sans focus:ring-2 focus:ring-purple-500 disabled:bg-slate-100 disabled:cursor-not-allowed"
+                        className="w-full border border-[#C9C1B1] rounded-lg px-3 py-2 text-[11px] font-sans focus:ring-2 focus:ring-[#174C35]/30 disabled:bg-[#F1EFE9] disabled:cursor-not-allowed"
                       />
-                      <p className="text-xs text-slate-500 mt-1">
-                        <FaInfoCircle className="inline mr-1" /> Escribe cada ámbito en una línea separada.
+                      <p className="text-[10px] text-[#667269] mt-1">
+                        <FaInfoCircle className="inline mr-1" /> Escribe cada
+                        ámbito en una línea separada.
                       </p>
                     </div>
                     <div className="flex gap-2">
                       <button
                         onClick={guardarAmbitosMasivos}
                         disabled={isSaving}
-                        className="flex-1 inline-flex items-center justify-center gap-2 bg-purple-600 hover:bg-purple-700 text-white px-3 py-2 rounded-lg text-sm font-medium disabled:opacity-70 disabled:cursor-not-allowed"
+                        className="flex-1 inline-flex items-center justify-center gap-2 bg-[#174C35] hover:bg-[#103827] text-white h-8 px-2.5 rounded-md text-[11px] font-medium disabled:opacity-70 disabled:cursor-not-allowed"
                       >
                         {isSaving ? (
                           <>
-                            <FaSpinner className="text-xs animate-spin" /> Procesando...
+                            <FaSpinner className="text-[10px] animate-spin" />{" "}
+                            Procesando...
                           </>
                         ) : (
                           <>
-                            <FaUpload className="text-xs" /> Analizar y Guardar
+                            <FaUpload className="text-[10px]" /> Analizar y
+                            Guardar
                           </>
                         )}
                       </button>
                       <button
                         onClick={resetAmbitoForm}
                         disabled={isSaving}
-                        className="flex-1 inline-flex items-center justify-center gap-2 bg-slate-200 hover:bg-slate-300 text-slate-700 px-3 py-2 rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="flex-1 inline-flex items-center justify-center gap-2 bg-[#F1EFE9] hover:bg-[#E7E2D8] text-[#48564D] h-8 px-2.5 rounded-md text-[11px] font-medium disabled:opacity-50 disabled:cursor-not-allowed"
                       >
-                        <FaTimes className="text-xs" /> Cancelar
+                        <FaTimes className="text-[10px]" /> Cancelar
                       </button>
                     </div>
                   </div>
                 )}
               </div>
             )}
-
             {ambitos.length === 0 ? (
-              <div className="text-center py-12 text-slate-500">
-                <FaBook className="text-4xl mx-auto mb-3 text-slate-300" />
+              <div className="text-center py-12 text-[#667269]">
+                <FaBook className="text-2xl mx-auto mb-3 text-slate-300" />
                 <p className="font-medium mb-1">No hay ámbitos registrados</p>
-                <p className="text-sm">Crea el primer ámbito para comenzar</p>
+                <p className="text-[11px]">
+                  Crea el primer ámbito para comenzar
+                </p>
               </div>
             ) : (
               <div className="space-y-2">
@@ -1156,13 +1158,15 @@ export default function AmbitosDestrezas() {
                   return (
                     <div
                       key={ambito.id}
-                      className="border border-slate-200 rounded-lg p-4 hover:border-purple-300 transition-colors"
+                      className="border border-[#DCD7CB] rounded-lg p-3 hover:border-[#C9C1B1] transition-colors"
                     >
                       <div className="flex items-start justify-between gap-3">
                         <div className="flex-1">
                           <div className="flex items-center gap-2">
-                            <h4 className="font-semibold text-slate-900">{ambito.nombre}</h4>
-                            <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full">
+                            <h4 className="font-semibold text-[#1E2A24]">
+                              {ambito.nombre}
+                            </h4>
+                            <span className="text-[10px] bg-[#F1EFE9] text-[#55645A] px-2 py-0.5 rounded-full">
                               {count} destreza{count !== 1 ? "s" : ""}
                             </span>
                           </div>
@@ -1171,18 +1175,18 @@ export default function AmbitosDestrezas() {
                           <button
                             onClick={() => irADestrezas(ambito.id)}
                             disabled={isSaving}
-                            className="inline-flex items-center gap-1 bg-teal-50 hover:bg-teal-100 text-teal-700 px-3 py-1.5 rounded-lg text-xs font-medium transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                            className="inline-flex items-center gap-1 bg-teal-50 hover:bg-[#E8EFE9] text-[#174C35] h-8 px-2.5 rounded-lg text-[10px] font-medium transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                             title="Gestionar destrezas"
                           >
-                            <FaTasks className="text-xs" /> Destrezas
+                            <FaTasks className="text-[10px]" /> Destrezas
                           </button>
                           <button
                             onClick={() => handleEditAmbito(ambito)}
                             disabled={isSaving}
-                            className="p-1.5 text-blue-600 hover:bg-blue-50 rounded transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                            className="p-1.5 text-[#174C35] hover:bg-[#F7F6F2] rounded transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                             title="Editar"
                           >
-                            <FaEdit className="text-xs" />
+                            <FaEdit className="text-[10px]" />
                           </button>
                           <button
                             onClick={() => handleDeleteAmbito(ambito.id)}
@@ -1190,7 +1194,7 @@ export default function AmbitosDestrezas() {
                             className="p-1.5 text-red-600 hover:bg-red-50 rounded transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                             title="Eliminar"
                           >
-                            <FaTrash className="text-xs" />
+                            <FaTrash className="text-[10px]" />
                           </button>
                         </div>
                       </div>
@@ -1202,17 +1206,16 @@ export default function AmbitosDestrezas() {
           </div>
         </div>
       )}
-
       {currentView === "destrezas" && ambitoSeleccionado && (
-        <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-          <div className="bg-linear-to-r from-teal-600 to-teal-700 px-5 py-4 flex items-center justify-between">
+        <div className="bg-[#FFFDF8] rounded-lg shadow-sm border border-[#DCD7CB] overflow-hidden">
+          <div className="bg-[#F7F6F2] border-b border-[#DCD7CB] px-3 py-2 flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <FaTasks className="text-white text-xl" />
+              <FaTasks className="text-[#667269] text-[11px]" />
               <div>
-                <h3 className="text-white font-semibold text-base">
+                <h3 className="text-[#48564D] font-semibold text-[11px]">
                   Destrezas de: {ambitoSeleccionado.nombre}
                 </h3>
-                <p className="text-white/80 text-xs">
+                <p className="text-[#667269] text-[10px]">
                   {destrezasDelAmbito.length} destreza(s) registrada(s)
                 </p>
               </div>
@@ -1220,24 +1223,28 @@ export default function AmbitosDestrezas() {
             <button
               onClick={() => setShowDestrezaForm(!showDestrezaForm)}
               disabled={isSaving}
-              className="inline-flex items-center gap-2 bg-white/20 hover:bg-white/30 text-white px-3 py-1.5 rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+              className="inline-flex items-center gap-2 bg-[#174C35] hover:bg-[#103827] text-white h-8 px-2.5 rounded-lg text-[11px] font-medium disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              <FaPlus className="text-xs" />
+              <FaPlus className="text-[10px]" />
               {showDestrezaForm ? "Cancelar" : "Agregar Destrezas"}
             </button>
           </div>
-
-          <div className="p-5">
+          <div className="p-3">
             {showDestrezaForm && (
-              <div ref={destrezaFormRef} className="bg-slate-50 border border-slate-200 rounded-lg p-4 mb-4">
-                <h4 className="text-sm font-semibold text-slate-800 mb-3">
-                  {editingDestrezaId ? "Editar Destreza" : "Agregar Destrezas (Masivo)"}
+              <div
+                ref={destrezaFormRef}
+                className="bg-[#F7F6F2] border border-[#DCD7CB] rounded-lg p-3 mb-4"
+              >
+                <h4 className="text-[11px] font-semibold text-[#28352E] mb-3">
+                  {editingDestrezaId
+                    ? "Editar Destreza"
+                    : "Agregar Destrezas (Masivo)"}
                 </h4>
                 {validationErrors.length > 0 && (
                   <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-3">
                     <div className="flex items-start gap-2">
                       <FaExclamationTriangle className="text-red-600 mt-0.5 shrink-0" />
-                      <ul className="text-red-700 text-sm space-y-1">
+                      <ul className="text-red-700 text-[11px] space-y-1">
                         {validationErrors.map((error, idx) => (
                           <li key={idx}>• {error}</li>
                         ))}
@@ -1245,9 +1252,9 @@ export default function AmbitosDestrezas() {
                     </div>
                   </div>
                 )}
-                <div className="space-y-3">
+                <div className="space-y-2">
                   <div>
-                    <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    <label className="block text-[10px] font-semibold text-[#48564D] mb-1">
                       {editingDestrezaId
                         ? "Editar destreza"
                         : "Destrezas (cada una termina con punto) *"}
@@ -1262,59 +1269,67 @@ export default function AmbitosDestrezas() {
                           : "Ejemplo:\nEscucha activamente a sus compañeros y adultos.\nExpresa sus ideas con claridad."
                       }
                       rows={12}
-                      className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm font-sans focus:ring-2 focus:ring-teal-500 disabled:bg-slate-100 disabled:cursor-not-allowed"
+                      className="w-full border border-[#C9C1B1] rounded-lg px-3 py-2 text-[11px] font-sans focus:ring-2 focus:ring-[#174C35]/30 disabled:bg-[#F1EFE9] disabled:cursor-not-allowed"
                     />
                     {!editingDestrezaId && (
-                      <p className="text-xs text-slate-500 mt-1">
+                      <p className="text-[10px] text-[#667269] mt-1">
                         <FaInfoCircle className="inline mr-1" />
-                        <strong>Destrezas largas:</strong> termina cada una con punto (.).{" "}
-                        <strong>Cortas (una palabra):</strong> una por línea, sin punto.
+                        <strong>Destrezas largas:</strong> termina cada una con
+                        punto (.). <strong>Cortas (una palabra):</strong> una
+                        por línea, sin punto.
                       </p>
                     )}
                   </div>
                   <div className="flex gap-2">
                     <button
                       onClick={
-                        editingDestrezaId ? guardarDestrezaIndividual : analizarYGuardarDestrezas
+                        editingDestrezaId
+                          ? guardarDestrezaIndividual
+                          : analizarYGuardarDestrezas
                       }
                       disabled={isSaving}
-                      className="flex-1 inline-flex items-center justify-center gap-2 bg-teal-600 hover:bg-teal-700 text-white px-3 py-2 rounded-lg text-sm font-medium disabled:opacity-70 disabled:cursor-not-allowed"
+                      className="flex-1 inline-flex items-center justify-center gap-2 bg-[#174C35] hover:bg-[#103827] text-white h-8 px-2.5 rounded-md text-[11px] font-medium disabled:opacity-70 disabled:cursor-not-allowed"
                     >
                       {isSaving ? (
                         <>
-                          <FaSpinner className="text-xs animate-spin" />
-                          {editingDestrezaId ? "Actualizando..." : "Procesando..."}
+                          <FaSpinner className="text-[10px] animate-spin" />
+                          {editingDestrezaId
+                            ? "Actualizando..."
+                            : "Procesando..."}
                         </>
                       ) : (
                         <>
-                          <FaCheck className="text-xs" />
-                          {editingDestrezaId ? "Actualizar" : "Analizar y Guardar"}
+                          <FaCheck className="text-[10px]" />
+                          {editingDestrezaId
+                            ? "Actualizar"
+                            : "Analizar y Guardar"}
                         </>
                       )}
                     </button>
                     <button
                       onClick={resetDestrezaForm}
                       disabled={isSaving}
-                      className="flex-1 inline-flex items-center justify-center gap-2 bg-slate-200 hover:bg-slate-300 text-slate-700 px-3 py-2 rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="flex-1 inline-flex items-center justify-center gap-2 bg-[#F1EFE9] hover:bg-[#E7E2D8] text-[#48564D] h-8 px-2.5 rounded-md text-[11px] font-medium disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                      <FaTimes className="text-xs" /> Cancelar
+                      <FaTimes className="text-[10px]" /> Cancelar
                     </button>
                   </div>
                 </div>
               </div>
             )}
-
             {destrezasDelAmbito.length === 0 ? (
-              <div className="text-center py-12 text-slate-500">
-                <FaTasks className="text-4xl mx-auto mb-3 text-slate-300" />
+              <div className="text-center py-12 text-[#667269]">
+                <FaTasks className="text-2xl mx-auto mb-3 text-slate-300" />
                 <p className="font-medium mb-1">No hay destrezas registradas</p>
-                <p className="text-sm mb-3">Agrega las destrezas de este ámbito</p>
+                <p className="text-[11px] mb-3">
+                  Agrega las destrezas de este ámbito
+                </p>
                 <button
                   onClick={() => setShowDestrezaForm(true)}
                   disabled={isSaving}
-                  className="inline-flex items-center gap-2 text-teal-600 hover:text-teal-700 font-medium text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="inline-flex items-center gap-2 text-[#174C35] hover:text-[#174C35] font-medium text-[11px] disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  <FaPlus className="text-xs" /> Agregar destrezas
+                  <FaPlus className="text-[10px]" /> Agregar destrezas
                 </button>
               </div>
             ) : (
@@ -1322,14 +1337,14 @@ export default function AmbitosDestrezas() {
                 {destrezasDelAmbito.map((destreza, index) => (
                   <div
                     key={destreza.id}
-                    className="border border-slate-200 rounded-lg p-4 hover:border-teal-300 transition-colors"
+                    className="border border-[#DCD7CB] rounded-lg p-3 hover:border-[#C9C1B1] transition-colors"
                   >
                     <div className="flex items-start gap-3">
-                      <div className="bg-teal-100 text-teal-700 rounded-lg w-8 h-8 flex items-center justify-center text-sm font-bold shrink-0">
+                      <div className="bg-[#E8EFE9] text-[#174C35] rounded-lg w-8 h-8 flex items-center justify-center text-[11px] font-bold shrink-0">
                         {index + 1}
                       </div>
                       <div className="flex-1">
-                        <p className="text-slate-600 text-sm whitespace-pre-line">
+                        <p className="text-[#55645A] text-[11px] whitespace-pre-line">
                           {destreza.descripcion}
                         </p>
                       </div>
@@ -1337,10 +1352,10 @@ export default function AmbitosDestrezas() {
                         <button
                           onClick={() => handleEditDestreza(destreza)}
                           disabled={isSaving}
-                          className="p-1.5 text-blue-600 hover:bg-blue-50 rounded transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                          className="p-1.5 text-[#174C35] hover:bg-[#F7F6F2] rounded transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                           title="Editar"
                         >
-                          <FaEdit className="text-xs" />
+                          <FaEdit className="text-[10px]" />
                         </button>
                         <button
                           onClick={() => handleDeleteDestreza(destreza.id)}
@@ -1348,7 +1363,7 @@ export default function AmbitosDestrezas() {
                           className="p-1.5 text-red-600 hover:bg-red-50 rounded transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                           title="Eliminar"
                         >
-                          <FaTrash className="text-xs" />
+                          <FaTrash className="text-[10px]" />
                         </button>
                       </div>
                     </div>
@@ -1359,25 +1374,24 @@ export default function AmbitosDestrezas() {
           </div>
         </div>
       )}
-
       {showConfirmAmbitoModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-100 p-4">
-          <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-100 p-3">
+          <div className="bg-[#FFFDF8] rounded-lg shadow-lg max-w-md w-full p-3">
             <div className="flex items-center gap-3 mb-4">
-              <div className="bg-purple-100 p-2 rounded-lg">
-                <FaUpload className="text-purple-600 text-xl" />
+              <div className="bg-[#F1EFE9] p-2 rounded-lg">
+                <FaUpload className="text-[#55645A] text-base" />
               </div>
-              <h3 className="text-lg font-bold text-slate-900">
+              <h3 className="text-[11px] font-bold text-[#1E2A24]">
                 Confirmar Registro Masivo
               </h3>
             </div>
-            <p className="text-slate-600 mb-4">
+            <p className="text-[#55645A] mb-4">
               Se analizaron y validaron correctamente{" "}
-              <strong className="text-purple-700">{parsedAmbitos.length}</strong>{" "}
+              <strong className="text-[#55645A]">{parsedAmbitos.length}</strong>{" "}
               ámbito(s). ¿Deseas registrarlos en el sistema?
             </p>
-            <div className="bg-slate-50 rounded-lg p-3 mb-4 max-h-40 overflow-y-auto">
-              <ul className="text-sm text-slate-700 space-y-1">
+            <div className="bg-[#F7F6F2] rounded-lg p-3 mb-4 max-h-40 overflow-y-auto">
+              <ul className="text-[11px] text-[#48564D] space-y-1">
                 {parsedAmbitos.map((ambito, idx) => (
                   <li key={idx}>• {ambito}</li>
                 ))}
@@ -1387,15 +1401,16 @@ export default function AmbitosDestrezas() {
               <button
                 onClick={confirmarGuardadoAmbitosMasivos}
                 disabled={isSaving}
-                className="flex-1 inline-flex items-center justify-center gap-2 bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                className="flex-1 inline-flex items-center justify-center gap-2 bg-[#174C35] hover:bg-[#103827] text-white h-8 px-2.5 rounded-lg text-[11px] font-medium disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {isSaving ? (
                   <>
-                    <FaSpinner className="text-xs animate-spin" /> Registrando...
+                    <FaSpinner className="text-[10px] animate-spin" />{" "}
+                    Registrando...
                   </>
                 ) : (
                   <>
-                    <FaCheck className="text-xs" /> Sí, registrar todos
+                    <FaCheck className="text-[10px]" /> Sí, registrar todos
                   </>
                 )}
               </button>
@@ -1405,43 +1420,40 @@ export default function AmbitosDestrezas() {
                   setParsedAmbitos([]);
                 }}
                 disabled={isSaving}
-                className="flex-1 inline-flex items-center justify-center gap-2 bg-slate-200 hover:bg-slate-300 text-slate-700 px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                className="flex-1 inline-flex items-center justify-center gap-2 bg-[#F1EFE9] hover:bg-[#E7E2D8] text-[#48564D] h-8 px-2.5 rounded-lg text-[11px] font-medium disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                <FaTimes className="text-xs" /> Cancelar
+                <FaTimes className="text-[10px]" /> Cancelar
               </button>
             </div>
           </div>
         </div>
       )}
-
       {showCopyModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-100 p-4">
-          <div className="bg-white rounded-xl shadow-xl max-w-lg w-full p-6">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-100 p-3">
+          <div className="bg-[#FFFDF8] rounded-lg shadow-lg max-w-lg w-full p-3">
             <div className="flex items-center gap-3 mb-4">
-              <div className="bg-blue-100 p-2 rounded-lg">
-                <FaCopy className="text-blue-600 text-xl" />
+              <div className="bg-[#E8EFE9] p-2 rounded-lg">
+                <FaCopy className="text-[#174C35] text-base" />
               </div>
               <div>
-                <h3 className="text-lg font-bold text-slate-900">
+                <h3 className="text-[11px] font-bold text-[#1E2A24]">
                   Copiar Ámbitos y Destrezas
                 </h3>
-                <p className="text-xs text-slate-500">
+                <p className="text-[10px] text-[#667269]">
                   Desde:{" "}
-                  <strong className="text-purple-700">
+                  <strong className="text-[#55645A]">
                     {gradoOrigen?.nombre} - {gradoOrigen?.paralelo}
                   </strong>{" "}
                   ({ambitos.length} ámbitos)
                 </p>
               </div>
             </div>
-
-            <p className="text-sm text-slate-600 mb-3">
+            <p className="text-[11px] text-[#55645A] mb-3">
               Selecciona los grados de destino. Los ámbitos y destrezas que ya
               existan en el destino <strong>no se duplicarán</strong>.
             </p>
-
             <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-semibold text-slate-700">
+              <span className="text-[10px] font-semibold text-[#48564D]">
                 {selectedDestGrados.length} seleccionado(s)
               </span>
               <button
@@ -1452,15 +1464,14 @@ export default function AmbitosDestrezas() {
                       : gradosDestino.map((g) => g.id),
                   )
                 }
-                className="text-xs text-blue-600 hover:text-blue-700 font-medium"
+                className="text-[10px] text-[#174C35] hover:text-blue-700 font-medium"
               >
                 {selectedDestGrados.length === gradosDestino.length
                   ? "Deseleccionar todos"
                   : "Seleccionar todos"}
               </button>
             </div>
-
-            <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 mb-4 max-h-56 overflow-y-auto space-y-1">
+            <div className="bg-[#F7F6F2] border border-[#DCD7CB] rounded-lg p-3 mb-4 max-h-56 overflow-y-auto space-y-1">
               {gradosDestino.map((grado) => {
                 const checked = selectedDestGrados.includes(grado.id);
                 const ambitosCount = todosLosAmbitos.filter(
@@ -1471,8 +1482,8 @@ export default function AmbitosDestrezas() {
                     key={grado.id}
                     className={`flex items-center justify-between p-2 rounded-lg cursor-pointer transition-all border ${
                       checked
-                        ? "bg-blue-50 border-blue-300"
-                        : "bg-white border-slate-200 hover:border-blue-300"
+                        ? "bg-[#F7F6F2] border-blue-300"
+                        : "bg-[#FFFDF8] border-[#DCD7CB] hover:border-[#C9C1B1]"
                     }`}
                   >
                     <div className="flex items-center gap-2">
@@ -1480,15 +1491,15 @@ export default function AmbitosDestrezas() {
                         type="checkbox"
                         checked={checked}
                         onChange={() => toggleDestGrado(grado.id)}
-                        className="w-4 h-4 text-blue-600 border-slate-300 rounded focus:ring-blue-500"
+                        className="w-4 h-4 text-[#174C35] border-[#C9C1B1] rounded focus:ring-[#174C35]/30"
                       />
-                      <span className="text-sm font-medium text-slate-800">
+                      <span className="text-[11px] font-medium text-[#28352E]">
                         {grado.nombre} - {grado.paralelo}
                       </span>
                     </div>
                     <span
-                      className={`text-xs ${
-                        ambitosCount > 0 ? "text-purple-600" : "text-orange-600"
+                      className={`text-[10px] ${
+                        ambitosCount > 0 ? "text-[#55645A]" : "text-orange-600"
                       }`}
                     >
                       {ambitosCount > 0 ? `${ambitosCount} ámbito(s)` : "Vacío"}
@@ -1497,20 +1508,20 @@ export default function AmbitosDestrezas() {
                 );
               })}
             </div>
-
             <div className="flex gap-2">
               <button
                 onClick={copiarAGrados}
                 disabled={isCopying || selectedDestGrados.length === 0}
-                className="flex-1 inline-flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                className="flex-1 inline-flex items-center justify-center gap-2 bg-[#174C35] hover:bg-[#103827] text-white h-8 px-2.5 rounded-lg text-[11px] font-medium disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {isCopying ? (
                   <>
-                    <FaSpinner className="text-xs animate-spin" /> Copiando...
+                    <FaSpinner className="text-[10px] animate-spin" />{" "}
+                    Copiando...
                   </>
                 ) : (
                   <>
-                    <FaCopy className="text-xs" /> Copiar ahora
+                    <FaCopy className="text-[10px]" /> Copiar ahora
                   </>
                 )}
               </button>
@@ -1520,36 +1531,43 @@ export default function AmbitosDestrezas() {
                   setSelectedDestGrados([]);
                 }}
                 disabled={isCopying}
-                className="flex-1 inline-flex items-center justify-center gap-2 bg-slate-200 hover:bg-slate-300 text-slate-700 px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                className="flex-1 inline-flex items-center justify-center gap-2 bg-[#F1EFE9] hover:bg-[#E7E2D8] text-[#48564D] h-8 px-2.5 rounded-lg text-[11px] font-medium disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                <FaTimes className="text-xs" /> Cancelar
+                <FaTimes className="text-[10px]" /> Cancelar
               </button>
             </div>
           </div>
         </div>
       )}
-
-      <div className="fixed top-4 right-4 z-100 space-y-2 pointer-events-none max-w-sm w-full">
+      <div className="fixed top-3 right-4 z-100 space-y-2 pointer-events-none max-w-sm w-full">
         {toasts.map((toast) => {
           const config = toastConfig[toast.type];
           const Icon = config.icon;
           return (
             <div
               key={toast.id}
-              className={`pointer-events-auto bg-white border-l-4 ${config.bg} rounded-lg shadow-2xl p-4 flex items-start gap-3 animate-in slide-in-from-right duration-300`}
+              className={`pointer-events-auto bg-[#FFFDF8] border-l-4 ${config.bg} rounded-lg shadow-lg p-3 flex items-start gap-3 animate-in slide-in-from-right duration-300`}
             >
-              <div className={`${config.iconBg} w-8 h-8 rounded-full flex items-center justify-center shrink-0`}>
-                <Icon className="text-white text-sm" />
+              <div
+                className={`${config.iconBg} w-8 h-8 rounded-full flex items-center justify-center shrink-0`}
+              >
+                <Icon className="text-white text-[11px]" />
               </div>
               <div className="flex-1 min-w-0">
-                <p className={`font-semibold text-sm ${config.titleColor}`}>{toast.title}</p>
+                <p className={`font-semibold text-[11px] ${config.titleColor}`}>
+                  {toast.title}
+                </p>
                 {toast.message && (
-                  <p className={`text-xs ${config.msgColor} mt-0.5 whitespace-pre-line`}>{toast.message}</p>
+                  <p
+                    className={`text-[10px] ${config.msgColor} mt-0.5 whitespace-pre-line`}
+                  >
+                    {toast.message}
+                  </p>
                 )}
               </div>
               <button
                 onClick={() => cerrarToast(toast.id)}
-                className="text-gray-400 hover:text-gray-600 shrink-0 transition-colors"
+                className="text-gray-400 hover:text-[#55645A] shrink-0 transition-colors"
               >
                 <FaTimes className="w-4 h-4" />
               </button>
@@ -1557,38 +1575,36 @@ export default function AmbitosDestrezas() {
           );
         })}
       </div>
-
       {confirmModal.isOpen && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-60 p-4 animate-in fade-in duration-200">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden animate-in zoom-in-95 duration-200">
-            <div className="bg-linear-to-r from-slate-50 to-slate-100 px-6 pt-6 pb-4 border-b border-slate-200">
-              <div className="flex items-start gap-4">
-                <div className="w-12 h-12 rounded-full bg-slate-200 flex items-center justify-center shrink-0">
-                  <ConfirmIcon className="text-slate-700 text-xl" />
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-60 p-3 animate-in fade-in duration-200">
+          <div className="bg-[#FFFDF8] rounded-lg shadow-lg max-w-md w-full overflow-hidden animate-in zoom-in-95 duration-200">
+            <div className="bg-[#F7F6F2] px-3 py-3 border-b border-[#DCD7CB]">
+              <div className="flex items-start gap-3">
+                <div className="w-9 h-9 rounded-full bg-[#F1EFE9] flex items-center justify-center shrink-0">
+                  <ConfirmIcon className="text-[#48564D] text-base" />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <h3 className="text-lg font-bold text-slate-900 mb-1">
+                  <h3 className="text-[11px] font-bold text-[#1E2A24] mb-1">
                     {confirmModal.title}
                   </h3>
-                  <p className="text-sm text-slate-600 leading-relaxed whitespace-pre-line">
+                  <p className="text-[11px] text-[#55645A] leading-relaxed whitespace-pre-line">
                     {confirmModal.message}
                   </p>
                 </div>
               </div>
             </div>
-
-            <div className="px-6 py-4 bg-slate-50 flex gap-3 justify-end">
+            <div className="px-3 py-2.5 bg-[#F7F6F2] flex gap-3 justify-end">
               <button
                 onClick={confirmModal.onCancel}
-                className="px-4 py-2 bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 rounded-lg text-sm font-semibold transition-all"
+                className="h-8 px-2.5 bg-[#FFFDF8] hover:bg-[#F1EFE9] text-[#48564D] border border-[#C9C1B1] rounded-lg text-[11px] font-semibold transition-all"
               >
                 {confirmModal.cancelText || "Cancelar"}
               </button>
               <button
                 onClick={confirmModal.onConfirm}
-                className={`px-4 py-2 ${confirmModal.confirmColor || "bg-red-600 hover:bg-red-700"} text-white rounded-lg text-sm font-semibold transition-all flex items-center gap-2`}
+                className={`h-8 px-2.5 ${confirmModal.confirmColor || "bg-red-600 hover:bg-red-700"} text-white rounded-lg text-[11px] font-semibold transition-all flex items-center gap-2`}
               >
-                <ConfirmIcon className="text-xs" />
+                <ConfirmIcon className="text-[10px]" />
                 {confirmModal.confirmText || "Confirmar"}
               </button>
             </div>

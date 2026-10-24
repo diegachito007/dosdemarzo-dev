@@ -18,6 +18,7 @@ import {
   FaUsers,
   FaUserShield,
   FaBook,
+  FaBookOpen,
   FaGraduationCap,
   FaCalendarAlt,
   FaUserGraduate,
@@ -27,7 +28,6 @@ import {
   FaExchangeAlt,
   FaClipboardList,
 } from "react-icons/fa";
-
 interface LayoutProps {
   children: ReactNode;
   title?: string;
@@ -37,22 +37,18 @@ interface LayoutProps {
   action?: ReactNode;
   showFooter?: boolean;
 }
-
 const RAIL_KEY = "eduX_rail_open";
 const ACTIVE_ROLE_KEY = "eduX_activeRole";
-
 // ✅ LOGOS: versión completa (rail expandido + móvil) e isotipo (rail colapsado)
 // ⚠️ Ajusta aquí la extensión/nombre real de tus archivos en /public
 const LOGO_FULL = "/logo.eduX.png";
 const LOGO_ICON = "/logo.eduX.mini.png";
-
 interface NavItem {
   to: string;
   label: string;
   icon: React.ComponentType<{ className?: string }>;
   roles: ("super_admin" | "docente")[];
 }
-
 const NAV_ITEMS: NavItem[] = [
   { to: "/", label: "Inicio", icon: FaHome, roles: ["super_admin", "docente"] },
   {
@@ -71,6 +67,12 @@ const NAV_ITEMS: NavItem[] = [
     to: "/reporte-notas",
     label: "Reporte Notas",
     icon: FaExclamationTriangle,
+    roles: ["super_admin", "docente"],
+  },
+  {
+    to: "/refuerzo-pedagogico",
+    label: "Refuerzo Pedagógico",
+    icon: FaBookOpen,
     roles: ["super_admin", "docente"],
   },
   {
@@ -134,9 +136,7 @@ const NAV_ITEMS: NavItem[] = [
     roles: ["super_admin"],
   },
 ];
-
 const PENDING_ROLE_DIALOG_KEY = "eduX_pendingRoleDialog";
-
 export default function Layout({
   children,
   title,
@@ -160,18 +160,15 @@ export default function Layout({
     }
   });
   const { grados } = useData();
-
   const nombreUsuario = userData?.nombreDocumento
     ? userData.nombreDocumento
     : user?.displayName || "Usuario";
-
   const tutorDeAnioActivo = (() => {
     if (!userData?.tutorDe) return [];
     return grados
       .filter((g) => userData.tutorDe?.includes(g.id))
       .map((g) => g.id);
   })();
-
   const hasDualRole =
     userData?.role === "super_admin" &&
     ((userData?.gradosAsignados?.length ?? 0) > 0 ||
@@ -203,7 +200,6 @@ export default function Layout({
         ? "super_admin"
         : "docente";
   const navItems = NAV_ITEMS.filter((n) => n.roles.includes(rol));
-
   const toggleRail = () => {
     setRailOpen((v) => {
       const next = !v;
@@ -215,7 +211,6 @@ export default function Layout({
       return next;
     });
   };
-
   const cambiarRolCrossPage = () => {
     setShowDropdown(false);
     try {
@@ -225,9 +220,7 @@ export default function Layout({
     }
     navigate("/");
   };
-
   const mostrarBarraNavegacion = title || subtitle || action || showBack;
-
   // ✅ Dropdown compartido (usado tanto en rail desktop como en móvil)
   const renderDropdown = (anchorClass: string) => (
     <div
@@ -325,7 +318,6 @@ export default function Layout({
       </div>
     </div>
   );
-
   return (
     <div className="min-h-screen bg-linear-to-br from-slate-50 to-slate-100 flex">
       {/* ==================== RAIL VERTICAL (solo PC ≥ 1024px) ==================== */}
@@ -387,7 +379,6 @@ export default function Layout({
             />
           </button>
         </div>
-
         {/* Navegación */}
         <nav className="flex-1 overflow-y-auto overflow-x-hidden py-2 flex flex-col gap-1 px-2">
           {navItems.map((item) => {
@@ -412,7 +403,6 @@ export default function Layout({
             );
           })}
         </nav>
-
         {/* Avatar al pie del rail */}
         <div
           className={`border-t border-slate-100 p-2 relative ${railOpen ? "" : "flex justify-center"}`}
@@ -444,7 +434,6 @@ export default function Layout({
               />
             )}
           </button>
-
           {showDropdown && (
             <>
               <div
@@ -456,7 +445,6 @@ export default function Layout({
           )}
         </div>
       </aside>
-
       {/* ==================== HEADER HORIZONTAL (tablet + móvil < 1024px) ==================== */}
       <div className="lg:hidden w-full flex flex-col min-h-screen">
         <header className="sticky top-0 z-40 bg-white border-b border-slate-200 shadow-sm">
@@ -489,7 +477,6 @@ export default function Layout({
                 )}
               </Link>
             </div>
-
             {/* Derecha: avatar + dropdown */}
             <div className="relative">
               <button
@@ -514,7 +501,6 @@ export default function Layout({
               )}
             </div>
           </div>
-
           {/* Drawer de navegación (se despliega desde arriba) */}
           {mobileMenuOpen && (
             <div className="border-t border-slate-100 bg-white px-2 py-2 max-h-[75vh] overflow-y-auto">
@@ -542,7 +528,6 @@ export default function Layout({
             </div>
           )}
         </header>
-
         {/* ==================== CONTENIDO (tablet + móvil) ==================== */}
         <div className="flex-1 flex flex-col">
           <main className="grow max-w-7xl mx-auto w-full px-4 sm:px-6 py-5">
@@ -582,7 +567,6 @@ export default function Layout({
           </main>
         </div>
       </div>
-
       {/* ==================== CONTENIDO (PC) ==================== */}
       <div className="hidden lg:flex flex-1 min-w-0 flex-col">
         <main className="grow max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-6">
