@@ -42,8 +42,8 @@ export default function NotificacionNotas({ informe, cerrar }: Props) {
       setInfo("Este navegador no permite compartir PDF. Descarga el PDF, abre el chat y adjúntalo manualmente.");return;
     }
     setOcupado(true);setError("");
-    try { await navigator.share({files:[archivo],text:mensajeNotificacion(borrador),title:"Informe académico"});setIniciado(true);
-      setInfo("Comprueba en WhatsApp que el mensaje y el PDF se enviaron al representante. Después confirma el envío aquí.");
+    try { await navigator.share({files:[archivo],title:"Informe académico"});setIniciado(true);
+      setInfo("Comprueba en WhatsApp que el PDF se envió al representante. Después confirma el envío aquí.");
     } catch(e) { if(!(e instanceof Error && e.name==="AbortError"))setError("No se pudo compartir. Descarga el PDF y adjúntalo en el chat del representante."); }
     finally {setOcupado(false);}
   };
@@ -55,35 +55,42 @@ export default function NotificacionNotas({ informe, cerrar }: Props) {
     } catch(e) {setError(e instanceof Error?e.message:"No se pudo registrar el envío. Puedes reintentar sin duplicarlo.");}
     finally {bloqueo.current=false;setOcupado(false);}
   };
+  const cancelar = async () => {
+    if (ocupado || bloqueo.current) return;
+    if (confirmado || !borrador) { cerrar(); return; }
+    bloqueo.current = true;
+    setOcupado(true);
+    setError("");
+    try { await descartarNotificacion(borrador); cerrar(); }
+    catch(e) { setError(e instanceof Error ? e.message : "No se pudo cancelar. Inténtalo nuevamente."); }
+    finally { bloqueo.current = false; setOcupado(false); }
+  };
   const btn="rounded border border-slate-300 px-3 py-2 text-xs font-semibold disabled:opacity-50";
   return <div className="fixed inset-0 z-100 flex items-center justify-center bg-black/40 p-3">
     <section role="dialog" aria-modal="true" aria-labelledby="notificacion-titulo" className="max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-lg bg-white p-5 shadow-xl">
-      <div className="flex items-center justify-between gap-3"><h3 id="notificacion-titulo" className="font-bold text-slate-800">Notificación académica {borrador ? `N.º ${borrador.numero}` : ""}</h3><button type="button" className={btn} onClick={cerrar} disabled={ocupado} aria-label="Cerrar notificación">Cerrar</button></div>
+      <h3 id="notificacion-titulo" className="font-bold text-slate-800">Notificación académica {borrador ? `N.º ${borrador.numero}` : ""}</h3>
       {error && <p role="alert" className="my-3 text-sm text-red-700">{error}</p>}
       {!borrador && !error && <p className="my-3 text-sm">Preparando PDF y número de notificación…</p>}
       {borrador && <>
         <p className="mt-3 text-xs text-slate-600">Representante: {borrador.informe.representante || "No registrado"} · +{borrador.informe.celular}</p>
-        <p className="mt-1 text-xs text-slate-600">Informe guardado al {fechaNotificacion(borrador.fecha)}. Si cierras sin confirmar, se conserva este borrador y su número.</p>
-        <p className="my-3 whitespace-pre-wrap rounded bg-slate-50 p-3 text-sm">{mensajeNotificacion(borrador)}</p>
-        {!confirmado && <><div className="flex flex-wrap gap-2">
-          <button type="button" className={btn} disabled={ocupado} onClick={async()=>{
-            if (!window.confirm("Descarta solo si NO enviaste esta notificación. El siguiente borrador utilizará datos y fecha actuales, sin aumentar el contador. ¿Descartar?")) return;
-            setOcupado(true);
-            try { await descartarNotificacion(borrador); cerrar(); }
-            catch(e) {setError(e instanceof Error ? e.message : "No se pudo descartar el borrador.");}
-            finally {setOcupado(false);}
-          }}>Descartar borrador</button>
-          <button type="button" className={btn} disabled={!archivo || ocupado} onClick={descargar}>Descargar PDF</button>
-          <a className={btn} href={`https://wa.me/${borrador.informe.celular}?text=${encodeURIComponent(mensajeNotificacion(borrador))}`} target="_blank" rel="noopener noreferrer" onClick={()=>setIniciado(true)}>Abrir chat del representante</a>
-          <button type="button" className={btn} disabled={!archivo || ocupado} onClick={()=>void compartir()}>Compartir mensaje y PDF</button>
-        </div>
-        <p className="mt-2 text-xs text-slate-600">«Abrir chat» prepara solo el texto: adjunta el PDF descargado. «Compartir» abre el selector del dispositivo: elige WhatsApp y el contacto correcto; no selecciona automáticamente el número. Algunas apps separan el texto del archivo.</p>
-        <label className="my-4 flex items-start gap-2 text-sm"><input type="checkbox" checked={confirma} disabled={!iniciado || ocupado} onChange={e=>setConfirma(e.target.checked)}/>Confirmo que envié por WhatsApp el mensaje y el PDF al representante indicado.</label>
-        <button type="button" className={`${btn} bg-green-700 text-white`} disabled={!confirma || ocupado} onClick={()=>void confirmar()}>{ocupado?"Procesando…":"Confirmar envío y registrar notificación"}</button></>}
+        <p className="mb-4 mt-1 text-xs text-slate-600">Informe del {fechaNotificacion(borrador.fecha)}</p>
+        {!confirmado && <>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" className={btn} disabled={!archivo || ocupado} onClick={descargar}>Descargar PDF</button>
+            <a className={btn} href={`https://wa.me/${borrador.informe.celular}?text=${encodeURIComponent(mensajeNotificacion(borrador))}`} target="_blank" rel="noopener noreferrer" onClick={()=>setIniciado(true)}>Abrir chat del representante</a>
+            <button type="button" className={btn} disabled={!archivo || ocupado} onClick={()=>void compartir()}>Compartir PDF</button>
+          </div>
+          <p className="mt-3 text-xs text-slate-600">«Abrir chat» prepara el mensaje breve en WhatsApp, donde puedes editarlo antes de enviarlo. Adjunta allí el PDF descargado. «Compartir PDF» envía solo el archivo: elige WhatsApp y el contacto del representante.</p>
+        </>}
       </>}
       {info && <p role="status" className="mt-3 text-sm text-slate-700">{info}</p>}
       <h4 className="mt-5 text-sm font-bold">Envíos confirmados: {historial.length}</h4>
       <ul className="mt-2 space-y-1 text-xs text-slate-600">{historial.map(h=><li key={h.id}>Notificación N.º {h.numero} · Confirmada el {fechaNotificacion(h.fechaEnvio || h.fecha)}</li>)}</ul>
+      {borrador && !confirmado && <>
+        <label className="my-4 flex items-start gap-2 text-sm"><input type="checkbox" checked={confirma} disabled={!iniciado || ocupado} onChange={e=>setConfirma(e.target.checked)}/>Confirmo que envié por WhatsApp el informe PDF al representante indicado.</label>
+        <button type="button" className={`${btn} w-full bg-green-700 text-white`} disabled={!confirma || ocupado} onClick={()=>void confirmar()}>{ocupado?"Procesando…":"Confirmar envío y registrar notificación"}</button>
+      </>}
+      <button type="button" className={`${btn} mt-2 w-full`} disabled={ocupado || (!borrador && !error)} onClick={()=>void cancelar()}>{confirmado ? "Cerrar" : "Cancelar"}</button>
     </section>
   </div>;
 }
