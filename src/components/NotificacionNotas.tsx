@@ -1,0 +1,89 @@
+import { useEffect, useRef, useState } from "react";
+import { collection, onSnapshot, query, where } from "firebase/firestore";
+import { db } from "../lib/firebase";
+import { contextoNotificacion, fechaNotificacion, generarPdfNotificacion, mensajeNotificacion, nombrePdfNotificacion, type BorradorNotificacion, type InformeNotificacion } from "../utils/notificacionNotas";
+
+import { prepararNotificacion, confirmarNotificacion, descartarNotificacion } from "../utils/registroNotificaciones";
+
+interface Props { informe: InformeNotificacion; cerrar: () => void }
+export default function NotificacionNotas({ informe, cerrar }: Props) {
+  const [borrador,setBorrador] = useState<BorradorNotificacion | null>(null);
+  const [archivo,setArchivo] = useState<File | null>(null);
+  const [error,setError] = useState("");
+  const [info,setInfo] = useState("");
+  const [ocupado,setOcupado] = useState(false);
+  const [iniciado,setIniciado] = useState(false);
+  const [confirma,setConfirma] = useState(false);
+  const [confirmado,setConfirmado] = useState(false);
+  const [historial,setHistorial] = useState<{id:string;numero:number;fecha:string;fechaEnvio?:string}[]>([]);
+  const bloqueo = useRef(false);
+  const contexto = contextoNotificacion(informe);
+  useEffect(()=>onSnapshot(query(collection(db,"notificacionesNotasHistorial"),where("contextoId","==",contexto)),s=>{
+    setHistorial(s.docs.map(d=>({ id:d.id,...d.data() } as {id:string;numero:number;fecha:string;fechaEnvio?:string})).sort((a,b)=>b.numero-a.numero));
+  },()=>setError("No se pudo consultar el historial. Revisa la conexión y los permisos de Firestore.")),[contexto]);
+  useEffect(()=>{
+    let activo = true;
+    const preparar = async()=>{
+      try {
+        if(!navigator.onLine) throw Error("Necesitas conexión para preparar una notificación.");
+        const borrador = await prepararNotificacion(informe);
+        const blob=generarPdfNotificacion(borrador).output("blob");
+        if(activo) {setBorrador(borrador);setArchivo(new File([blob],nombrePdfNotificacion(borrador),{type:"application/pdf"}));}
+      } catch(e) { if(activo)setError(e instanceof Error?e.message:"No se pudo preparar la notificación."); }
+    };
+    void preparar();return()=>{activo=false};
+  },[contexto,informe]);
+  const descargar=()=>{
+    if(!archivo)return;const url=URL.createObjectURL(archivo);const a=document.createElement("a");a.href=url;a.download=archivo.name;a.click();setTimeout(()=>URL.revokeObjectURL(url),30000);
+  };
+  const compartir=async()=>{
+    if(!archivo || !borrador)return;
+    if(!navigator.share || !navigator.canShare?.({files:[archivo]})) {
+      setInfo("Este navegador no permite compartir PDF. Descarga el PDF, abre el chat y adjúntalo manualmente.");return;
+    }
+    setOcupado(true);setError("");
+    try { await navigator.share({files:[archivo],text:mensajeNotificacion(borrador),title:"Informe académico"});setIniciado(true);
+      setInfo("Comprueba en WhatsApp que el mensaje y el PDF se enviaron al representante. Después confirma el envío aquí.");
+    } catch(e) { if(!(e instanceof Error && e.name==="AbortError"))setError("No se pudo compartir. Descarga el PDF y adjúntalo en el chat del representante."); }
+    finally {setOcupado(false);}
+  };
+  const confirmar=async()=>{
+    if(!borrador || !confirma || bloqueo.current)return;
+    bloqueo.current=true;setOcupado(true);setError("");
+    try {
+      await confirmarNotificacion(borrador);setConfirmado(true);setInfo("Envío registrado. Esta confirmación no acredita lectura, asistencia ni firma del acta.");
+    } catch(e) {setError(e instanceof Error?e.message:"No se pudo registrar el envío. Puedes reintentar sin duplicarlo.");}
+    finally {bloqueo.current=false;setOcupado(false);}
+  };
+  const btn="rounded border border-slate-300 px-3 py-2 text-xs font-semibold disabled:opacity-50";
+  return <div className="fixed inset-0 z-100 flex items-center justify-center bg-black/40 p-3">
+    <section role="dialog" aria-modal="true" aria-labelledby="notificacion-titulo" className="max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-lg bg-white p-5 shadow-xl">
+      <div className="flex items-center justify-between gap-3"><h3 id="notificacion-titulo" className="font-bold text-slate-800">Notificación académica {borrador ? `N.º ${borrador.numero}` : ""}</h3><button type="button" className={btn} onClick={cerrar} disabled={ocupado} aria-label="Cerrar notificación">Cerrar</button></div>
+      {error && <p role="alert" className="my-3 text-sm text-red-700">{error}</p>}
+      {!borrador && !error && <p className="my-3 text-sm">Preparando PDF y número de notificación…</p>}
+      {borrador && <>
+        <p className="mt-3 text-xs text-slate-600">Representante: {borrador.informe.representante || "No registrado"} · +{borrador.informe.celular}</p>
+        <p className="mt-1 text-xs text-slate-600">Informe guardado al {fechaNotificacion(borrador.fecha)}. Si cierras sin confirmar, se conserva este borrador y su número.</p>
+        <p className="my-3 whitespace-pre-wrap rounded bg-slate-50 p-3 text-sm">{mensajeNotificacion(borrador)}</p>
+        {!confirmado && <><div className="flex flex-wrap gap-2">
+          <button type="button" className={btn} disabled={ocupado} onClick={async()=>{
+            if (!window.confirm("Descarta solo si NO enviaste esta notificación. El siguiente borrador utilizará datos y fecha actuales, sin aumentar el contador. ¿Descartar?")) return;
+            setOcupado(true);
+            try { await descartarNotificacion(borrador); cerrar(); }
+            catch(e) {setError(e instanceof Error ? e.message : "No se pudo descartar el borrador.");}
+            finally {setOcupado(false);}
+          }}>Descartar borrador</button>
+          <button type="button" className={btn} disabled={!archivo || ocupado} onClick={descargar}>Descargar PDF</button>
+          <a className={btn} href={`https://wa.me/${borrador.informe.celular}?text=${encodeURIComponent(mensajeNotificacion(borrador))}`} target="_blank" rel="noopener noreferrer" onClick={()=>setIniciado(true)}>Abrir chat del representante</a>
+          <button type="button" className={btn} disabled={!archivo || ocupado} onClick={()=>void compartir()}>Compartir mensaje y PDF</button>
+        </div>
+        <p className="mt-2 text-xs text-slate-600">«Abrir chat» prepara solo el texto: adjunta el PDF descargado. «Compartir» abre el selector del dispositivo: elige WhatsApp y el contacto correcto; no selecciona automáticamente el número. Algunas apps separan el texto del archivo.</p>
+        <label className="my-4 flex items-start gap-2 text-sm"><input type="checkbox" checked={confirma} disabled={!iniciado || ocupado} onChange={e=>setConfirma(e.target.checked)}/>Confirmo que envié por WhatsApp el mensaje y el PDF al representante indicado.</label>
+        <button type="button" className={`${btn} bg-green-700 text-white`} disabled={!confirma || ocupado} onClick={()=>void confirmar()}>{ocupado?"Procesando…":"Confirmar envío y registrar notificación"}</button></>}
+      </>}
+      {info && <p role="status" className="mt-3 text-sm text-slate-700">{info}</p>}
+      <h4 className="mt-5 text-sm font-bold">Envíos confirmados: {historial.length}</h4>
+      <ul className="mt-2 space-y-1 text-xs text-slate-600">{historial.map(h=><li key={h.id}>Notificación N.º {h.numero} · Confirmada el {fechaNotificacion(h.fechaEnvio || h.fecha)}</li>)}</ul>
+    </section>
+  </div>;
+}
