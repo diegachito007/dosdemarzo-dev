@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { collection, onSnapshot, query, where } from "firebase/firestore";
 import { db } from "../lib/firebase";
-import { contextoNotificacion, fechaNotificacion, generarPdfNotificacion, mensajeNotificacion, nombrePdfNotificacion, type BorradorNotificacion, type InformeNotificacion } from "../utils/notificacionNotas";
+import { contextoNotificacion, fechaLimiteISO, fechaNotificacion, generarPdfNotificacion, mensajeNotificacion, nombrePdfNotificacion, type BorradorNotificacion, type InformeNotificacion } from "../utils/notificacionNotas";
 
-import { prepararNotificacion, confirmarNotificacion, descartarNotificacion } from "../utils/registroNotificaciones";
+import { prepararNotificacion, confirmarNotificacion, descartarNotificacion, actualizarFechaLimite } from "../utils/registroNotificaciones";
 
 interface Props { informe: InformeNotificacion; cerrar: () => void }
 export default function NotificacionNotas({ informe, cerrar }: Props) {
@@ -55,6 +55,19 @@ export default function NotificacionNotas({ informe, cerrar }: Props) {
     } catch(e) {setError(e instanceof Error?e.message:"No se pudo registrar el envío. Puedes reintentar sin duplicarlo.");}
     finally {bloqueo.current=false;setOcupado(false);}
   };
+  const cambiarFecha = async (fecha: string) => {
+    if (!borrador || ocupado || bloqueo.current || !fecha) return;
+    bloqueo.current = true; setOcupado(true); setError("");
+    try {
+      const actualizado = await actualizarFechaLimite(borrador, fecha);
+      const blob = generarPdfNotificacion(actualizado).output("blob");
+      setBorrador(actualizado);
+      setArchivo(new File([blob],nombrePdfNotificacion(actualizado),{type:"application/pdf"}));
+      setConfirma(false); setIniciado(false);
+      setInfo("Fecha actualizada. Comparte el PDF actualizado antes de confirmar el envío.");
+    } catch(e) {setError(e instanceof Error ? e.message : "No se pudo guardar la fecha límite.");}
+    finally {bloqueo.current = false; setOcupado(false);}
+  };
   const cancelar = async () => {
     if (ocupado || bloqueo.current) return;
     if (confirmado || !borrador) { cerrar(); return; }
@@ -75,9 +88,15 @@ export default function NotificacionNotas({ informe, cerrar }: Props) {
         <p className="mt-3 text-xs text-slate-600">Representante: {borrador.informe.representante || "No registrado"} · +{borrador.informe.celular}</p>
         <p className="mb-4 mt-1 text-xs text-slate-600">Informe del {fechaNotificacion(borrador.fecha)}</p>
         {!confirmado && <>
+          <div className="mb-4">
+            <label htmlFor="fecha-limite-notificacion" className="mb-1 block text-sm font-semibold text-slate-700">Fecha límite para acercarse</label>
+            <input id="fecha-limite-notificacion" type="date" value={fechaLimiteISO(borrador)} disabled={ocupado}
+              onChange={e=>void cambiarFecha(e.target.value)} className="rounded border border-slate-300 px-3 py-2 text-sm disabled:opacity-50" />
+            <p className="mt-1 text-xs text-slate-600">Por defecto: dos días hábiles (lunes a viernes). Puedes cambiarla por feriados u otras excepciones. Se guarda en el mensaje y el PDF.</p>
+          </div>
           <div className="flex flex-wrap gap-2">
             <button type="button" className={btn} disabled={!archivo || ocupado} onClick={descargar}>Descargar PDF</button>
-            <a className={btn} href={`https://wa.me/${borrador.informe.celular}?text=${encodeURIComponent(mensajeNotificacion(borrador))}`} target="_blank" rel="noopener noreferrer" onClick={()=>setIniciado(true)}>Abrir chat del representante</a>
+            <a className={btn} href={ocupado ? undefined : `https://wa.me/${borrador.informe.celular}?text=${encodeURIComponent(mensajeNotificacion(borrador))}`} aria-disabled={ocupado} target="_blank" rel="noopener noreferrer" onClick={e=>{if(ocupado)e.preventDefault();else setIniciado(true);}}>Abrir chat del representante</a>
             <button type="button" className={btn} disabled={!archivo || ocupado} onClick={()=>void compartir()}>Compartir PDF</button>
           </div>
           <p className="mt-3 text-xs text-slate-600">«Abrir chat» prepara el mensaje breve en WhatsApp, donde puedes editarlo antes de enviarlo. Adjunta allí el PDF descargado. «Compartir PDF» envía solo el archivo: elige WhatsApp y el contacto del representante.</p>

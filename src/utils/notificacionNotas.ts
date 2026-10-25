@@ -9,7 +9,7 @@ export interface InformeNotificacion {
   bajas: { fecha: string; tipo: string; actividad: string; nota: number }[];
 }
 export interface BorradorNotificacion {
-  id: string; numero: number; fecha: string; informe: InformeNotificacion;
+  id: string; numero: number; fecha: string; fechaLimite?: string; informe: InformeNotificacion;
 }
 export const contextoNotificacion = (i: Pick<InformeNotificacion, "docenteId" | "anioId" | "periodoId" | "gradoId" | "materiaId" | "estudianteId">) =>
   [i.docenteId, i.anioId, i.periodoId, i.gradoId, i.materiaId, i.estudianteId]
@@ -18,8 +18,33 @@ export const formatoNota = (n: number) => n.toFixed(2).replace(".", ",");
 export const fechaNotificacion = (iso: string) => new Date(iso).toLocaleDateString("es-EC", {
   timeZone: "America/Guayaquil", day: "2-digit", month: "2-digit", year: "numeric",
 });
+// El día de emisión no cuenta. Se cuentan lunes a viernes en fecha de Ecuador.
+export function fechaLimiteNotificacion(iso: string): string {
+  const partes = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Guayaquil", year: "numeric", month: "2-digit", day: "2-digit",
+  }).formatToParts(new Date(iso));
+  const parte = (tipo: string) => Number(partes.find(p => p.type === tipo)?.value);
+  const fecha = new Date(Date.UTC(parte("year"), parte("month") - 1, parte("day")));
+  let dias = 0;
+  while (dias < 2) {
+    fecha.setUTCDate(fecha.getUTCDate() + 1);
+    if (fecha.getUTCDay() !== 0 && fecha.getUTCDay() !== 6) dias++;
+  }
+  return fecha.toLocaleDateString("es-EC", {
+    timeZone: "UTC", day: "2-digit", month: "2-digit", year: "numeric",
+  });
+}
+export const fechaLimiteISO = (b: BorradorNotificacion): string => {
+  if (b.fechaLimite) return b.fechaLimite;
+  const [dia, mes, anio] = fechaLimiteNotificacion(b.fecha).split("/");
+  return `${anio}-${mes}-${dia}`;
+};
+export const fechaLimiteTexto = (b: BorradorNotificacion): string => {
+  const [anio, mes, dia] = fechaLimiteISO(b).split("-");
+  return `${dia}/${mes}/${anio}`;
+};
 export const mensajeNotificacion = (b: BorradorNotificacion) =>
-  `Estimado/a ${b.informe.representante || "representante"}, adjunto el informe académico de su representado/a ${b.informe.estudiante}, actualizado al ${fechaNotificacion(b.fecha)}. Solicitamos acercarse a la institución para revisar su situación académica y firmar el acta correspondiente.\n\nNotificación N.º ${b.numero}.`;
+  `Estimado/a ${b.informe.representante || "representante"}, adjunto el informe académico de su representado/a ${b.informe.estudiante}, actualizado al ${fechaNotificacion(b.fecha)}. Solicitamos acercarse a la institución hasta el ${fechaLimiteTexto(b)}, para revisar su situación académica y firmar el acta correspondiente.\n\nNotificación N.º ${b.numero}.`;
 export function generarPdfNotificacion(b: BorradorNotificacion): jsPDF {
   const i = b.informe;
   const pdf = new jsPDF();
@@ -31,7 +56,7 @@ export function generarPdfNotificacion(b: BorradorNotificacion): jsPDF {
     margin: { left: 14, right: 14, bottom: 18 },
     startY: 34, theme: "plain", styles: { fontSize: 10, cellPadding: 1.7, overflow: "linebreak" },
     columnStyles: { 0: { cellWidth: 52, fontStyle: "bold" }, 1: { cellWidth: 130 } },
-    body: [["Fecha de emisión", fechaNotificacion(b.fecha)], ["Estudiante", i.estudiante],
+    body: [["Fecha de emisión", fechaNotificacion(b.fecha)], ["Fecha límite de asistencia", fechaLimiteTexto(b)], ["Estudiante", i.estudiante],
       ["Representante", i.representante || "No registrado"], ["Grado", i.grado], ["Materia", i.materia],
       ["Período", i.periodo], ["Actividades asignadas", String(i.asignadas)],
       ["Actividades calificadas", String(i.calificadas)],
