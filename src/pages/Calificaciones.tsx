@@ -5,11 +5,11 @@ import {
   useRef,
   useMemo,
   Fragment,
+  useSyncExternalStore,
 } from "react";
 import {
   collection,
   query,
-  orderBy,
   addDoc,
   updateDoc,
   doc,
@@ -26,11 +26,34 @@ import { useData } from "../context/DataContext";
 import { Link } from "react-router-dom";
 import type { Estudiante } from "../types";
 import Layout from "../components/Layout";
-import { cacheGet, cacheSet, cacheInvalidate } from "../utils/sessionCache";
+import { cacheInvalidate } from "../utils/sessionCache";
+import {
+  claveAccesoEstudiantes,
+  claveConsultaEstudiantes,
+  asegurarEstudiantesCache,
+  leerEstudiantesCache,
+  observarEstudiantesCache,
+} from "../utils/estudiantesCache";
+import { useHorarioPanel, invalidarNotasPanel } from "../utils/panelCache";
+import {
+  documentoConId,
+  fusionarBorradorNotas,
+  prepararCalificaciones,
+  capturarContextoCalificaciones,
+  observarConsultaCalificaciones,
+  leerActividadesCalificaciones,
+  leerNotasCalificaciones,
+  observarCalificaciones,
+  revisionCalificaciones,
+  erroresCalificaciones,
+  reintentarCalificaciones,
+} from "../utils/calificacionesCache";
 import {
   construirRefuerzoConHistorial,
+  recalcularInsumos,
   type EntradaRefuerzo,
   type RefuerzoConHistorial,
+  type ContextoRecalculoEnMemoria,
 } from "../utils/refuerzo";
 import {
   FaUserCheck,
@@ -120,7 +143,6 @@ interface ActividadData {
   estrategiaNota: EstrategiaNota;
   dirigidaA?: "general" | "ambos" | "especial";
   estudianteIds?: string[];
-  // ✅ INSUMOS: actividad consolidada y fuentes agrupadas
   esConsolidado?: boolean;
   actividadesAgrupadas?: string[];
   createdAt?: Timestamp | Date;
@@ -191,8 +213,6 @@ const ESTRATEGIAS_NOTA = [
   { value: "reemplazar", label: "Reemplazar (Refuerzo reemplaza Original)" },
   { value: "maxima", label: "Máxima (Mayor entre Original y Refuerzo)" },
 ];
-const TTL_ACTIVIDADES = 1000 * 60 * 15;
-const TTL_CALIFICACIONES = 1000 * 60 * 5;
 const NOMBRES_DIAS = ["Lun", "Mar", "Mié", "Jue", "Vie"];
 const HORAS_DIA = [1, 2, 3, 4, 5, 6, 7];
 
@@ -265,6 +285,17 @@ const esFechaAnteriorAHoy = (fecha: string): boolean => {
 
 export default function Calificaciones() {
   const { user, userData } = useAuth();
+  const { anioActivo } = useData();
+  // Reiniciar borradores al cambiar cuenta, permisos o año, sin vaciar la caché al navegar.
+  const contexto = JSON.stringify([
+    claveAccesoEstudiantes(user?.uid, userData),
+    anioActivo?.id,
+  ]);
+  return <ContenidoCalificaciones key={contexto} />;
+}
+
+function ContenidoCalificaciones() {
+  const { user, userData } = useAuth();
   const {
     grados,
     ambitos,
@@ -275,16 +306,33 @@ export default function Calificaciones() {
     ready,
   } = useData();
 
+  const pantallaVigente = useRef(true);
+  useEffect(() => {
+    pantallaVigente.current = true;
+    return () => {
+      pantallaVigente.current = false;
+    };
+  }, []);
   const [panel, setPanel] = useState<0 | 1 | 2>(0);
   const [vistaPanel0, setVistaPanel0] = useState<"horario" | "lista">(
     "horario",
   );
-  const [estudiantes, setEstudiantes] = useState<Estudiante[]>([]);
   const [actividades, setActividades] = useState<ActividadData[]>([]);
   const [isSaving, setIsSaving] = useState(false);
-  const [asignaturasDocente, setAsignaturasDocente] = useState<
-    AsignaturaDocente[]
-  >([]);
+  const acceso = claveAccesoEstudiantes(user?.uid, userData);
+  const anioCache = anioActivo?.id || "";
+  const horarioCompartido = useHorarioPanel(
+    acceso,
+    anioCache,
+    "propias",
+    user?.uid || "",
+  );
+  const asignaturasDocente = horarioCompartido.items;
+  useSyncExternalStore(observarCalificaciones, revisionCalificaciones);
+  const erroresCarga = erroresCalificaciones();
+  useEffect(() => {
+    if (acceso && anioCache) prepararCalificaciones(acceso, anioCache);
+  }, [acceso, anioCache]);
   const [selectedGradoId, setSelectedGradoId] = useState("");
   const [selectedGradoNombre, setSelectedGradoNombre] = useState("");
   const [selectedMateriaId, setSelectedMateriaId] = useState("");
@@ -422,6 +470,28 @@ export default function Calificaciones() {
     return grados;
   })();
   const gradoEfectivoId = selectedGradoId;
+  const claveNomina = claveConsultaEstudiantes(
+    acceso,
+    anioCache,
+    gradoEfectivoId || null,
+  );
+  const nomina = useSyncExternalStore(
+    observarEstudiantesCache,
+    useCallback(
+      () =>
+        gradoEfectivoId && panel !== 0
+          ? leerEstudiantesCache(claveNomina)
+          : null,
+      [claveNomina, gradoEfectivoId, panel],
+    ),
+  );
+  useEffect(() => {
+    if (gradoEfectivoId && panel !== 0) asegurarEstudiantesCache(claveNomina);
+  }, [gradoEfectivoId, panel, claveNomina]);
+  const estudiantes = useMemo(
+    () => nomina?.items.filter((e) => e.activo === true) || [],
+    [nomina],
+  );
   const gradoEfectivoNombre = selectedGradoNombre;
   const docenteSinGrados =
     userData?.role === "docente" &&
@@ -610,36 +680,152 @@ export default function Calificaciones() {
     0,
   );
 
-  // ✅ Paleta natural por materia (misma materia = mismo color en todos los días y grados)
+  // ============================================================
+  // 🎨 PALETA POR MATERIA
+  // Cubre las 14 materias de Básica Superior y Bachillerato
+  // + un color de fallback para materias no listadas.
+  // La coincidencia es por regex sobre el nombre normalizado
+  // (sin tildes, minúsculas). El orden importa: se evalúa de
+  // la más específica a la más general.
+  // ============================================================
   const PALETA_MATERIAS = [
+    // 0 — Matemática (Exactas, azul institucional)
     {
       fondo: "bg-[#EAF0F6]",
       anillo: "ring-[#C8D6E5]",
       punto: "bg-[#244563]",
       hover: "hover:bg-[#E2EAF3]",
     },
+    // 1 — Lengua y Literatura (Lengua, morado suave)
+    {
+      fondo: "bg-[#F1ECF8]",
+      anillo: "ring-[#D7C9E8]",
+      punto: "bg-[#5B3B8C]",
+      hover: "hover:bg-[#E9E1F4]",
+    },
+    // 2 — Ciencias Naturales (Naturales, verde)
+    {
+      fondo: "bg-[#E7F3EA]",
+      anillo: "ring-[#C6E3CD]",
+      punto: "bg-[#2E6B3B]",
+      hover: "hover:bg-[#DDEEDF]",
+    },
+    // 3 — Estudios Sociales (Sociales, ámbar)
+    {
+      fondo: "bg-[#FBF1E3]",
+      anillo: "ring-[#E9D6B4]",
+      punto: "bg-[#8A5A1B]",
+      hover: "hover:bg-[#F5E7D0]",
+    },
+    // 4 — Inglés (Lengua, morado rosado)
+    {
+      fondo: "bg-[#F6E7EF]",
+      anillo: "ring-[#E6C7D6]",
+      punto: "bg-[#8A3358]",
+      hover: "hover:bg-[#EFD7E2]",
+    },
+    // 5 — Educación Cultural y Artística (Arte, magenta)
+    {
+      fondo: "bg-[#F8E7EC]",
+      anillo: "ring-[#E8C7D0]",
+      punto: "bg-[#A32E52]",
+      hover: "hover:bg-[#F1D7DF]",
+    },
+    // 6 — Educación Física (Deporte, naranja)
+    {
+      fondo: "bg-[#FCEFE1]",
+      anillo: "ring-[#EFD3AE]",
+      punto: "bg-[#B25A1E]",
+      hover: "hover:bg-[#F7E3CB]",
+    },
+    // 7 — Física (Naturales Bach., verde cian)
+    {
+      fondo: "bg-[#E5F2F0]",
+      anillo: "ring-[#C3E1DB]",
+      punto: "bg-[#1F6B63]",
+      hover: "hover:bg-[#D7EBE6]",
+    },
+    // 8 — Química (Naturales Bach., verde lima)
+    {
+      fondo: "bg-[#EDF3E2]",
+      anillo: "ring-[#D3E2BC]",
+      punto: "bg-[#4E6E1F]",
+      hover: "hover:bg-[#E1ECD0]",
+    },
+    // 9 — Biología (Naturales Bach., verde esmeralda)
+    {
+      fondo: "bg-[#E5F3E7]",
+      anillo: "ring-[#C2E3C8]",
+      punto: "bg-[#1F6B34]",
+      hover: "hover:bg-[#D6ECD9]",
+    },
+    // 10 — Historia (Sociales Bach., ámbar oscuro)
+    {
+      fondo: "bg-[#F7ECDB]",
+      anillo: "ring-[#E3CCAA]",
+      punto: "bg-[#7A4A11]",
+      hover: "hover:bg-[#F0E1C6]",
+    },
+    // 11 — Educación para la Ciudadanía (Sociales Bach., marrón cálido)
+    {
+      fondo: "bg-[#F4E9E1]",
+      anillo: "ring-[#E0C9B8]",
+      punto: "bg-[#7A4A2A]",
+      hover: "hover:bg-[#ECDCCD]",
+    },
+    // 12 — Filosofía (Sociales Bach., índigo)
+    {
+      fondo: "bg-[#EAEBF7]",
+      anillo: "ring-[#CBCEE8]",
+      punto: "bg-[#3B3E8A]",
+      hover: "hover:bg-[#DDDEF0]",
+    },
+    // 13 — Emprendimiento y Gestión (Transversal, teal)
+    {
+      fondo: "bg-[#E5F1F3]",
+      anillo: "ring-[#C3DDE0]",
+      punto: "bg-[#1E6B72]",
+      hover: "hover:bg-[#D7E9EC]",
+    },
+    // 14 — FALLBACK para materias no listadas (gris neutral)
+    {
+      fondo: "bg-[#F1F2F4]",
+      anillo: "ring-[#D6D9DE]",
+      punto: "bg-[#5B6470]",
+      hover: "hover:bg-[#E9EBEE]",
+    },
   ];
+
   const colorPorMateria = (nombre: string, idFallback: string) => {
     const clave = (nombre || idFallback)
       .trim()
       .toLowerCase()
       .normalize("NFD")
       .replace(/[\u0300-\u036f]/g, "");
-    if (/(educacion fisica|deporte|arte|musica|dibujo)/.test(clave)) {
-      return PALETA_MATERIAS[4];
-    }
-    if (/(social|historia|filosof|ciudadan)/.test(clave)) {
-      return PALETA_MATERIAS[3];
-    }
-    if (/(natural|biolog|quimic|fisica)/.test(clave)) {
-      return PALETA_MATERIAS[2];
-    }
-    if (/(lengua|literatura|ingl|idioma)/.test(clave)) {
-      return PALETA_MATERIAS[1];
-    }
-    if (/(matem|inform)/.test(clave)) {
-      return PALETA_MATERIAS[0];
-    }
+    if (!clave) return PALETA_MATERIAS[14];
+
+    // 1. Casos específicos de Bachillerato primero
+    if (/(fisica)/.test(clave)) return PALETA_MATERIAS[7];
+    if (/(quimica)/.test(clave)) return PALETA_MATERIAS[8];
+    if (/(biologia)/.test(clave)) return PALETA_MATERIAS[9];
+    if (/(historia)/.test(clave)) return PALETA_MATERIAS[10];
+    if (/(ciudadania)/.test(clave)) return PALETA_MATERIAS[11];
+    if (/(filosofia)/.test(clave)) return PALETA_MATERIAS[12];
+    if (/(emprendimiento)/.test(clave)) return PALETA_MATERIAS[13];
+
+    // 2. Áreas generales
+    if (/(lengua|literatura)/.test(clave)) return PALETA_MATERIAS[1];
+    if (/(matematica)/.test(clave)) return PALETA_MATERIAS[0];
+    if (/(ciencias naturales|naturales)/.test(clave)) return PALETA_MATERIAS[2];
+    if (/(estudios sociales|sociales)/.test(clave)) return PALETA_MATERIAS[3];
+    if (/(ingles|idioma extranjero)/.test(clave)) return PALETA_MATERIAS[4];
+    if (/(cultural y artistica|artistica|arte|musica|dibujo)/.test(clave))
+      return PALETA_MATERIAS[5];
+    if (/(educacion fisica|deporte)/.test(clave)) return PALETA_MATERIAS[6];
+
+    // 3. Fallback por hash para variantes no reconocidas
+    //    (nunca cae en undefined porque la paleta tiene 15 entradas
+    //    y solo se indexa con el último = neutral)
     let hash = 0;
     for (let i = 0; i < clave.length; i += 1) {
       hash = (hash * 31 + clave.charCodeAt(i)) >>> 0;
@@ -783,7 +969,8 @@ export default function Calificaciones() {
           message,
           confirmText: options?.confirmText || "Confirmar",
           cancelText: options?.cancelText || "Cancelar",
-          confirmColor: options?.confirmColor || "bg-[#C93F45] hover:bg-[#AD3038]",
+          confirmColor:
+            options?.confirmColor || "bg-[#C93F45] hover:bg-[#AD3038]",
           icon: options?.icon || FaQuestionCircle,
           onConfirm: () => {
             setConfirmModal((p) => ({ ...p, isOpen: false }));
@@ -941,83 +1128,26 @@ export default function Calificaciones() {
     );
   };
 
-  // ==================== CARGA ====================
-  useEffect(() => {
-    if (!user?.uid || !anioActivo?.id) return;
-    const q = query(
-      collection(db, "asignaturasDocente"),
-      where("docenteId", "==", user.uid),
-      where("anioLectivoId", "==", anioActivo.id),
-      where("activo", "==", true),
-    );
-    const unsubscribe = onSnapshot(
-      q,
-      (snapshot) => {
-        setAsignaturasDocente(
-          snapshot.docs.map(
-            (d) => ({ id: d.id, ...d.data() }) as AsignaturaDocente,
-          ),
-        );
-      },
-      (e) => console.error(e),
-    );
-    return () => unsubscribe();
-  }, [user?.uid, anioActivo?.id]);
-
-  const cargarActividades = useCallback(async (destrezaId: string) => {
-    try {
-      const q = query(
-        collection(db, "actividades"),
-        where("destrezaId", "==", destrezaId),
-        orderBy("fecha", "desc"),
-      );
-      const snap = await getDocs(q);
-      const data = snap.docs.map(
-        (d) => ({ id: d.id, ...d.data() }) as ActividadData,
-      );
-      cacheSet(`actividades_${destrezaId}`, data);
-      setActividades(data);
-    } catch (e) {
-      console.error(e);
-    }
-  }, []);
-
-  const cargarCalificaciones = useCallback(async (actividadId: string) => {
-    try {
-      const q = query(
-        collection(db, "calificaciones"),
-        where("actividadId", "==", actividadId),
-      );
-      const snap = await getDocs(q);
-      const map: Record<
-        string,
-        {
-          nota: string;
-          observacion: string;
-          refuerzo?: RefuerzoData | null;
-          docenteId?: string;
-          editadoPor?: string;
-        }
-      > = {};
-      snap.docs.forEach((d) => {
-        const c = d.data() as unknown as CalificacionData;
-        map[c.estudianteId] = {
-          nota:
-            typeof c.nota === "number"
-              ? String(round2(c.nota))
-              : String(c.nota ?? ""),
-          observacion: c.observacion || "",
-          refuerzo: c.refuerzo || null,
-          docenteId: c.docenteId,
-          editadoPor: c.editadoPor,
-        };
-      });
-      cacheSet(`calificaciones_${actividadId}`, map);
-      setCalificaciones(map);
-    } catch (e) {
-      console.error(e);
-    }
-  }, []);
+  // Las escrituras se reflejan mediante docChanges; estas esperas NO vuelven a consultar listas.
+  const capturarOperacion = () => {
+    const validar = capturarContextoCalificaciones(acceso, anioCache);
+    const comprobar = () => {
+      validar();
+      if (!pantallaVigente.current)
+        throw new Error("La pantalla de trabajo ya se cerró.");
+    };
+    comprobar();
+    return comprobar;
+  };
+  const validarNomina = () => {
+    const estado = leerEstudiantesCache(claveNomina);
+    if (estado.estado !== "listo" || estado.desdeCacheSDK)
+      throw new Error("Espera a que se sincronice la nómina antes de guardar.");
+  };
+  const cargarActividades = (id: string) =>
+    leerActividadesCalificaciones(acceso, anioCache, id);
+  const cargarCalificaciones = (id: string) =>
+    leerNotasCalificaciones(acceso, anioCache, [id]);
 
   // ✅ GUARDAR ASISTENCIA: un registro por estudiante POR HORA del scope
   const guardarAsistencia = async () => {
@@ -1040,6 +1170,8 @@ export default function Calificaciones() {
     const horas = horasAsistencia.length ? horasAsistencia : [1];
     setIsSaving(true);
     try {
+      const validarOperacion = capturarOperacion();
+      validarNomina();
       const anioLectivoId = anioActivo?.id || "";
       const periodoId = periodoActual?.id || "";
       const ambitoIdParaGuardar = esGradoInicialActual
@@ -1114,7 +1246,11 @@ export default function Calificaciones() {
           operaciones++;
         });
       });
-      if (operaciones > 0) await batch.commit();
+      if (operaciones > 0) {
+        validarOperacion();
+        await batch.commit();
+        validarOperacion();
+      }
       mostrarToast(
         "success",
         "Asistencia guardada",
@@ -1143,6 +1279,8 @@ export default function Calificaciones() {
     }
     setIsSaving(true);
     try {
+      const validarOperacion = capturarOperacion();
+      validarNomina();
       const datos = {
         tipo: actividadForm.tipo,
         detalle: actividadForm.detalle.trim(),
@@ -1163,9 +1301,11 @@ export default function Calificaciones() {
       };
       let id: string | null = null;
       if (editingActividadId) {
+        validarOperacion();
         await updateDoc(doc(db, "actividades", editingActividadId), datos);
         id = editingActividadId;
       } else {
+        validarOperacion();
         const r = await addDoc(collection(db, "actividades"), {
           ...datos,
           createdAt: serverTimestamp(),
@@ -1197,6 +1337,11 @@ export default function Calificaciones() {
         "No se pudo guardar la actividad.",
       );
     } finally {
+      invalidarNotasPanel();
+      if (selectedActividadId)
+        cacheInvalidate(`calificaciones_${selectedActividadId}`);
+      cacheInvalidate(`calificacionesMatriz_${destrezaEfectivaId}`);
+      cacheInvalidate(`actividades_${destrezaEfectivaId}`);
       setIsSaving(false);
     }
   };
@@ -1215,16 +1360,22 @@ export default function Calificaciones() {
     if (!ok) return;
     setIsSaving(true);
     try {
-      const snap = await getDocs(
-        query(
-          collection(db, "calificaciones"),
-          where("actividadId", "==", actividadId),
-        ),
-      );
+      const validarOperacion = capturarOperacion();
+      validarNomina();
+      const snap = await leerNotasCalificaciones(acceso, anioCache, [
+        actividadId,
+      ]);
       const batch = writeBatch(db);
       snap.docs.forEach((d) => batch.delete(d.ref));
       batch.delete(doc(db, "actividades", actividadId));
+      validarOperacion();
       await batch.commit();
+      validarOperacion();
+      invalidarNotasPanel();
+      if (selectedActividadId)
+        cacheInvalidate(`calificaciones_${selectedActividadId}`);
+      cacheInvalidate(`calificacionesMatriz_${destrezaEfectivaId}`);
+      cacheInvalidate(`actividades_${destrezaEfectivaId}`);
       mostrarToast(
         "success",
         "Actividad eliminada",
@@ -1267,6 +1418,8 @@ export default function Calificaciones() {
     }
     setIsConsolidando(true);
     try {
+      const validarOperacion = capturarOperacion();
+      validarNomina();
       const fuentes = consolidables.filter(
         (a) => a.id && consolidarSeleccionadas.includes(a.id),
       );
@@ -1290,11 +1443,10 @@ export default function Calificaciones() {
       const fuenteDe = new Map(fuentes.map((f) => [f.id!, f]));
       const acum: Record<string, { suma: number; conteo: number }> = {};
       for (let i = 0; i < ids.length; i += 30) {
-        const snap = await getDocs(
-          query(
-            collection(db, "calificaciones"),
-            where("actividadId", "in", ids.slice(i, i + 30)),
-          ),
+        const snap = await leerNotasCalificaciones(
+          acceso,
+          anioCache,
+          ids.slice(i, i + 30),
         );
         snap.docs.forEach((d) => {
           const c = d.data() as unknown as CalificacionData;
@@ -1366,9 +1518,15 @@ export default function Calificaciones() {
           updatedAt: serverTimestamp(),
         });
       });
+      validarOperacion();
       await batch.commit();
-      cacheInvalidate(`actividades_${destrezaEfectivaId}`);
+      validarOperacion();
+      invalidarNotasPanel();
+      if (selectedActividadId)
+        cacheInvalidate(`calificaciones_${selectedActividadId}`);
       cacheInvalidate(`calificacionesMatriz_${destrezaEfectivaId}`);
+      cacheInvalidate(`actividades_${destrezaEfectivaId}`);
+
       await cargarActividades(destrezaEfectivaId);
       mostrarToast(
         "success",
@@ -1428,25 +1586,30 @@ export default function Calificaciones() {
 
     setIsSaving(true);
     try {
+      const validarOperacion = capturarOperacion();
+      validarNomina();
       const batch = writeBatch(db);
 
       // 1. Eliminar las calificaciones generadas por este insumo
-      const calsSnap = await getDocs(
-        query(
-          collection(db, "calificaciones"),
-          where("actividadId", "==", insumoId),
-        ),
-      );
+      const calsSnap = await leerNotasCalificaciones(acceso, anioCache, [
+        insumoId,
+      ]);
       calsSnap.docs.forEach((d) => batch.delete(d.ref));
 
       // 2. Eliminar la actividad insumo
       batch.delete(doc(db, "actividades", insumoId));
 
+      validarOperacion();
       await batch.commit();
+      validarOperacion();
+      invalidarNotasPanel();
+      if (selectedActividadId)
+        cacheInvalidate(`calificaciones_${selectedActividadId}`);
+      cacheInvalidate(`calificacionesMatriz_${destrezaEfectivaId}`);
+      cacheInvalidate(`actividades_${destrezaEfectivaId}`);
 
       // Invalidar datos derivados y limpiar selección si estaba apuntando al insumo eliminado.
-      cacheInvalidate(`calificaciones_${insumoId}`);
-      cacheInvalidate(`calificacionesMatriz_${insumo.destrezaId}`);
+
       if (selectedActividadId === insumoId) {
         setSelectedActividadId("");
         setCalificaciones({});
@@ -1488,12 +1651,11 @@ export default function Calificaciones() {
     }
     setIsSaving(true);
     try {
-      const existentesSnap = await getDocs(
-        query(
-          collection(db, "calificaciones"),
-          where("actividadId", "==", selectedActividadId),
-        ),
-      );
+      const validarOperacion = capturarOperacion();
+      validarNomina();
+      const existentesSnap = await leerNotasCalificaciones(acceso, anioCache, [
+        selectedActividadId,
+      ]);
       const existentesMap = new Map<
         string,
         { id: string; data: CalificacionData }
@@ -1523,9 +1685,6 @@ export default function Calificaciones() {
         const notaNum = parseFloat(calificacion.nota);
         if (isNaN(notaNum) || notaNum < 0 || notaNum > 10) return;
         const existente = existentesMap.get(est.id);
-        // Si existe un refuerzo, la nota original no debe sobrescribirse con la
-        // nota final que se muestra en pantalla. Las nuevas mejoras se registran
-        // únicamente mediante el historial de refuerzos.
         const notaPersistir = existente?.data.refuerzo
           ? round2(existente.data.nota)
           : round2(notaNum);
@@ -1537,6 +1696,14 @@ export default function Calificaciones() {
           refuerzo: calificacion.refuerzo || existente?.data.refuerzo || null,
           updatedAt: serverTimestamp(),
         };
+        if (
+          existente &&
+          existente.data.nota === datos.nota &&
+          (existente.data.observacion || "") === datos.observacion &&
+          JSON.stringify(existente.data.refuerzo || null) ===
+            JSON.stringify(datos.refuerzo)
+        )
+          return;
         if (!existente) {
           batch.set(doc(collection(db, "calificaciones")), {
             ...datos,
@@ -1562,9 +1729,77 @@ export default function Calificaciones() {
         operaciones++;
       });
       if (operaciones > 0) {
+        validarOperacion();
         await batch.commit();
-        cacheInvalidate(`calificaciones_${selectedActividadId}`);
+        validarOperacion();
+        invalidarNotasPanel();
+        if (selectedActividadId)
+          cacheInvalidate(`calificaciones_${selectedActividadId}`);
         cacheInvalidate(`calificacionesMatriz_${destrezaEfectivaId}`);
+        cacheInvalidate(`actividades_${destrezaEfectivaId}`);
+
+        // ✅ FASE 4.2: Inyección de memoria para evitar lecturas redundantes al recalcular insumos
+        const actividadesMap = new Map(
+          actividades
+            .filter((a): a is ActividadData & { id: string } => !!a.id)
+            .map((a) => [a.id, a]),
+        );
+        const estudiantesMap = new Map(estudiantes.map((e) => [e.id, e]));
+
+        // Definimos el tipo inline para que coincida estructuralmente con CalificacionConRefuerzo
+        const calificacionesMap = new Map<
+          string,
+          {
+            id: string;
+            estudianteId: string;
+            actividadId: string;
+            nota: number;
+            refuerzo: RefuerzoData | null;
+          }
+        >();
+
+        // Usamos existentesMap que ya tiene los IDs de Firestore
+        estudiantesAplicables.forEach((est) => {
+          const existente = existentesMap.get(est.id);
+          if (existente) {
+            const calLocal = calificaciones[est.id];
+            calificacionesMap.set(existente.id, {
+              id: existente.id,
+              estudianteId: est.id,
+              actividadId: selectedActividadId,
+              nota: calLocal?.nota
+                ? parseFloat(calLocal.nota)
+                : existente.data.nota,
+              refuerzo: calLocal?.refuerzo ?? existente.data.refuerzo ?? null,
+            });
+          }
+        });
+
+        const contextoEnMemoria: ContextoRecalculoEnMemoria = {
+          actividades: actividadesMap,
+          estudiantes: estudiantesMap,
+          // Cast seguro estructural sin usar 'any'
+          calificaciones:
+            calificacionesMap as ContextoRecalculoEnMemoria["calificaciones"],
+        };
+
+        const recalc = await recalcularInsumos(
+          [selectedActividadId],
+          contextoEnMemoria,
+        );
+        if (recalc.actualizados > 0) {
+          mostrarToast(
+            "info",
+            "Insumo actualizado",
+            `Se recalculó el promedio de ${recalc.actualizados} insumo(s).`,
+          );
+        } else if (!recalc.ok) {
+          mostrarToast(
+            "warning",
+            "Insumos no actualizados",
+            `Falló el recálculo del insumo: ${recalc.error}`,
+          );
+        }
       }
       mostrarToast(
         "success",
@@ -1583,6 +1818,12 @@ export default function Calificaciones() {
     }
   };
 
+  // ============================================================
+  // FASE 4.2: INYECCIÓN DE MEMORIA EN APLICAR REFUERZO
+  // ============================================================
+  // ============================================================
+  // FASE 4.2: INYECCIÓN DE MEMORIA EN APLICAR REFUERZO
+  // ============================================================
   const aplicarRefuerzo = async () => {
     if (
       !refuerzoEstudianteId ||
@@ -1598,12 +1839,13 @@ export default function Calificaciones() {
     }
     setIsSaving(true);
     try {
-      const snap = await getDocs(
-        query(
-          collection(db, "calificaciones"),
-          where("estudianteId", "==", refuerzoEstudianteId),
-          where("actividadId", "==", selectedActividadId),
-        ),
+      const validarOperacion = capturarOperacion();
+      validarNomina();
+      const snap = await leerNotasCalificaciones(
+        acceso,
+        anioCache,
+        [selectedActividadId],
+        refuerzoEstudianteId,
       );
       if (snap.empty) {
         mostrarToast(
@@ -1629,7 +1871,6 @@ export default function Calificaciones() {
         refuerzoPrevio,
         entradaRefuerzo,
       );
-      // Guardar cada refuerzo con un número consecutivo persistente.
       const refuerzoData = {
         ...refuerzoConstruido,
         historial: (refuerzoConstruido.historial || []).map(
@@ -1639,6 +1880,7 @@ export default function Calificaciones() {
           }),
         ),
       };
+      validarOperacion();
       await updateDoc(doc(db, "calificaciones", snap.docs[0].id), {
         refuerzo: refuerzoData,
         updatedAt: serverTimestamp(),
@@ -1646,8 +1888,44 @@ export default function Calificaciones() {
       mostrarToast("success", "Refuerzo aplicado", "Se aplicó correctamente.");
       setShowRefuerzoModal(false);
       setRefuerzoEstudianteId(null);
-      cacheInvalidate(`calificacionesMatriz_${destrezaEfectivaId}`);
+
       await cargarCalificaciones(selectedActividadId);
+
+      // ✅ FASE 4.2: Inyectamos el contexto en memoria para evitar
+      // que recalcularInsumos haga consultas redundantes.
+      const contextoEnMemoria: ContextoRecalculoEnMemoria = {
+        actividades: new Map(
+          actividades
+            .filter((a): a is ActividadData & { id: string } => !!a.id)
+            .map((a) => [a.id, a]),
+        ),
+        estudiantes: new Map(estudiantes.map((e) => [e.id, e])),
+        calificaciones: new Map(
+          Object.entries(calificaciones)
+            .filter(([, c]) => c.nota)
+            .map(([estId, c]) => [
+              `${estId}|${selectedActividadId}`,
+              {
+                id: `${estId}|${selectedActividadId}`,
+                estudianteId: estId,
+                actividadId: selectedActividadId,
+                nota: parseFloat(c.nota),
+                refuerzo: c.refuerzo || null,
+              },
+            ]),
+        ),
+      };
+      const recalc = await recalcularInsumos(
+        [selectedActividadId],
+        contextoEnMemoria,
+      );
+      if (recalc.actualizados > 0) {
+        mostrarToast(
+          "info",
+          "Insumos actualizados",
+          `Se recalculó el promedio de ${recalc.actualizados} insumo(s).`,
+        );
+      }
     } catch (e) {
       console.error(e);
       mostrarToast(
@@ -1656,6 +1934,11 @@ export default function Calificaciones() {
         "No se pudo aplicar el refuerzo.",
       );
     } finally {
+      invalidarNotasPanel();
+      if (selectedActividadId)
+        cacheInvalidate(`calificaciones_${selectedActividadId}`);
+      cacheInvalidate(`calificacionesMatriz_${destrezaEfectivaId}`);
+      cacheInvalidate(`actividades_${destrezaEfectivaId}`);
       setIsSaving(false);
     }
   };
@@ -1671,8 +1954,18 @@ export default function Calificaciones() {
     }
     setGuardandoCelda(true);
     try {
-      const key = `${estudianteId}|${actividadId}`;
-      const calExistente = calificacionesMatriz[key];
+      const validarOperacion = capturarOperacion();
+      validarNomina();
+      const existentes = await leerNotasCalificaciones(
+        acceso,
+        anioCache,
+        [actividadId],
+        estudianteId,
+      );
+      const documento = existentes.docs[0];
+      const calExistente = documento
+        ? ({ ...documento.data(), id: documento.id } as CalificacionData)
+        : undefined;
       const act = actividadesMatriz.find((a) => a.id === actividadId);
       if (!act) return;
       if (act.esConsolidado) {
@@ -1715,11 +2008,13 @@ export default function Calificaciones() {
         return;
       }
       if (calExistente?.id) {
+        validarOperacion();
         await updateDoc(doc(db, "calificaciones", calExistente.id), {
           nota: round2(notaNum),
           updatedAt: serverTimestamp(),
         });
       } else {
+        validarOperacion();
         await addDoc(collection(db, "calificaciones"), {
           estudianteId,
           actividadId,
@@ -1728,17 +2023,6 @@ export default function Calificaciones() {
           createdAt: serverTimestamp(),
         });
       }
-      setCalificacionesMatriz((prev) => ({
-        ...prev,
-        [key]: {
-          ...calExistente,
-          estudianteId,
-          actividadId,
-          nota: round2(notaNum),
-        },
-      }));
-      cacheInvalidate(`calificaciones_${actividadId}`);
-      cacheInvalidate(`calificacionesMatriz_${destrezaEfectivaId}`);
       setCeldaActiva(null);
       setNotaTemporal("");
     } catch (e) {
@@ -1749,6 +2033,11 @@ export default function Calificaciones() {
         "No se pudo guardar la calificación.",
       );
     } finally {
+      invalidarNotasPanel();
+      if (selectedActividadId)
+        cacheInvalidate(`calificaciones_${selectedActividadId}`);
+      cacheInvalidate(`calificacionesMatriz_${destrezaEfectivaId}`);
+      cacheInvalidate(`actividades_${destrezaEfectivaId}`);
       setGuardandoCelda(false);
     }
   };
@@ -1762,9 +2051,11 @@ export default function Calificaciones() {
     setFichaBase({});
     setFichaAsistencias({});
     try {
+      // ✅ F8: Se aplica .sort() para tener un orden determinista y evitar churn
       const actividadIds = actividadesVisibles
         .map((a) => a.id)
-        .filter(Boolean) as string[];
+        .filter(Boolean)
+        .sort() as string[];
       if (!actividadIds.length) {
         setFichaLoading(false);
         return;
@@ -1873,6 +2164,8 @@ export default function Calificaciones() {
     }
     setIsSaving(true);
     try {
+      const validarOperacion = capturarOperacion();
+      validarNomina();
       const batch = writeBatch(db);
       cambios.forEach((c) => {
         const base = fichaBase[c.actividadId];
@@ -1907,8 +2200,15 @@ export default function Calificaciones() {
           });
         }
       });
+      validarOperacion();
       await batch.commit();
+      validarOperacion();
+      invalidarNotasPanel();
+      if (selectedActividadId)
+        cacheInvalidate(`calificaciones_${selectedActividadId}`);
       cacheInvalidate(`calificacionesMatriz_${destrezaEfectivaId}`);
+      cacheInvalidate(`actividades_${destrezaEfectivaId}`);
+
       mostrarToast(
         "success",
         "Ficha guardada",
@@ -2062,133 +2362,103 @@ export default function Calificaciones() {
   };
 
   // ==================== EFFECTS ====================
-  useEffect(() => {
-    if (!gradoEfectivoId || panel === 0) return;
-    const q = query(
-      collection(db, "estudiantes"),
-      where("gradoId", "==", gradoEfectivoId),
-      where("activo", "==", true),
-      orderBy("apellidos", "asc"),
-    );
-    return onSnapshot(
-      q,
-      (s) =>
-        setEstudiantes(
-          s.docs.map((d) => ({ id: d.id, ...d.data() }) as Estudiante),
-        ),
-      (e) => console.error(e),
-    );
-  }, [gradoEfectivoId, panel]);
 
   useEffect(() => {
-    if (!destrezaEfectivaId || panel === 0) return;
-    let mounted = true;
-    (async () => {
-      const ck = `actividades_${destrezaEfectivaId}`;
-      const cached = cacheGet<ActividadData[]>(ck, TTL_ACTIVIDADES);
-      if (cached) {
-        if (mounted) setActividades(cached);
-        return;
-      }
-      try {
-        await cargarActividades(destrezaEfectivaId);
-      } catch (e) {
-        console.error(e);
-      }
-    })();
-    return () => {
-      mounted = false;
-    };
-  }, [destrezaEfectivaId, panel, cargarActividades]);
+    if (!acceso || !anioCache || !destrezaEfectivaId || panel === 0) return;
+    return observarConsultaCalificaciones(
+      acceso,
+      anioCache,
+      "actividades",
+      destrezaEfectivaId,
+      (s) => {
+        setActividades(s.docs.map((d) => documentoConId<ActividadData>(d)));
+      },
+    );
+  }, [acceso, anioCache, destrezaEfectivaId, panel]);
 
   useEffect(() => {
-    if (!selectedActividadId || panel !== 2) {
-      if (panel === 2) {
-        const t = setTimeout(() => {
-          setCalificaciones({});
-          setAsistenciasDiaActividad({});
-        }, 0);
-        return () => clearTimeout(t);
-      }
+    if (!acceso || !anioCache || !selectedActividadId || panel !== 2) return;
+    // Conservar los campos editados localmente y actualizar los demás desde el servidor.
+    let anterior: typeof calificaciones = {};
+    let primeraEntrega = true;
+    const filas = new WeakMap<object, (typeof calificaciones)[string]>();
+    return observarConsultaCalificaciones(
+      acceso,
+      anioCache,
+      "calificaciones",
+      selectedActividadId,
+      (s) => {
+        const siguiente: typeof calificaciones = {};
+        s.docs.forEach((d) => {
+          const c = documentoConId<CalificacionData>(d);
+          const fila = filas.get(c) || {
+            nota:
+              typeof c.nota === "number"
+                ? String(round2(c.nota))
+                : String(c.nota ?? ""),
+            observacion: c.observacion || "",
+            refuerzo: c.refuerzo || null,
+            docenteId: c.docenteId,
+            editadoPor: c.editadoPor,
+          };
+          filas.set(c, fila);
+          siguiente[c.estudianteId] = fila;
+        });
+        const base = anterior;
+        const reemplazar = primeraEntrega;
+        primeraEntrega = false;
+        anterior = siguiente;
+        setCalificaciones((actual) => {
+          if (reemplazar) return siguiente;
+          return fusionarBorradorNotas(actual, base, siguiente);
+        });
+      },
+    );
+  }, [acceso, anioCache, selectedActividadId, panel]);
+
+  const idsMatriz = JSON.stringify(
+    actividadesVisibles
+      .map((a) => a.id)
+      .filter(Boolean)
+      .sort(),
+  );
+  useEffect(() => {
+    if (
+      !acceso ||
+      !anioCache ||
+      panel !== 2 ||
+      vistaCalificaciones !== "matriz"
+    )
       return;
-    }
-    let mounted = true;
-    (async () => {
-      const ck = `calificaciones_${selectedActividadId}`;
-      const cached = cacheGet<
-        Record<
-          string,
-          {
-            nota: string;
-            observacion: string;
-            refuerzo?: RefuerzoData | null;
-            docenteId?: string;
-            editadoPor?: string;
-          }
-        >
-      >(ck, TTL_CALIFICACIONES);
-      if (cached) {
-        if (mounted) setCalificaciones(cached);
-        return;
-      }
-      try {
-        await cargarCalificaciones(selectedActividadId);
-      } catch (e) {
-        console.error(e);
-      }
-    })();
-    return () => {
-      mounted = false;
-    };
-  }, [selectedActividadId, panel, cargarCalificaciones]);
-
-  useEffect(() => {
-    if (panel !== 2 || vistaCalificaciones !== "matriz") return;
-    if (!destrezaEfectivaId || actividadesVisibles.length === 0) return;
-    let mounted = true;
-    (async () => {
-      const ck = `calificacionesMatriz_${destrezaEfectivaId}`;
-      const cached = cacheGet<Record<string, CalificacionData>>(
-        ck,
-        TTL_CALIFICACIONES,
-      );
-      if (cached) {
-        if (mounted) setCalificacionesMatriz(cached);
-        return;
-      }
-      setLoadingMatriz(true);
-      try {
-        const ids = actividadesVisibles
-          .map((a) => a.id)
-          .filter(Boolean) as string[];
-        const map: Record<string, CalificacionData> = {};
-        for (let i = 0; i < ids.length; i += 30) {
-          const snap = await getDocs(
-            query(
-              collection(db, "calificaciones"),
-              where("actividadId", "in", ids.slice(i, i + 30)),
-            ),
-          );
-          snap.docs.forEach((d) => {
-            const data = d.data() as unknown as CalificacionData;
-            map[`${data.estudianteId}|${data.actividadId}`] = {
-              id: d.id,
-              ...data,
-            };
+    const ids = JSON.parse(idsMatriz) as string[];
+    if (!ids.length) return;
+    const pendientes = new Set(ids);
+    const detener = ids.map((id) =>
+      observarConsultaCalificaciones(
+        acceso,
+        anioCache,
+        "calificaciones",
+        id,
+        (s, listo) => {
+          if (listo) pendientes.delete(id);
+          setLoadingMatriz(pendientes.size > 0);
+          setCalificacionesMatriz((prev) => {
+            const nuevo = Object.fromEntries(
+              Object.entries(prev).filter(
+                ([, c]) => ids.includes(c.actividadId) && c.actividadId !== id,
+              ),
+            );
+            s.docs.forEach((d) => {
+              const c = documentoConId<CalificacionData>(d);
+              nuevo[`${c.estudianteId}|${c.actividadId}`] = c;
+            });
+            return nuevo;
           });
-        }
-        cacheSet(ck, map);
-        if (mounted) setCalificacionesMatriz(map);
-      } catch (e) {
-        console.error(e);
-      } finally {
-        if (mounted) setLoadingMatriz(false);
-      }
-    })();
-    return () => {
-      mounted = false;
-    };
-  }, [panel, vistaCalificaciones, destrezaEfectivaId, actividadesVisibles]);
+        },
+      ),
+    );
+    return () => detener.forEach((fn) => fn());
+  }, [acceso, anioCache, panel, vistaCalificaciones, idsMatriz]);
 
   const actividadesMatriz = [...actividadesVisibles]
     .filter((a): a is ActividadData & { id: string } => !!a.id)
@@ -2354,6 +2624,28 @@ export default function Calificaciones() {
 
   return (
     <Layout>
+      {(erroresCarga.length > 0 ||
+        horarioCompartido.error ||
+        nomina?.error) && (
+        <div
+          role="alert"
+          className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800"
+        >
+          No se pudieron sincronizar todos los datos. Revisa tu conexión y
+          permisos.
+          <button
+            type="button"
+            className="ml-3 underline"
+            onClick={() => {
+              reintentarCalificaciones();
+              horarioCompartido.reintentar();
+              if (gradoEfectivoId) asegurarEstudiantesCache(claveNomina, true);
+            }}
+          >
+            Reintentar
+          </button>
+        </div>
+      )}
       {docenteSinGrados && (
         <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50/70 px-4 py-3">
           <div className="flex items-start gap-2.5">

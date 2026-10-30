@@ -1,10 +1,4 @@
-import {
-  useState,
-  useEffect,
-  useCallback,
-  startTransition,
-  useMemo,
-} from "react";
+import { useState, useEffect, useSyncExternalStore, useMemo } from "react";
 import { useAuth } from "../context/AuthContext";
 import { Link, useNavigate } from "react-router-dom";
 import {
@@ -12,14 +6,16 @@ import {
   onSnapshot,
   runTransaction,
   collection,
-  query,
-  where,
   getDocs,
-  getCountFromServer,
 } from "firebase/firestore";
-import type { Query } from "firebase/firestore";
 import { db } from "../lib/firebase";
-import type { Grado, AnioLectivo } from "../types";
+import { useData } from "../context/DataContext";
+import { claveAccesoEstudiantes } from "../utils/estudiantesCache";
+import {
+  observarPanel,
+  leerRevisionNotasPanel,
+  prepararPanel,
+} from "../utils/panelCache";
 import Layout from "../components/Layout";
 import {
   FaGraduationCap,
@@ -29,18 +25,17 @@ import {
   FaCalendarAlt,
   FaUserShield,
   FaCogs,
-  FaUserGraduate,
   FaChalkboardTeacher,
   FaClipboardCheck,
   FaExclamationTriangle,
   FaExchangeAlt,
   FaLock,
   FaSync,
-  FaClock,
   FaHandsHelping,
   FaClipboardList,
   FaBell,
 } from "react-icons/fa";
+
 interface InstitutionData {
   nombreInstitucion?: string;
   codigoAmie?: string;
@@ -50,8 +45,10 @@ interface InstitutionData {
   telefono?: string;
 }
 type ActiveRole = "super_admin" | "docente";
+
 const ACTIVE_ROLE_KEY = "eduX_activeRole";
 const PENDING_ROLE_DIALOG_KEY = "eduX_pendingRoleDialog";
+
 // Acentos suaves para identificar cada área sin alterar la paleta institucional.
 const MODULE_ACCENTS = [
   {
@@ -91,25 +88,23 @@ const MODULE_ACCENTS = [
     stat: "bg-orange-50 text-orange-800",
   },
 ];
+
 export default function Dashboard() {
   const { user, userData } = useAuth();
   const navigate = useNavigate();
-  const [grados, setGrados] = useState<Grado[]>([]);
-  const [anioActivoId, setAnioActivoId] = useState<string | null>(null);
-  const [stats, setStats] = useState({
-    aniosActivos: 0,
-    gradosActivos: 0,
-    estudiantesActivos: 0,
-    ambitos: 0,
-    calificaciones: 0,
-    solicitudesPendientes: 0,
-    notasEnRiesgo: 0,
-  });
-  const [statsLoading, setStatsLoading] = useState(false);
+  const { grados: todosGrados, anioActivo, ready } = useData();
+
+  const anioActivoId = anioActivo?.id || "";
+  const acceso = claveAccesoEstudiantes(user?.uid, userData);
+  const asignadosKey = JSON.stringify(
+    [...new Set(userData?.gradosAsignados || [])].sort(),
+  );
+
   const [institutionData, setInstitutionData] =
     useState<InstitutionData | null>(null);
   const [loadingInstitution, setLoadingInstitution] = useState(true);
   const [activeRole, setActiveRole] = useState<ActiveRole | null>(null);
+
   // ✅ Lazy initializer: lee localStorage una sola vez al montar, sin useEffect ni setState síncrono
   const [showRoleDialog, setShowRoleDialog] = useState<boolean>(() => {
     try {
@@ -120,27 +115,57 @@ export default function Dashboard() {
       return false;
     }
   });
-  const [horasHoy, setHorasHoy] = useState(0);
-  const [materiasCount, setMateriasCount] = useState(0);
+
+  const grados = useMemo(
+    () =>
+      todosGrados.filter(
+        (g) =>
+          g.anioLectivoId === anioActivoId &&
+          (activeRole !== "docente" ||
+            (JSON.parse(asignadosKey) as string[]).includes(g.id)),
+      ),
+    [todosGrados, anioActivoId, activeRole, asignadosKey],
+  );
+
+  const [, setDia] = useState(() => new Date().getDay());
+  useEffect(() => {
+    const timer = window.setInterval(() => setDia(new Date().getDay()), 60000);
+    return () => window.clearInterval(timer);
+  }, []);
+
   const [mantenimiento, setMantenimiento] = useState(false);
   const [mantenimientoListo, setMantenimientoListo] = useState(false);
   const [guardandoMantenimiento, setGuardandoMantenimiento] = useState(false);
   const [errorMantenimiento, setErrorMantenimiento] = useState("");
   const isSuperAdmin = userData?.role === "super_admin";
+
   useEffect(() => {
     if (!isSuperAdmin || activeRole !== "super_admin") return;
-    return onSnapshot(doc(db, "configuracion", "sistema"), (snapshot) => {
-      setMantenimiento(snapshot.data()?.mantenimiento === true);
-      setMantenimientoListo(true);
-      setErrorMantenimiento("");
-    }, (error) => {
-      console.error("Error leyendo mantenimiento:", error);
-      setMantenimientoListo(false);
-      setErrorMantenimiento("No se pudo consultar el estado de mantenimiento.");
-    });
+    return onSnapshot(
+      doc(db, "configuracion", "sistema"),
+      (snapshot) => {
+        setMantenimiento(snapshot.data()?.mantenimiento === true);
+        setMantenimientoListo(true);
+        setErrorMantenimiento("");
+      },
+      (error) => {
+        console.error("Error leyendo mantenimiento:", error);
+        setMantenimientoListo(false);
+        setErrorMantenimiento(
+          "No se pudo consultar el estado de mantenimiento.",
+        );
+      },
+    );
   }, [isSuperAdmin, activeRole]);
+
   const cambiarMantenimiento = async () => {
-    if (!isSuperAdmin || activeRole !== "super_admin" || !mantenimientoListo || guardandoMantenimiento) return;
+    if (
+      !isSuperAdmin ||
+      activeRole !== "super_admin" ||
+      !mantenimientoListo ||
+      guardandoMantenimiento
+    )
+      return;
     setGuardandoMantenimiento(true);
     setErrorMantenimiento("");
     const nuevoEstado = !mantenimiento;
@@ -148,22 +173,32 @@ export default function Dashboard() {
       await runTransaction(db, async (transaction) => {
         const referencia = doc(db, "configuracion", "sistema");
         const snapshot = await transaction.get(referencia);
-        transaction.set(referencia, {
-          mantenimiento: nuevoEstado,
-          ...(!snapshot.exists() ? { tituloMantenimiento: "", mensajeMantenimiento: "" } : {}),
-        }, { merge: true });
+        transaction.set(
+          referencia,
+          {
+            mantenimiento: nuevoEstado,
+            ...(!snapshot.exists()
+              ? { tituloMantenimiento: "", mensajeMantenimiento: "" }
+              : {}),
+          },
+          { merge: true },
+        );
       });
       setMantenimiento(nuevoEstado);
     } catch (error) {
       console.error("Error cambiando mantenimiento:", error);
-      setErrorMantenimiento("No se pudo cambiar el mantenimiento. Intenta nuevamente.");
+      setErrorMantenimiento(
+        "No se pudo cambiar el mantenimiento. Intenta nuevamente.",
+      );
     } finally {
       setGuardandoMantenimiento(false);
     }
   };
+
   const hasDocenteCapabilities =
     (userData?.gradosAsignados && userData.gradosAsignados.length > 0) ||
     (userData?.tutorDe && userData.tutorDe.length > 0);
+
   useEffect(() => {
     if (!userData) return;
     const determinarRol = async () => {
@@ -184,6 +219,7 @@ export default function Dashboard() {
     };
     determinarRol();
   }, [userData, isSuperAdmin, hasDocenteCapabilities]);
+
   const seleccionarRol = (rol: ActiveRole) => {
     setActiveRole(rol);
     try {
@@ -194,208 +230,55 @@ export default function Dashboard() {
     window.dispatchEvent(new CustomEvent("eduX:activeRole", { detail: rol }));
     setShowRoleDialog(false);
   };
+
   useEffect(() => {
-    const cargarConfiguracion = async () => {
+    // El aviso institucional solamente se muestra al administrador.
+    if (!ready || !acceso || !anioActivoId || activeRole !== "super_admin")
+      return;
+    let vigente = true;
+    const cargar = async () => {
       try {
-        const configSnap = await getDocs(
+        const snap = await getDocs(
           collection(db, "configuracionInstitucional"),
         );
-        if (!configSnap.empty) {
-          const data = configSnap.docs[0].data() as InstitutionData;
-          setInstitutionData(data);
-        }
+        const data = snap.empty
+          ? null
+          : (snap.docs[0].data() as InstitutionData);
+        if (vigente) setInstitutionData(data);
       } catch (error) {
         console.error("Error cargando configuración institucional:", error);
       } finally {
-        setLoadingInstitution(false);
+        if (vigente) setLoadingInstitution(false);
       }
     };
-    cargarConfiguracion();
-  }, []);
-  useEffect(() => {
-    if (!activeRole) return;
-    const cargarDatos = async () => {
-      try {
-        const qAnios = query(
-          collection(db, "aniosLectivos"),
-          where("activo", "==", true),
-        );
-        const snapAnios = await getDocs(qAnios);
-        const aniosData = snapAnios.docs.map(
-          (doc) => ({ id: doc.id, ...doc.data() }) as AnioLectivo,
-        );
-        if (aniosData.length > 0) {
-          const anioActivo = aniosData[0];
-          setAnioActivoId(anioActivo.id);
-          let qGrados: Query;
-          if (
-            activeRole === "docente" &&
-            userData?.gradosAsignados &&
-            userData.gradosAsignados.length > 0
-          ) {
-            qGrados = query(
-              collection(db, "grados"),
-              where("anioLectivoId", "==", anioActivo.id),
-              where("__name__", "in", userData.gradosAsignados),
-              where("activo", "==", true),
-            );
-          } else {
-            qGrados = query(
-              collection(db, "grados"),
-              where("anioLectivoId", "==", anioActivo.id),
-              where("activo", "==", true),
-            );
-          }
-          const snapGrados = await getDocs(qGrados);
-          setGrados(
-            snapGrados.docs.map(
-              (doc) => ({ id: doc.id, ...doc.data() }) as Grado,
-            ),
-          );
-        }
-      } catch (error) {
-        console.error("Error cargando datos para Dashboard:", error);
-      }
+    void cargar();
+    return () => {
+      vigente = false;
     };
-    cargarDatos();
-  }, [activeRole, userData?.gradosAsignados]);
+  }, [acceso, anioActivoId, activeRole, ready]);
+
   const tutorDeAnioActivo = useMemo(() => {
     if (!userData?.tutorDe) return [];
     return grados
       .filter((g) => userData.tutorDe?.includes(g.id))
       .map((g) => g.id);
   }, [grados, userData]);
+
   const nombreUsuario = userData?.nombreDocumento
     ? userData.nombreDocumento
     : user?.displayName || "Usuario";
-  const cargarStats = useCallback(async () => {
-    if (!activeRole) return;
-    setStatsLoading(true);
-    try {
-      const gradosAsignados: string[] = userData?.gradosAsignados ?? [];
-      const usarFiltroDocente =
-        activeRole === "docente" && gradosAsignados.length > 0;
-      const contar = (q: Query) =>
-        getCountFromServer(q).then((s) => s.data().count);
-      const [
-        aniosCount,
-        gradosCount,
-        estudiantesCount,
-        ambitosCount,
-        calificacionesCount,
-        solicitudesCount,
-        notasEnRiesgo,
-      ] = await Promise.all([
-        contar(
-          query(collection(db, "aniosLectivos"), where("activo", "==", true)),
-        ),
-        usarFiltroDocente
-          ? contar(
-              query(
-                collection(db, "grados"),
-                where("activo", "==", true),
-                where("__name__", "in", gradosAsignados),
-              ),
-            )
-          : contar(
-              query(collection(db, "grados"), where("activo", "==", true)),
-            ),
-        usarFiltroDocente
-          ? contar(
-              query(
-                collection(db, "estudiantes"),
-                where("activo", "==", true),
-                where("gradoId", "in", gradosAsignados),
-              ),
-            )
-          : contar(
-              query(collection(db, "estudiantes"), where("activo", "==", true)),
-            ),
-        usarFiltroDocente
-          ? contar(
-              query(
-                collection(db, "ambitos"),
-                where("activo", "==", true),
-                where("gradoId", "in", gradosAsignados),
-              ),
-            )
-          : contar(
-              query(collection(db, "ambitos"), where("activo", "==", true)),
-            ),
-        usarFiltroDocente
-          ? contar(
-              query(
-                collection(db, "calificaciones"),
-                where("gradoId", "in", gradosAsignados),
-              ),
-            )
-          : contar(collection(db, "calificaciones")),
-        contar(
-          query(
-            collection(db, "solicitudesMatriculas"),
-            where("estado", "==", "pendiente"),
-          ),
-        ),
-        contar(query(collection(db, "calificaciones"), where("nota", "<", 7))),
-      ]);
-      startTransition(() => {
-        setStats({
-          aniosActivos: aniosCount,
-          gradosActivos: gradosCount,
-          estudiantesActivos: estudiantesCount,
-          ambitos: ambitosCount,
-          calificaciones: calificacionesCount,
-          solicitudesPendientes: solicitudesCount,
-          notasEnRiesgo,
-        });
-      });
-    } catch (error) {
-      console.error("Error cargando estadísticas:", error);
-    } finally {
-      setStatsLoading(false);
-    }
-  }, [userData, activeRole]);
-  // ✅ Extraer a variable primitiva para estabilizar la referencia del useCallback.
-  // Esto satisface tanto a ESLint (exhaustive-deps) como al React Compiler
-  // (preserve-manual-memoization) sin sacrificar rendimiento.
-  const userUid = user?.uid;
-  const cargarHorarios = useCallback(async () => {
-    if (!userUid || !anioActivoId || activeRole !== "docente") {
-      setHorasHoy(0);
-      setMateriasCount(0);
-      return;
-    }
-    try {
-      const q = query(
-        collection(db, "asignaturasDocente"),
-        where("docenteId", "==", userUid),
-        where("anioLectivoId", "==", anioActivoId),
-        where("activo", "==", true),
-      );
-      const snap = await getDocs(q);
-      const dia = new Date().getDay(); // 0=Dom ... 6=Sáb
-      let horas = 0;
-      snap.docs.forEach((d) => {
-        const data = d.data() as {
-          horario?: { dia: number; horas: number[] }[];
-        };
-        (data.horario || []).forEach((b) => {
-          if (b.dia === dia) horas += b.horas.length;
-        });
-      });
-      setHorasHoy(horas);
-      setMateriasCount(snap.docs.length);
-    } catch (error) {
-      console.error("Error cargando horarios:", error);
-    }
-  }, [userUid, anioActivoId, activeRole]);
+
+  const revisionNotas = useSyncExternalStore(
+    observarPanel,
+    leerRevisionNotasPanel,
+  );
+
+  // Efecto mantenido solo para forzar la actualización visual de la caché
+  // cuando hay cambios en notas, pero sin cargar estadísticas pesadas.
   useEffect(() => {
-    const ejecutar = async () => {
-      await cargarStats();
-      await cargarHorarios();
-    };
-    ejecutar();
-  }, [cargarStats, cargarHorarios]);
+    if (ready) prepararPanel(acceso, anioActivoId);
+  }, [ready, acceso, anioActivoId, revisionNotas]);
+
   const modules = [
     {
       path: "/configuracion-institucional",
@@ -433,7 +316,7 @@ export default function Dashboard() {
       icon: FaCalendarAlt,
       color: "from-pink-500 to-pink-600",
       desc: "Base del sistema: periodos académicos",
-      stats: `${stats.aniosActivos} activo${stats.aniosActivos !== 1 ? "s" : ""}`,
+      stats: "Configurar",
       badge: "BASE",
       roles: ["super_admin"] as ActiveRole[],
     },
@@ -443,7 +326,7 @@ export default function Dashboard() {
       icon: FaGraduationCap,
       color: "from-blue-500 to-blue-600",
       desc: "Niveles educativos y paralelos",
-      stats: `${stats.gradosActivos} activo${stats.gradosActivos !== 1 ? "s" : ""}`,
+      stats: "Configurar",
       badge: "NIVEL 2",
       roles: ["super_admin"] as ActiveRole[],
     },
@@ -453,18 +336,8 @@ export default function Dashboard() {
       icon: FaBook,
       color: "from-purple-500 to-purple-600",
       desc: "Competencias y destrezas",
-      stats: `${stats.ambitos} ámbito${stats.ambitos !== 1 ? "s" : ""}`,
+      stats: "Configurar",
       badge: "NIVEL 3",
-      roles: ["super_admin"] as ActiveRole[],
-    },
-    {
-      path: "/matriculas",
-      name: "Matrículas",
-      icon: FaUserGraduate,
-      color: "from-indigo-500 to-indigo-600",
-      desc: "Revisar y aprobar solicitudes de matrícula",
-      stats: `${stats.solicitudesPendientes} pendiente${stats.solicitudesPendientes !== 1 ? "s" : ""}`,
-      badge: "ADMIN",
       roles: ["super_admin"] as ActiveRole[],
     },
     {
@@ -473,7 +346,7 @@ export default function Dashboard() {
       icon: FaChartBar,
       color: "from-orange-500 to-orange-600",
       desc: "Registro de asistencia y notas",
-      stats: `${stats.calificaciones} registro${stats.calificaciones !== 1 ? "s" : ""}`,
+      stats: "Registrar",
       badge: "DOCENTE",
       roles: ["docente"] as ActiveRole[],
     },
@@ -483,7 +356,7 @@ export default function Dashboard() {
       icon: FaClipboardCheck,
       color: "from-rose-500 to-rose-600",
       desc: "Control de asistencia por grado y materia",
-      stats: "Semanal",
+      stats: "Ver reporte",
       badge: "TUTOR/DOCENTE",
       roles: ["docente"] as ActiveRole[],
     },
@@ -493,7 +366,7 @@ export default function Dashboard() {
       icon: FaExclamationTriangle,
       color: "from-amber-500 to-amber-600",
       desc: "Calificaciones menores a 7 que requieren refuerzo",
-      stats: `${stats.notasEnRiesgo} nota${stats.notasEnRiesgo !== 1 ? "s" : ""}`,
+      stats: "Ver reporte",
       badge: "TUTOR/DOCENTE",
       roles: ["docente"] as ActiveRole[],
     },
@@ -505,7 +378,7 @@ export default function Dashboard() {
       desc: "Citaciones, asistencia de representantes, actas y seguimiento",
       stats: "Ver seguimiento",
       badge: "DOCENTE",
-      roles: ["super_admin", "docente"] as ActiveRole[],
+      roles: ["docente"] as ActiveRole[], // ✅ CORREGIDO: Solo docentes
     },
     {
       path: "/refuerzo-pedagogico",
@@ -543,89 +416,29 @@ export default function Dashboard() {
       icon: FaUsers,
       color: "from-green-500 to-green-600",
       desc: "Listado de alumnos",
-      stats: `${stats.estudiantesActivos} activo${stats.estudiantesActivos !== 1 ? "s" : ""}`,
+      stats: "Ver listado",
       badge: "TUTOR",
       roles: ["super_admin", "docente"] as ActiveRole[],
     },
   ];
+
   const filteredModules = modules.filter(
     (mod) => activeRole && mod.roles.includes(activeRole),
   );
+
   const esTutor = tutorDeAnioActivo.length > 0;
-  const diaSemanaLabel = new Date().toLocaleDateString("es-EC", {
-    weekday: "long",
-  });
-  const kpis =
-    activeRole === "docente"
-      ? [
-          {
-            label: "Estudiantes",
-            value: stats.estudiantesActivos,
-            sub: "en mis grados",
-            icon: FaUsers,
-            color: "bg-[#EAF0F6] text-[#244563]",
-          },
-          {
-            label: "Horas hoy",
-            value: horasHoy,
-            sub: diaSemanaLabel,
-            icon: FaClock,
-            color: "bg-[#EAF0F6] text-[#244563]",
-          },
-          {
-            label: "Materias",
-            value: materiasCount,
-            sub: "configuradas",
-            icon: FaBook,
-            color: "bg-[#FFF7ED] text-[#9A4518]",
-          },
-          {
-            label: "Grados",
-            value: stats.gradosActivos,
-            sub: "asignados",
-            icon: FaGraduationCap,
-            color: "bg-[#EAF0F6] text-[#244563]",
-          },
-        ]
-      : [
-          {
-            label: "Estudiantes",
-            value: stats.estudiantesActivos,
-            sub: "activos",
-            icon: FaUsers,
-            color: "bg-[#EAF0F6] text-[#244563]",
-          },
-          {
-            label: "Grados",
-            value: stats.gradosActivos,
-            sub: "activos",
-            icon: FaGraduationCap,
-            color: "bg-[#EAF0F6] text-[#244563]",
-          },
-          {
-            label: "Matrículas",
-            value: stats.solicitudesPendientes,
-            sub: "pendientes",
-            icon: FaUserGraduate,
-            color: "bg-amber-100 text-amber-600",
-          },
-          {
-            label: "Notas < 7",
-            value: stats.notasEnRiesgo,
-            sub: "en riesgo",
-            icon: FaExclamationTriangle,
-            color: "bg-red-100 text-[#C93F45]",
-          },
-        ];
+
   const hora = new Date().getHours();
   const saludo =
     hora < 12 ? "Buenos días" : hora < 18 ? "Buenas tardes" : "Buenas noches";
+
   const fechaLarga = new Date().toLocaleDateString("es-EC", {
     weekday: "long",
     day: "numeric",
     month: "long",
     year: "numeric",
   });
+
   if (activeRole === null) {
     return (
       <Layout>
@@ -638,6 +451,7 @@ export default function Dashboard() {
       </Layout>
     );
   }
+
   return (
     <Layout>
       {showRoleDialog && (
@@ -718,6 +532,7 @@ export default function Dashboard() {
           </div>
         </div>
       )}
+
       {activeRole === "super_admin" &&
         loadingInstitution === false &&
         !institutionData && (
@@ -755,6 +570,7 @@ export default function Dashboard() {
             </div>
           </div>
         )}
+
       {!userData?.nombreDocumento && (
         <div className="mb-3 bg-[#EAF0F6] border-l-4 border-[#C96522] p-2.5 rounded-lg">
           <div className="flex items-start gap-3">
@@ -790,7 +606,8 @@ export default function Dashboard() {
           </div>
         </div>
       )}
-      <div className="mb-3 flex flex-col gap-3 rounded-lg border border-[#C8D6E5] border-l-4 border-l-[#244563] bg-linear-to-r from-[#EAF0F6] via-[#F3F4F6] to-[#FFFFFF] px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+
+      <div className="mb-4 flex flex-col gap-3 rounded-lg border border-[#C8D6E5] border-l-4 border-l-[#244563] bg-linear-to-r from-[#EAF0F6] via-[#F3F4F6] to-[#FFFFFF] px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0">
           <h1 className="text-lg font-semibold tracking-tight text-[#244563] truncate">
             {saludo}, {nombreUsuario} 👋
@@ -815,62 +632,36 @@ export default function Dashboard() {
               aria-pressed={mantenimiento}
               className="inline-flex h-8 shrink-0 items-center gap-2 rounded-md border border-[#BFC9D4] bg-[#FFFFFF] px-3 text-[11px] font-semibold text-[#244563] transition-colors hover:bg-[#EAF0F6] disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#244563]/40"
             >
-              {guardandoMantenimiento ? <FaSync className="animate-spin text-[11px]" /> : <FaCogs className="text-[11px]" />}
-              {guardandoMantenimiento ? "Guardando..." : !mantenimientoListo ? "Consultando mantenimiento..." : mantenimiento ? "Suspender mantenimiento" : "Activar mantenimiento"}
+              {guardandoMantenimiento ? (
+                <FaSync className="animate-spin text-[11px]" />
+              ) : (
+                <FaCogs className="text-[11px]" />
+              )}
+              {guardandoMantenimiento
+                ? "Guardando..."
+                : !mantenimientoListo
+                  ? "Consultando mantenimiento..."
+                  : mantenimiento
+                    ? "Suspender mantenimiento"
+                    : "Activar mantenimiento"}
             </button>
           )}
-        <button
-          onClick={() => {
-            cargarStats();
-            cargarHorarios();
-          }}
-          disabled={statsLoading}
-          className="inline-flex items-center gap-2 px-3 py-2 bg-[#244563] hover:bg-[#1B354D] border border-[#244563] rounded-md text-[11px] font-semibold text-white transition-colors disabled:opacity-50 shrink-0 h-8 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#244563]/40"
-          title="Actualizar estadísticas"
-        >
-          <FaSync
-            className={`text-[11px] ${statsLoading ? "animate-spin" : ""}`}
-          />
-          {statsLoading ? "Actualizando..." : "Actualizar"}
-        </button>
         </div>
       </div>
+
       {isSuperAdmin && activeRole === "super_admin" && errorMantenimiento && (
-        <p role="alert" className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-[11px] text-[#AD3038]">{errorMantenimiento}</p>
+        <p
+          role="alert"
+          className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-[11px] text-[#AD3038]"
+        >
+          {errorMantenimiento}
+        </p>
       )}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-2 mb-3">
-        {kpis.map((kpi) => {
-          const Icon = kpi.icon;
-          const accent =
-            MODULE_ACCENTS[kpis.indexOf(kpi) % MODULE_ACCENTS.length];
-          return (
-            <div
-              key={kpi.label}
-              className="bg-[#FFFFFF] rounded-lg border border-[#D8DEE6] p-3 flex items-center gap-2.5 shadow-[0_3px_12px_-8px_rgba(15,23,42,0.22)]"
-            >
-              <div
-                className={`w-8 h-8 sm:w-8 sm:h-8 rounded-md flex items-center justify-center shrink-0 ${accent.icon}`}
-              >
-                <Icon className="text-xs sm:text-sm" />
-              </div>
-              <div className="min-w-0">
-                <p className="text-xl font-semibold tabular-nums text-[#244563] leading-tight truncate">
-                  {statsLoading ? "…" : kpi.value}
-                </p>
-                <p className="text-[11px] sm:text-[10px] font-semibold text-[#64748B] uppercase tracking-wide truncate">
-                  {kpi.label}
-                </p>
-                <p className="text-[10px] sm:text-[11px] text-[#6B7280] truncate capitalize">
-                  {kpi.sub}
-                </p>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-      <h2 className="text-[11px] font-bold text-[#6B7280] uppercase tracking-wider mb-3">
+
+      <h2 className="text-[11px] font-bold text-[#6B7280] uppercase tracking-wider mb-3 mt-4">
         Módulos
       </h2>
+
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-3">
         {filteredModules.map((mod, index) => (
           <Link

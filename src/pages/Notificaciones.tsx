@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   collection,
-  getDocs,
+  limit,
   onSnapshot,
+  orderBy,
   query,
   where,
 } from "firebase/firestore";
@@ -24,6 +25,13 @@ import { useAuth } from "../context/AuthContext";
 import { useData } from "../context/DataContext";
 import { db } from "../lib/firebase";
 import type { Estudiante } from "../types";
+import {
+  claveAccesoEstudiantes,
+  claveConsultaEstudiantes,
+  asegurarEstudiantesCache,
+  leerEstudiantesCache,
+  observarEstudiantesCache,
+} from "../utils/estudiantesCache";
 import {
   fechaLimiteISO,
   generarPdfNotificacion,
@@ -117,6 +125,15 @@ export default function Notificaciones() {
   const { user, userData } = useAuth();
   const { anioActivo, periodoActual, periodos, grados } = useData();
   const uid = user?.uid || "";
+
+  // ============================================================
+  // FASE 3.4: ACCESO A LA CACHÉ COMPARTIDA DE ESTUDIANTES
+  // ============================================================
+  const accesoCache = useMemo(
+    () => claveAccesoEstudiantes(user?.uid, userData),
+    [user?.uid, userData],
+  );
+
   const [datos, setDatos] = useState<{
     uid: string;
     notas: NotificacionRegistrada[];
@@ -145,6 +162,9 @@ export default function Notificaciones() {
     uid: "",
     items: [],
   });
+
+  // 3 onSnapshot conservados (historial, atenciones, auditoría).
+  // Fase 4 podría filtrarlos por rango y limitarlos.
   useEffect(() => {
     if (!uid) return;
     const a = onSnapshot(
@@ -192,71 +212,76 @@ export default function Notificaciones() {
       b();
     };
   }, [uid]);
+
+  // ============================================================
+  // FASE 3.4: NÓMINA DESDE estudiantesCache
+  // (antes: cargarCacheNotificaciones + getDocs con gradoId in [...])
+  // ============================================================
   useEffect(() => {
-    if (!uid || !anioActivo?.id) return;
-    let vivo = true;
+    if (!uid || !anioActivo?.id || !accesoCache) return;
     const anio = anioActivo.id;
-    void (async () => {
-      try {
-        const asignadas = await getDocs(
-          query(
-            collection(db, "asignaturasDocente"),
-            where("docenteId", "==", uid),
-            where("anioLectivoId", "==", anio),
-            where("activo", "==", true),
-          ),
-        );
-        const ids = new Set<string>(
-          asignadas.docs.map((d) => d.data().gradoId as string),
-        );
-        if (userData?.role === "super_admin")
-          grados
-            .filter((g) => g.anioLectivoId === anio && g.activo)
-            .forEach((g) => ids.add(g.id));
-        const gradoIds = Array.from(ids).filter((id) =>
-          grados.some((g) => g.id === id && g.anioLectivoId === anio),
-        );
-        const items: Estudiante[] = [];
-        for (let i = 0; i < gradoIds.length; i += 10) {
-          const snap = await getDocs(
-            query(
-              collection(db, "estudiantes"),
-              where("gradoId", "in", gradoIds.slice(i, i + 10)),
-              where("activo", "==", true),
-            ),
-          );
-          snap.docs.forEach((d) => {
-            const e = { ...d.data(), id: d.id } as Estudiante;
-            if (e.anioLectivoId === anio) items.push(e);
-          });
-        }
-        if (vivo)
-          setAlumnos({
-            uid,
-            anio,
-            items: items.sort((a, b) =>
-              `${a.apellidos} ${a.nombres}`.localeCompare(
-                `${b.apellidos} ${b.nombres}`,
-              ),
-            ),
-          });
-      } catch {
-        if (vivo)
-          setError(
-            "No se pudieron cargar los estudiantes para atención sin notificación. Revisa conexión y permisos.",
-          );
-      }
-    })();
-    return () => {
-      vivo = false;
+
+    // Grados permitidos por el perfil (mismo criterio que estudiantesCache).
+    const gradosPermitidos = [
+      ...new Set([
+        ...(userData?.gradosAsignados ?? []),
+        ...(userData?.tutorDe ?? []),
+      ]),
+    ].filter((id) =>
+      grados.some((g) => g.id === id && g.anioLectivoId === anio),
+    );
+
+    if (gradosPermitidos.length === 0) {
+      void Promise.resolve().then(() => setAlumnos({ uid, anio, items: [] }));
+      return;
+    }
+
+    // 1. Aseguramos la caché de cada grado permitido.
+    gradosPermitidos.forEach((gradoId) => {
+      const clave = claveConsultaEstudiantes(accesoCache, anio, gradoId);
+      if (clave) asegurarEstudiantesCache(clave);
+    });
+
+    // 2. Extraemos estudiantes de la caché (solo activos del año).
+    const actualizarDesdeCache = () => {
+      const items: Estudiante[] = [];
+      gradosPermitidos.forEach((gradoId) => {
+        const clave = claveConsultaEstudiantes(accesoCache, anio, gradoId);
+        if (!clave) return;
+        const estadoCache = leerEstudiantesCache(clave);
+        if (estadoCache.estado !== "listo") return;
+        estadoCache.items.forEach((e) => {
+          if (e.activo !== true) return;
+          if (e.anioLectivoId && e.anioLectivoId !== anio) return;
+          items.push(e);
+        });
+      });
+      items.sort((a, b) =>
+        `${a.apellidos} ${a.nombres}`.localeCompare(
+          `${b.apellidos} ${b.nombres}`,
+        ),
+      );
+      setAlumnos({ uid, anio, items });
     };
-  }, [uid, anioActivo?.id, userData, grados]);
+
+    actualizarDesdeCache();
+    const unsubscribe = observarEstudiantesCache(actualizarDesdeCache);
+
+    return () => unsubscribe();
+  }, [uid, anioActivo?.id, userData, grados, accesoCache]);
+
   useEffect(() => {
     if (!uid || !sel || !verCambios) return;
+    // FASE 5: La auditoría solo se consulta cuando el usuario abre el
+    // historial. Limitamos a 50 documentos para evitar traer años de
+    // historial y mantener la carga rápida. El filtro por fecha puede
+    // agregarse en el futuro si es necesario.
     return onSnapshot(
       query(
         collection(db, "notificacionesNotasAuditoria"),
         where("docenteId", "==", uid),
+        orderBy("registradoEn", "desc"),
+        limit(50),
       ),
       (s) =>
         setCambios({
@@ -266,6 +291,7 @@ export default function Notificaciones() {
       () => setError("No se pudo consultar el historial de cambios."),
     );
   }, [uid, sel, verCambios]);
+
   const notas = useMemo(
     () => (datos.uid === uid ? datos.notas : []),
     [datos, uid],
@@ -907,12 +933,25 @@ export default function Notificaciones() {
                   grupo.visitas.map((v) => (
                     <article
                       key={v.id}
-                      className="rounded-md border border-[#D8DEE6] p-3"
+                      className="rounded-md border border-[#C96522] border-l-4 bg-white p-2.5"
                     >
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <strong>
-                          {mostrarFecha(v.fecha)} · {v.asistente}
-                        </strong>
+                      <div className="flex flex-wrap items-center justify-between gap-1.5">
+                        <div className="grid gap-2 sm:grid-cols-2 sm:gap-6">
+                          <div>
+                            <p className="text-[10px] font-semibold text-[#64748B]">
+                              Fecha real de asistencia
+                            </p>
+                            <p className="mt-1 font-semibold">
+                              {mostrarFecha(v.fecha)}
+                            </p>
+                          </div>
+                          <div>
+                            <p className="text-[10px] font-semibold text-[#64748B]">
+                              Nombre de quien asistió
+                            </p>
+                            <p className="mt-1 font-semibold">{v.asistente}</p>
+                          </div>
+                        </div>
                         <button
                           className={boton}
                           disabled={ocupado}
@@ -938,25 +977,63 @@ export default function Notificaciones() {
                           ? " (registro conjunto anterior)"
                           : ""}
                       </p>
-                      <p className="mt-2">
-                        {v.atencionFirmada ? "✓" : "□"} Atención a padres
-                        firmada
+                      <dl className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                        <div className="min-w-0 rounded-md border border-[#D8DEE6] bg-[#F3F4F6] p-2">
+                          <dt className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-[#64748B]">
+                            Documentos físicos
+                          </dt>
+                          <dd className="space-y-1.5">
+                            <div className="flex flex-wrap items-center justify-between gap-1.5">
+                              <span>Atención a padres de familia</span>
+                              <span
+                                className={`rounded px-2 py-0.5 text-[10px] font-semibold ${v.atencionFirmada ? "bg-[#EAF0F6] text-[#244563]" : "bg-white text-[#64748B]"}`}
+                              >
+                                {v.atencionFirmada
+                                  ? "✓ Firma registrada"
+                                  : "Firma no registrada"}
+                              </span>
+                            </div>
+                            {v.origen !== "espontanea" && (
+                              <div className="flex flex-wrap items-center justify-between gap-1.5">
+                                <span>Acta de bajo rendimiento</span>
+                                <span
+                                  className={`rounded px-2 py-0.5 text-[10px] font-semibold ${v.actaFirmada ? "bg-[#EAF0F6] text-[#244563]" : "bg-white text-[#64748B]"}`}
+                                >
+                                  {v.actaFirmada
+                                    ? "✓ Firma registrada"
+                                    : "Firma no registrada"}
+                                </span>
+                              </div>
+                            )}
+                          </dd>
+                        </div>
                         {v.origen !== "espontanea" && (
-                          <>
-                            {" "}
-                            · {v.actaFirmada ? "✓" : "□"} Acta de bajo
-                            rendimiento firmada · {decisiones[v.refuerzo]}
-                          </>
+                          <div className="min-w-0 rounded-md border border-[#D8DEE6] bg-[#F3F4F6] p-2">
+                            <dt className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-[#64748B]">
+                              Decisión de refuerzo
+                            </dt>
+                            <dd className="font-semibold text-[#244563]">
+                              {decisiones[v.refuerzo]}
+                            </dd>
+                          </div>
                         )}
-                      </p>
-                      <p className="mt-1">
-                        Archivo físico: {v.referenciaFisica || "Sin referencia"}
-                      </p>
-                      {v.observaciones && (
-                        <p className="mt-1 whitespace-pre-wrap">
-                          {v.observaciones}
-                        </p>
-                      )}
+                        <div className="min-w-0 rounded-md border border-[#D8DEE6] p-2">
+                          <dt className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-[#64748B]">
+                            Referencia del archivo físico
+                          </dt>
+                          <dd className="whitespace-pre-wrap wrap-break-word">
+                            {v.referenciaFisica || "Sin referencia registrada"}
+                          </dd>
+                        </div>
+                        <div className="min-w-0 rounded-md border border-[#D8DEE6] p-2">
+                          <dt className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-[#64748B]">
+                            Observaciones y acuerdos
+                          </dt>
+                          <dd className="whitespace-pre-wrap wrap-break-word">
+                            {v.observaciones || "Sin observaciones registradas"}
+                          </dd>
+                        </div>
+                      </dl>
                     </article>
                   ))
                 )}
@@ -986,11 +1063,9 @@ export default function Notificaciones() {
                       )
                       .map((c) => (
                         <p key={c.id}>
-                          {c.registradoEn
-                            ?.toDate()
-                            .toLocaleString("es-EC", {
-                              timeZone: "America/Guayaquil",
-                            }) || "Confirmando…"}{" "}
+                          {c.registradoEn?.toDate().toLocaleString("es-EC", {
+                            timeZone: "America/Guayaquil",
+                          }) || "Confirmando…"}{" "}
                           ·{" "}
                           {(
                             {
