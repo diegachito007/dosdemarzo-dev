@@ -34,6 +34,8 @@ import {
   FaTimes as FaXmark,
   FaChalkboardTeacher,
   FaArrowLeft,
+  FaSave,
+  FaLock,
 } from "react-icons/fa";
 
 interface Toast {
@@ -56,7 +58,7 @@ interface ConfirmModalState {
 
 export default function GestionUsuarios() {
   const { canDeleteUser } = useAuth();
-  const { grados, ready } = useData(); // ✅ Eliminado 'reload'
+  const { grados, ready } = useData();
   const [users, setUsers] = useState<AppUser[]>([]);
   const [loadingUsuarios, setLoadingUsuarios] = useState(true);
   const [filter, setFilter] = useState<
@@ -113,7 +115,8 @@ export default function GestionUsuarios() {
           message,
           confirmText: options?.confirmText || "Confirmar",
           cancelText: options?.cancelText || "Cancelar",
-          confirmColor: options?.confirmColor || "bg-[#C93F45] hover:bg-[#AD3038]",
+          confirmColor:
+            options?.confirmColor || "bg-[#C93F45] hover:bg-[#AD3038]",
           icon: options?.icon || FaQuestionCircle,
           onConfirm: () => {
             setConfirmModal((prev) => ({ ...prev, isOpen: false }));
@@ -155,9 +158,7 @@ export default function GestionUsuarios() {
     try {
       const previo = users.find((u) => u.uid === userId)?.status;
       await updateDoc(doc(db, "usuarios", userId), { status: newStatus });
-      
-      // ✅ CORRECCIÓN: Abrimos el modal DESPUÉS de actualizar el estado.
-      // El onSnapshot actualizará el estado 'users' automáticamente.
+
       if (newStatus === "active") {
         const user = users.find((u) => u.uid === userId);
         if (user) {
@@ -167,7 +168,7 @@ export default function GestionUsuarios() {
           setShowGradosModal(true);
         }
       }
-      
+
       if (newStatus === "active") {
         const msg =
           previo === "deleted"
@@ -179,13 +180,25 @@ export default function GestionUsuarios() {
           msg,
         );
       } else if (newStatus === "rejected") {
-        mostrarToast("warning", "Usuario rechazado", "El registro ha sido rechazado.");
+        mostrarToast(
+          "warning",
+          "Usuario rechazado",
+          "El registro ha sido rechazado.",
+        );
       } else if (newStatus === "blocked") {
-        mostrarToast("warning", "Usuario bloqueado", "El usuario ya no podrá acceder al sistema.");
+        mostrarToast(
+          "warning",
+          "Usuario bloqueado",
+          "El usuario ya no podrá acceder al sistema.",
+        );
       }
     } catch (error) {
       console.error("Error actualizando:", error);
-      mostrarToast("error", "Error al actualizar", "No se pudo cambiar el estado del usuario.");
+      mostrarToast(
+        "error",
+        "Error al actualizar",
+        "No se pudo cambiar el estado del usuario.",
+      );
     }
   }
 
@@ -229,14 +242,18 @@ export default function GestionUsuarios() {
           ? `Grados y tutorías actualizados. Se desasignaron ${materiasDesasignadas} materia(s) de los grados removidos.`
           : "Los grados y tutorías se actualizaron correctamente.",
       );
-      
+
       setShowGradosModal(false);
       setSelectedUserForGrados(null);
       setGradosSeleccionados([]);
       setTutorDe([]);
     } catch (error) {
       console.error("Error guardando asignación:", error);
-      mostrarToast("error", "Error al guardar", "No se pudo actualizar la asignación.");
+      mostrarToast(
+        "error",
+        "Error al guardar",
+        "No se pudo actualizar la asignación.",
+      );
     }
   }
 
@@ -244,7 +261,9 @@ export default function GestionUsuarios() {
     const newRole = user.role === "super_admin" ? "docente" : "super_admin";
     const confirmado = await confirmar(
       "Cambiar rol de usuario",
-      `¿Estás seguro de cambiar el rol de "${user.displayName}" a ${newRole === "super_admin" ? "Super Admin" : "Docente"}?`,
+      `¿Estás seguro de cambiar el rol de "${user.displayName}" a ${
+        newRole === "super_admin" ? "Super Admin" : "Docente"
+      }?`,
       {
         confirmText: "Sí, cambiar",
         cancelText: "Cancelar",
@@ -258,15 +277,23 @@ export default function GestionUsuarios() {
       mostrarToast(
         "success",
         "Rol actualizado",
-        `${user.displayName} ahora es ${newRole === "super_admin" ? "Super Admin" : "Docente"}.`,
+        `${user.displayName} ahora es ${
+          newRole === "super_admin" ? "Super Admin" : "Docente"
+        }.`,
       );
     } catch (error) {
       console.error("Error cambiando rol:", error);
-      mostrarToast("error", "Error al cambiar rol", "No se pudo actualizar el rol.");
+      mostrarToast(
+        "error",
+        "Error al cambiar rol",
+        "No se pudo actualizar el rol.",
+      );
     }
   }
 
-  async function desactivarMateriasDocente(docenteUid: string): Promise<number> {
+  async function desactivarMateriasDocente(
+    docenteUid: string,
+  ): Promise<number> {
     try {
       const q = query(
         collection(db, "asignaturasDocente"),
@@ -288,7 +315,11 @@ export default function GestionUsuarios() {
 
   async function archivarUsuario(user: AppUser) {
     if (!canDeleteUser(user)) {
-      mostrarToast("error", "Sin permisos", "No tienes permisos para archivar este usuario.");
+      mostrarToast(
+        "error",
+        "Sin permisos",
+        "No tienes permisos para archivar este usuario.",
+      );
       return;
     }
     const confirmado = await confirmar(
@@ -317,13 +348,19 @@ export default function GestionUsuarios() {
       );
     } catch (error) {
       console.error("Error archivando:", error);
-      mostrarToast("error", "Error al archivar", "No se pudo archivar el usuario.");
+      mostrarToast(
+        "error",
+        "Error al archivar",
+        "No se pudo archivar el usuario.",
+      );
     }
   }
 
   // ==================== FILTROS Y BADGES ====================
-  // ✅ OPTIMIZACIÓN: Memoizamos el filtrado
-  const filteredUsers = useMemo(() => users.filter((u) => u.status === filter), [users, filter]);
+  const filteredUsers = useMemo(
+    () => users.filter((u) => u.status === filter),
+    [users, filter],
+  );
 
   const getStatusBadge = (status: string) => {
     const styles: Record<string, string> = {
@@ -341,7 +378,9 @@ export default function GestionUsuarios() {
       deleted: "Archivado",
     };
     return (
-      <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${styles[status]}`}>
+      <span
+        className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${styles[status]}`}
+      >
         {labels[status]}
       </span>
     );
@@ -371,10 +410,26 @@ export default function GestionUsuarios() {
   }, [users]);
 
   const toastConfig = {
-    success: { bg: "border-l-[#6687A5]", iconBg: "bg-[#244563]", icon: FaCheckCircle },
-    error: { bg: "border-l-red-400", iconBg: "bg-[#C93F45]", icon: FaTimesCircle },
-    warning: { bg: "border-l-amber-400", iconBg: "bg-amber-500", icon: FaExclamationTriangle },
-    info: { bg: "border-l-[#244563]", iconBg: "bg-[#244563]", icon: FaInfoCircle },
+    success: {
+      bg: "border-l-[#6687A5]",
+      iconBg: "bg-[#244563]",
+      icon: FaCheckCircle,
+    },
+    error: {
+      bg: "border-l-red-400",
+      iconBg: "bg-[#C93F45]",
+      icon: FaTimesCircle,
+    },
+    warning: {
+      bg: "border-l-amber-400",
+      iconBg: "bg-amber-500",
+      icon: FaExclamationTriangle,
+    },
+    info: {
+      bg: "border-l-[#244563]",
+      iconBg: "bg-[#244563]",
+      icon: FaInfoCircle,
+    },
   };
 
   const ConfirmIcon = confirmModal.icon || FaQuestionCircle;
@@ -385,7 +440,9 @@ export default function GestionUsuarios() {
         <div className="flex items-center justify-center py-20">
           <div className="text-center">
             <FaSpinner className="animate-spin text-2xl text-[#244563] mx-auto mb-3" />
-            <p className="text-[#4B5563] text-[11px] font-medium">Cargando usuarios...</p>
+            <p className="text-[#4B5563] text-[11px] font-medium">
+              Cargando usuarios...
+            </p>
           </div>
         </div>
       </Layout>
@@ -414,30 +471,66 @@ export default function GestionUsuarios() {
           </div>
         </div>
 
-        {/* Pestañas de filtro */}
-        <div className="flex flex-wrap items-center gap-1.5 border-b border-[#ECEFF3] pb-3">
+        {/* ✅ Pestañas de filtro (Botones estilo Calificaciones) */}
+        <div className="flex flex-wrap items-center gap-1.5 border-b border-[#E4E8EE] pb-3">
           {[
-            { key: "pending", label: "Pendientes", icon: FaClock, count: counts.pending },
-            { key: "active", label: "Activos", icon: FaCheckCircle, count: counts.active },
-            { key: "blocked", label: "Bloqueados", icon: FaShieldAlt, count: counts.blocked },
-            { key: "rejected", label: "Rechazados", icon: FaTimesCircle, count: counts.rejected },
-            { key: "deleted", label: "Archivados", icon: FaArchive, count: counts.deleted },
+            {
+              key: "pending",
+              label: "Pendientes",
+              icon: FaClock,
+              count: counts.pending,
+              color: "text-amber-600",
+            },
+            {
+              key: "active",
+              label: "Activos",
+              icon: FaCheckCircle,
+              count: counts.active,
+              color: "text-[#244563]",
+            },
+            {
+              key: "blocked",
+              label: "Bloqueados",
+              icon: FaLock,
+              count: counts.blocked,
+              color: "text-slate-600",
+            },
+            {
+              key: "rejected",
+              label: "Rechazados",
+              icon: FaTimesCircle,
+              count: counts.rejected,
+              color: "text-red-600",
+            },
+            {
+              key: "deleted",
+              label: "Archivados",
+              icon: FaArchive,
+              count: counts.deleted,
+              color: "text-[#6B7280]",
+            },
           ].map((tab) => (
             <button
               key={tab.key}
               onClick={() => setFilter(tab.key as typeof filter)}
-              className={`flex items-center gap-1.5 h-8 px-3 rounded-md text-[11px] font-semibold transition-colors ${
+              className={`group flex items-center gap-1.5 h-8 px-3 rounded-md text-[11px] font-semibold transition-all ${
                 filter === tab.key
-                  ? "bg-[#244563] text-white shadow-sm"
-                  : "bg-[#FFFFFF] text-[#4B5563] border border-[#D8DEE6] hover:bg-[#F3F4F6]"
+                  ? "bg-[#244563] text-white shadow-sm ring-1 ring-[#C96522]/70"
+                  : "bg-[#FFFFFF] text-[#4B5563] border border-[#D8DEE6] hover:bg-[#F3F4F6] hover:border-[#BFC9D4]"
               }`}
             >
-              <tab.icon className="w-3 h-3" />
+              <tab.icon
+                className={`w-3 h-3 ${
+                  filter === tab.key ? "text-white" : tab.color
+                }`}
+              />
               {tab.label}
               {tab.count > 0 && (
                 <span
                   className={`px-1.5 py-0.5 rounded-full text-[10px] ${
-                    filter === tab.key ? "bg-white/20" : "bg-[#ECEFF3]"
+                    filter === tab.key
+                      ? "bg-white/20 text-white"
+                      : "bg-[#ECEFF3] text-[#4B5563]"
                   }`}
                 >
                   {tab.count}
@@ -447,12 +540,13 @@ export default function GestionUsuarios() {
           ))}
         </div>
 
-        {/* Listado de usuarios */}
+        {/* Listado de usuarios (Cards) */}
         {filteredUsers.length === 0 ? (
           <div className="rounded-lg border border-dashed border-[#D8DEE6] bg-[#FFFFFF] px-4 py-10 text-center">
             <FaUsers className="mx-auto text-3xl text-[#9CA3AF]" />
             <p className="mt-2 text-xs font-semibold text-[#4B5563]">
-              No hay usuarios {filter === "pending" ? "pendientes" : "en esta categoría"}
+              No hay usuarios{" "}
+              {filter === "pending" ? "pendientes" : "en esta categoría"}
             </p>
           </div>
         ) : (
@@ -460,7 +554,7 @@ export default function GestionUsuarios() {
             {filteredUsers.map((user) => (
               <div
                 key={user.uid}
-                className="rounded-lg border border-[#D8DEE6] bg-[#FFFFFF] p-3 shadow-sm"
+                className="rounded-lg border border-[#D8DEE6] bg-[#FFFFFF] p-3 shadow-sm transition-colors hover:border-[#C96522]/40"
               >
                 <div className="flex items-start gap-3">
                   {user.photoURL ? (
@@ -470,11 +564,11 @@ export default function GestionUsuarios() {
                       className="w-9 h-9 rounded-full object-cover shrink-0 border border-[#E4E8EE]"
                     />
                   ) : (
-                    <div className="w-9 h-9 bg-[#EAF0F6] text-[#244563] rounded-full flex items-center justify-center font-bold shrink-0">
+                    <div className="w-9 h-9 bg-[#EAF0F6] text-[#244563] rounded-full flex items-center justify-center font-bold shrink-0 ring-1 ring-[#C8D6E5]">
                       {user.displayName?.charAt(0).toUpperCase()}
                     </div>
                   )}
-                  
+
                   <div className="flex-1 min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
                       <h3 className="font-semibold text-[11px] text-[#273444] truncate">
@@ -488,27 +582,33 @@ export default function GestionUsuarios() {
                     </p>
 
                     {/* Grados Asignados */}
-                    {user.status === "active" && user.gradosAsignados && user.gradosAsignados.length > 0 && (
-                      <div className="mt-2 flex flex-wrap gap-1">
-                        {user.gradosAsignados.map((gradoId) => {
-                          const grado = grados.find((g) => g.id === gradoId);
-                          const esTutor = user.tutorDe?.includes(gradoId);
-                          return grado ? (
-                            <span
-                              key={gradoId}
-                              className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium ${
-                                esTutor
-                                  ? "bg-[#FFF7ED] text-[#9A3412] ring-1 ring-inset ring-[#FED7AA]"
-                                  : "bg-[#EAF0F6] text-[#1B354D] ring-1 ring-inset ring-[#C8D6E5]"
-                              }`}
-                            >
-                              {esTutor ? <FaUserTie className="w-3 h-3" /> : <FaGraduationCap className="w-3 h-3" />}
-                              {grado.nombre} {grado.paralelo}
-                            </span>
-                          ) : null;
-                        })}
-                      </div>
-                    )}
+                    {user.status === "active" &&
+                      user.gradosAsignados &&
+                      user.gradosAsignados.length > 0 && (
+                        <div className="mt-2 flex flex-wrap gap-1">
+                          {user.gradosAsignados.map((gradoId) => {
+                            const grado = grados.find((g) => g.id === gradoId);
+                            const esTutor = user.tutorDe?.includes(gradoId);
+                            return grado ? (
+                              <span
+                                key={gradoId}
+                                className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium ${
+                                  esTutor
+                                    ? "bg-[#FFF7ED] text-[#9A3412] ring-1 ring-inset ring-[#FED7AA]"
+                                    : "bg-[#EAF0F6] text-[#1B354D] ring-1 ring-inset ring-[#C8D6E5]"
+                                }`}
+                              >
+                                {esTutor ? (
+                                  <FaUserTie className="w-3 h-3" />
+                                ) : (
+                                  <FaGraduationCap className="w-3 h-3" />
+                                )}
+                                {grado.nombre} {grado.paralelo}
+                              </span>
+                            ) : null;
+                          })}
+                        </div>
+                      )}
 
                     {user.status === "deleted" && (
                       <div className="mt-1 text-[10px] text-[#6B7280] italic">
@@ -534,13 +634,15 @@ export default function GestionUsuarios() {
                           </button>
                         </>
                       )}
-                      
+
                       {user.status === "active" && (
                         <>
                           <button
                             onClick={() => {
                               setSelectedUserForGrados(user);
-                              setGradosSeleccionados(user.gradosAsignados || []);
+                              setGradosSeleccionados(
+                                user.gradosAsignados || [],
+                              );
                               setTutorDe(user.tutorDe || []);
                               setShowGradosModal(true);
                             }}
@@ -552,14 +654,16 @@ export default function GestionUsuarios() {
                             onClick={() => updateStatus(user.uid, "blocked")}
                             className="inline-flex items-center gap-1 bg-[#FFFFFF] hover:bg-[#F3F4F6] border border-[#D8DEE6] text-[#4B5563] h-8 px-2.5 rounded-md text-[10px] font-semibold transition-colors"
                           >
-                            <FaShieldAlt className="w-3 h-3" /> Bloquear
+                            <FaLock className="w-3 h-3" /> Bloquear
                           </button>
                           <button
                             onClick={() => toggleRole(user)}
                             className="inline-flex items-center gap-1 bg-[#FFFFFF] hover:bg-[#F3F4F6] border border-[#D8DEE6] text-[#4B5563] h-8 px-2.5 rounded-md text-[10px] font-semibold transition-colors"
                           >
-                            <FaShieldAlt className="w-3 h-3" /> 
-                            {user.role === "super_admin" ? "Quitar Admin" : "Hacer Admin"}
+                            <FaShieldAlt className="w-3 h-3" />
+                            {user.role === "super_admin"
+                              ? "Quitar Admin"
+                              : "Hacer Admin"}
                           </button>
                           {canDeleteUser(user) && (
                             <button
@@ -612,15 +716,17 @@ export default function GestionUsuarios() {
           <p className="text-[11px] text-[#1B354D] flex items-start gap-2 leading-relaxed">
             <FaChalkboardTeacher className="mt-0.5 shrink-0 text-[#244563]" />
             <span>
-              <strong>Gestión de materias:</strong> Para transferir, quitar o administrar las materias asignadas a los docentes, usa el módulo <strong>Gestión de Materias Docentes</strong> desde el Dashboard.
+              <strong>Gestión de materias:</strong> Para transferir, quitar o
+              administrar las materias asignadas a los docentes, usa el módulo{" "}
+              <strong>Gestión de Materias Docentes</strong> desde el Dashboard.
             </span>
           </p>
         </div>
       </div>
 
-      {/* MODAL: Asignar Grados y Tutorías */}
+      {/* ✅ MODAL REDISEÑADO: Asignar Grados y Tutorías (Estilo Calificaciones) */}
       {showGradosModal && selectedUserForGrados && (
-        <div className="fixed inset-0 z-100 flex items-center justify-center bg-[#111827]/40 backdrop-blur-[2px] p-2 sm:p-3">
+        <div className="fixed inset-0 z-100 flex items-center justify-center bg-[#111827]/40 p-3 backdrop-blur-[2px] sm:p-4">
           <div
             role="dialog"
             aria-modal="true"
@@ -651,15 +757,19 @@ export default function GestionUsuarios() {
                 <FaXmark className="text-sm" />
               </button>
             </div>
-            
-            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
-              <div>
-                <h4 className="text-[11px] font-semibold text-[#273444] mb-2 flex items-center gap-1.5">
-                  <FaGraduationCap className="text-[#244563]" /> Grados donde da clases
-                </h4>
-                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 md:grid-cols-3">
+
+            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4 bg-[#F9FAFB]">
+              {/* SECCIÓN: Clases */}
+              <div className="rounded-lg border border-[#D8DEE6] bg-[#FFFFFF] overflow-hidden">
+                <div className="border-b border-[#E4E8EE] bg-[#F3F4F6] px-3 py-2">
+                  <h4 className="text-[11px] font-semibold text-[#244563] flex items-center gap-1.5">
+                    <FaGraduationCap className="text-[#244563]" /> Grados donde
+                    da clases
+                  </h4>
+                </div>
+                <div className="p-2 grid grid-cols-1 gap-1.5 sm:grid-cols-2 md:grid-cols-3">
                   {gradosActivos.length === 0 && (
-                    <p className="col-span-full text-[11px] text-[#6B7280] italic">
+                    <p className="col-span-full px-2 py-4 text-[11px] text-[#6B7280] italic text-center">
                       No hay grados activos para el año lectivo actual.
                     </p>
                   )}
@@ -670,8 +780,8 @@ export default function GestionUsuarios() {
                         key={grado.id}
                         className={`flex min-w-0 items-center gap-2 px-2.5 py-1.5 rounded-md border cursor-pointer transition-colors ${
                           isSelected
-                            ? "border-[#244563] bg-[#EAF0F6]"
-                            : "border-[#D8DEE6] bg-[#FFFFFF] hover:border-[#C96522]/40"
+                            ? "border-[#244563] bg-[#EAF0F6] ring-1 ring-[#244563]/20"
+                            : "border-[#D8DEE6] bg-[#FFFFFF] hover:border-[#C96522]/40 hover:bg-[#F3F4F6]"
                         }`}
                       >
                         <input
@@ -679,15 +789,28 @@ export default function GestionUsuarios() {
                           checked={isSelected}
                           onChange={(e) => {
                             if (e.target.checked) {
-                              setGradosSeleccionados([...gradosSeleccionados, grado.id]);
+                              setGradosSeleccionados([
+                                ...gradosSeleccionados,
+                                grado.id,
+                              ]);
                             } else {
-                              setGradosSeleccionados(gradosSeleccionados.filter((id) => id !== grado.id));
-                              setTutorDe(tutorDe.filter((id) => id !== grado.id));
+                              setGradosSeleccionados(
+                                gradosSeleccionados.filter(
+                                  (id) => id !== grado.id,
+                                ),
+                              );
+                              setTutorDe(
+                                tutorDe.filter((id) => id !== grado.id),
+                              );
                             }
                           }}
                           className="h-3.5 w-3.5 shrink-0 rounded border-[#BFC9D4] text-[#244563] focus:ring-[#244563]/30"
                         />
-                        <span className="min-w-0 text-[11px] font-medium text-[#374151] truncate">
+                        <span
+                          className={`min-w-0 text-[11px] font-medium truncate ${
+                            isSelected ? "text-[#1B354D]" : "text-[#374151]"
+                          }`}
+                        >
                           {grado.nombre} - {grado.paralelo}
                         </span>
                       </label>
@@ -695,12 +818,16 @@ export default function GestionUsuarios() {
                   })}
                 </div>
               </div>
-              
-              <div>
-                <h4 className="text-[11px] font-semibold text-[#273444] mb-2 flex items-center gap-1.5">
-                  <FaUserTie className="text-[#9A3412]" /> Grados donde es TUTOR
-                </h4>
-                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 md:grid-cols-3">
+
+              {/* SECCIÓN: Tutorías */}
+              <div className="rounded-lg border border-[#D8DEE6] bg-[#FFFFFF] overflow-hidden">
+                <div className="border-b border-[#E4E8EE] bg-[#F3F4F6] px-3 py-2">
+                  <h4 className="text-[11px] font-semibold text-[#9A3412] flex items-center gap-1.5">
+                    <FaUserTie className="text-[#9A3412]" /> Grados donde es
+                    TUTOR
+                  </h4>
+                </div>
+                <div className="p-2 grid grid-cols-1 gap-1.5 sm:grid-cols-2 md:grid-cols-3">
                   {gradosActivos
                     .filter((g) => gradosSeleccionados.includes(g.id))
                     .map((grado) => {
@@ -710,52 +837,74 @@ export default function GestionUsuarios() {
                           key={grado.id}
                           className={`flex min-w-0 items-center gap-2 px-2.5 py-1.5 rounded-md border cursor-pointer transition-colors ${
                             isTutor
-                              ? "border-[#C96522] bg-[#FFF7ED]"
-                              : "border-[#D8DEE6] bg-[#FFFFFF] hover:border-[#C96522]/40"
+                              ? "border-[#C96522] bg-[#FFF7ED] ring-1 ring-[#C96522]/20"
+                              : "border-[#D8DEE6] bg-[#FFFFFF] hover:border-[#C96522]/40 hover:bg-[#F3F4F6]"
                           }`}
                         >
                           <input
                             type="checkbox"
                             checked={isTutor}
                             onChange={(e) => {
-                              if (e.target.checked) setTutorDe([...tutorDe, grado.id]);
-                              else setTutorDe(tutorDe.filter((id) => id !== grado.id));
+                              if (e.target.checked)
+                                setTutorDe([...tutorDe, grado.id]);
+                              else
+                                setTutorDe(
+                                  tutorDe.filter((id) => id !== grado.id),
+                                );
                             }}
                             className="h-3.5 w-3.5 shrink-0 rounded border-[#BFC9D4] text-[#C96522] focus:ring-[#C96522]/30"
                           />
-                          <span className="min-w-0 text-[11px] font-medium text-[#374151] truncate">
+                          <span
+                            className={`min-w-0 text-[11px] font-medium truncate ${
+                              isTutor ? "text-[#884218]" : "text-[#374151]"
+                            }`}
+                          >
                             {grado.nombre} - {grado.paralelo}
                           </span>
                         </label>
                       );
                     })}
                   {gradosSeleccionados.length === 0 && (
-                    <p className="col-span-full text-[11px] text-[#6B7280] italic">
+                    <p className="col-span-full px-2 py-4 text-[11px] text-[#6B7280] italic text-center">
                       Primero selecciona grados donde da clases.
                     </p>
                   )}
                 </div>
               </div>
 
+              {/* ALERTAS DE VALIDACIÓN */}
               {gradosSeleccionados.length === 0 && (
-                <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800">
-                  Si no seleccionas ningún grado, el usuario no podrá ver nada en su panel.
+                <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] leading-relaxed text-amber-800">
+                  <FaExclamationTriangle className="mt-0.5 shrink-0 text-[10px]" />
+                  <span>
+                    Si no seleccionas ningún grado, el usuario no podrá ver nada
+                    en su panel.
+                  </span>
                 </div>
               )}
-              
+
               {gradosSeleccionados.length > 0 &&
                 (selectedUserForGrados.gradosAsignados || []).some(
                   (g) => !gradosSeleccionados.includes(g),
                 ) && (
-                  <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800">
-                    Al guardar, las materias asignadas en{" "}
-                    <strong>
-                      {selectedUserForGrados.gradosAsignados
-                        ?.filter((g) => !gradosSeleccionados.includes(g))
-                        .map((gid) => grados.find((g) => g.id === gid)?.nombre + " " + (grados.find((g) => g.id === gid)?.paralelo || ""))
-                        .join(", ")}
-                    </strong>{" "}
-                    se desasignarán automáticamente de su horario.
+                  <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] leading-relaxed text-amber-800">
+                    <FaExclamationTriangle className="mt-0.5 shrink-0 text-[10px]" />
+                    <span>
+                      Al guardar, las materias asignadas en{" "}
+                      <strong>
+                        {selectedUserForGrados.gradosAsignados
+                          ?.filter((g) => !gradosSeleccionados.includes(g))
+                          .map((gid) => {
+                            const grado = grados.find((g) => g.id === gid);
+                            return grado
+                              ? `${grado.nombre} ${grado.paralelo || ""}`
+                              : "";
+                          })
+                          .filter(Boolean)
+                          .join(", ")}
+                      </strong>{" "}
+                      se desasignarán automáticamente de su horario.
+                    </span>
                   </div>
                 )}
             </div>
@@ -774,8 +923,9 @@ export default function GestionUsuarios() {
               </button>
               <button
                 onClick={guardarAsignacion}
-                className="inline-flex h-8 items-center justify-center rounded-md bg-[#244563] px-4 text-[11px] font-semibold text-white transition-colors hover:bg-[#1B354D]"
+                className="inline-flex h-8 items-center justify-center gap-1.5 rounded-md bg-[#244563] px-4 text-[11px] font-semibold text-white transition-colors hover:bg-[#1B354D] disabled:cursor-not-allowed disabled:opacity-50"
               >
+                <FaSave className="text-[10px]" />
                 Guardar Asignación
               </button>
             </div>
@@ -783,9 +933,9 @@ export default function GestionUsuarios() {
         </div>
       )}
 
-      {/* MODAL: Confirmación Genérica */}
+      {/* MODAL: Confirmación Genérica (Estilo Calificaciones) */}
       {confirmModal.isOpen && (
-        <div className="fixed inset-0 z-110 flex items-center justify-center bg-[#111827]/40 backdrop-blur-[2px] p-3 sm:p-4">
+        <div className="fixed inset-0 z-110 flex items-center justify-center bg-[#111827]/40 p-3 backdrop-blur-[2px] sm:p-4">
           <div className="w-full max-w-sm overflow-hidden rounded-lg border border-[#D8DEE6] bg-[#FFFFFF] shadow-[0_20px_50px_-28px_rgba(15,23,42,0.40)]">
             <div className="flex items-start gap-3 px-4 py-3.5">
               <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#ECEFF3] text-[#4B5563]">
@@ -809,7 +959,9 @@ export default function GestionUsuarios() {
               </button>
               <button
                 onClick={confirmModal.onConfirm}
-                className={`inline-flex h-8 items-center justify-center gap-1.5 rounded-md px-3 text-[11px] font-semibold text-white transition-colors ${confirmModal.confirmColor || "bg-[#C93F45] hover:bg-[#AD3038]"}`}
+                className={`inline-flex h-8 items-center justify-center gap-1.5 rounded-md px-3 text-[11px] font-semibold text-white transition-colors ${
+                  confirmModal.confirmColor || "bg-[#C93F45] hover:bg-[#AD3038]"
+                }`}
               >
                 <ConfirmIcon className="text-[10px]" />{" "}
                 {confirmModal.confirmText || "Confirmar"}
@@ -819,7 +971,7 @@ export default function GestionUsuarios() {
         </div>
       )}
 
-      {/* Toasts Flotantes */}
+      {/* SISTEMA DE TOASTS */}
       <div className="pointer-events-none fixed right-3 top-3 z-100 w-full max-w-xs space-y-2">
         {toasts.map((toast) => {
           const config = toastConfig[toast.type];
@@ -829,13 +981,19 @@ export default function GestionUsuarios() {
               key={toast.id}
               className={`pointer-events-auto flex items-start gap-2 rounded-md border border-[#D8DEE6] border-l-4 bg-[#FFFFFF] p-2.5 shadow-[0_14px_32px_-20px_rgba(15,23,42,0.30)] animate-in slide-in-from-right-4 fade-in duration-300 ${config.bg}`}
             >
-              <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-white ${config.iconBg}`}>
+              <span
+                className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-white ${config.iconBg}`}
+              >
                 <Icon className="text-[10px]" />
               </span>
               <div className="min-w-0 flex-1">
-                <p className="text-[11px] font-semibold text-[#273444]">{toast.title}</p>
+                <p className="text-[11px] font-semibold text-[#273444]">
+                  {toast.title}
+                </p>
                 {toast.message && (
-                  <p className="mt-0.5 text-[10px] leading-relaxed text-[#64748B]">{toast.message}</p>
+                  <p className="mt-0.5 text-[10px] leading-relaxed text-[#64748B]">
+                    {toast.message}
+                  </p>
                 )}
               </div>
               <button

@@ -91,6 +91,10 @@ import {
   estadoEsTutorOnly,
   estadoConfig,
 } from "../utils/asistencia";
+import {
+  CHIPS_PRINCIPALES_POR_TIPO,
+  CHIPS_GENERICOS_DETALLADOS,
+} from "../utils/chipsActividades";
 
 interface AsistenciaData {
   estudianteId: string;
@@ -216,6 +220,8 @@ const ESTRATEGIAS_NOTA = [
 const NOMBRES_DIAS = ["Lun", "Mar", "Mié", "Jue", "Vie"];
 const HORAS_DIA = [1, 2, 3, 4, 5, 6, 7];
 
+// ============================================================
+
 const round2 = (n: number): number => Math.round(n * 100) / 100;
 const notaALetra = (nota: number): string => {
   if (nota >= 9.5) return "A+";
@@ -248,9 +254,6 @@ const calcularNotaFinal = (
   }
 };
 
-// Un estudiante puede recibir nuevos refuerzos mientras la nota efectiva siga
-// por debajo de 7. La nota original queda protegida; solo se agrega al historial
-// una nueva aplicación de refuerzo.
 const puedeRecibirOtroRefuerzo = (
   notaOriginal: number,
   refuerzo?: RefuerzoData | null,
@@ -380,9 +383,26 @@ function ContenidoCalificaciones() {
   const [asistenciasDiaActividad, setAsistenciasDiaActividad] = useState<
     Record<string, EstadoAsistencia | undefined>
   >({});
+
   const [vistaCalificaciones, setVistaCalificaciones] = useState<
     "lista" | "matriz"
-  >("lista");
+  >(() => {
+    try {
+      // 1. Si el usuario ya eligió una vista antes, la respetamos
+      const guardada = localStorage.getItem("eduX_calificaciones_vista");
+      if (guardada === "lista" || guardada === "matriz") return guardada;
+    } catch {
+      // Silencioso si el almacenamiento está bloqueado
+    }
+
+    // 2. Si es la primera vez, elegimos según el tamaño de la pantalla
+    if (typeof window !== "undefined" && window.innerWidth < 1024) {
+      return "lista"; // Tablet y móvil van a Lista por defecto
+    }
+
+    return "matriz"; // PC va a Matriz por defecto
+  });
+
   const [calificacionesMatriz, setCalificacionesMatriz] = useState<
     Record<string, CalificacionData>
   >({});
@@ -458,6 +478,10 @@ function ContenidoCalificaciones() {
     onCancel: () => {},
   });
 
+  const [menuChipsAbierto, setMenuChipsAbierto] = useState<
+    Record<string, boolean>
+  >({});
+
   const gradosFiltrados = (() => {
     if (
       userData?.role === "docente" &&
@@ -485,6 +509,16 @@ function ContenidoCalificaciones() {
       [claveNomina, gradoEfectivoId, panel],
     ),
   );
+
+  // Guardar preferencia de vista en localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem("eduX_calificaciones_vista", vistaCalificaciones);
+    } catch {
+      // Silencioso si el almacenamiento está bloqueado
+    }
+  }, [vistaCalificaciones]);
+
   useEffect(() => {
     if (gradoEfectivoId && panel !== 0) asegurarEstudiantesCache(claveNomina);
   }, [gradoEfectivoId, panel, claveNomina]);
@@ -1821,9 +1855,6 @@ function ContenidoCalificaciones() {
   // ============================================================
   // FASE 4.2: INYECCIÓN DE MEMORIA EN APLICAR REFUERZO
   // ============================================================
-  // ============================================================
-  // FASE 4.2: INYECCIÓN DE MEMORIA EN APLICAR REFUERZO
-  // ============================================================
   const aplicarRefuerzo = async () => {
     if (
       !refuerzoEstudianteId ||
@@ -1939,6 +1970,12 @@ function ContenidoCalificaciones() {
         cacheInvalidate(`calificaciones_${selectedActividadId}`);
       cacheInvalidate(`calificacionesMatriz_${destrezaEfectivaId}`);
       cacheInvalidate(`actividades_${destrezaEfectivaId}`);
+
+      // ✅ NUEVO: Si la ficha está abierta, recargarla para reflejar el refuerzo
+      if (showFichaModal && fichaEstudianteId) {
+        await abrirFichaEstudiante(fichaEstudianteId);
+      }
+
       setIsSaving(false);
     }
   };
@@ -2341,6 +2378,239 @@ function ContenidoCalificaciones() {
       });
       return nuevas;
     });
+  };
+  const renderizarChipsObservacion = (
+    idClave: string,
+    tipoActividad: string,
+    materia: string,
+    obsActual: string,
+    onUpdate: (nuevoTexto: string) => void,
+  ) => {
+    // 1. Obtenemos la lista completa de chips para este tipo de actividad (o los genéricos si no existe)
+    const listaCompleta =
+      CHIPS_PRINCIPALES_POR_TIPO[tipoActividad] || CHIPS_GENERICOS_DETALLADOS;
+
+    // 2. Extraemos los primeros 3 para la vista principal
+    const chipsPrincipales = listaCompleta.slice(0, 3);
+
+    // 3. El resto (del 4to en adelante) van al modal de más opciones
+    const chipsRestantes = listaCompleta.slice(3);
+
+    const modalAbierto = menuChipsAbierto[idClave] || false;
+
+    // 🎨 Función de colores adaptada a los nuevos textos
+    const getColorChip = (texto: string, activo: boolean) => {
+      // Si no está activo, siempre es gris neutro
+      if (!activo) {
+        return "bg-[#ECEFF3] border-transparent text-[#4B5563] hover:bg-[#E4E8EE]";
+      }
+
+      const t = texto.toLowerCase();
+
+      // Ámbar / Naranja para estados intermedios o de advertencia
+      if (
+        t.includes("parcial") ||
+        t.includes("proceso") ||
+        t.includes("requiere") ||
+        t.includes("superficial") ||
+        t.includes("dificultad") ||
+        t.includes("mínimo") ||
+        t.includes("ayuda") ||
+        t.includes("revisión") ||
+        t.includes("acompañamiento") ||
+        t.includes("seguimiento")
+      ) {
+        return "bg-[#FFFBEB] border-[#FDE68A] text-[#92400E]";
+      }
+
+      // Rojo para estados negativos, ausencias o incumplimiento
+      if (
+        t.includes("no ") ||
+        t.includes("falta") ||
+        t.includes("conflicto") ||
+        t.includes("desordenada") ||
+        t.includes("incompleto") ||
+        t.includes("inicial")
+      ) {
+        return "bg-[#FEF2F2] border-[#FECACA] text-[#991B1B]";
+      }
+
+      // Verde para estados positivos, destacados o completos
+      if (
+        t.includes("destacad") ||
+        t.includes("sobresaliente") ||
+        t.includes("completó") ||
+        t.includes("domina") ||
+        t.includes("efectiv") ||
+        t.includes("seguridad") ||
+        t.includes("profund") ||
+        t.includes("activo") ||
+        t.includes("notable") ||
+        t.includes("adecuado") ||
+        t.includes("logro")
+      ) {
+        return "bg-[#F0FDF4] border-[#BBF7D0] text-[#166534]";
+      }
+
+      // Azul institucional por defecto para lo demás
+      return "bg-[#EAF0F6] border-[#C8D6E5] text-[#244563]";
+    };
+
+    return (
+      <>
+        <div className="flex flex-wrap items-center gap-1.5">
+          {/* Chips Principales (Los 3 primeros de la lista) */}
+          {chipsPrincipales.map((chip) => {
+            const activo = obsActual.includes(chip);
+            const colorBase = getColorChip(chip, activo);
+
+            return (
+              <button
+                key={chip}
+                type="button"
+                onClick={() => {
+                  const nuevoTexto =
+                    obsActual === ""
+                      ? chip
+                      : obsActual.includes(chip)
+                        ? obsActual
+                        : `${obsActual}. ${chip}`;
+                  onUpdate(nuevoTexto);
+                }}
+                className={`rounded-md px-2 py-1 text-[10px] font-medium transition-colors border ${colorBase} ${
+                  activo ? "shadow-sm ring-1 ring-inset ring-black/5" : ""
+                }`}
+              >
+                {chip}
+              </button>
+            );
+          })}
+
+          {/* Botón Más Opciones */}
+          {chipsRestantes.length > 0 && (
+            <button
+              type="button"
+              onClick={() =>
+                setMenuChipsAbierto((prev) => ({
+                  ...prev,
+                  [idClave]: true,
+                }))
+              }
+              className="rounded-md px-2 py-1 text-[10px] font-medium bg-[#FFFFFF] text-[#244563] border border-[#D8DEE6] hover:bg-[#EAF0F6] flex items-center gap-1 shadow-sm transition-colors"
+            >
+              <FaPlus className="text-[8px]" /> Más opciones
+            </button>
+          )}
+        </div>
+
+        {/* 👇 MODAL PEQUEÑO PARA LOS CHIPS RESTANTES 👇 */}
+        {modalAbierto && (
+          <div className="fixed inset-0 z-100 flex items-center justify-center bg-[#111827]/40 p-4 backdrop-blur-[2px] sm:hidden">
+            {/* Versión móvil: Bottom sheet */}
+            <div className="absolute bottom-0 left-0 right-0 w-full rounded-t-xl bg-white p-4 shadow-xl animate-in slide-in-from-bottom duration-200">
+              <div className="mb-3 flex items-center justify-between border-b border-[#E4E8EE] pb-2">
+                <h4 className="text-xs font-semibold text-[#273444]">
+                  Más observaciones
+                </h4>
+                <button
+                  onClick={() =>
+                    setMenuChipsAbierto((prev) => ({
+                      ...prev,
+                      [idClave]: false,
+                    }))
+                  }
+                  className="rounded p-1 text-[#6B7280] hover:bg-[#ECEFF3]"
+                >
+                  <FaTimes className="text-sm" />
+                </button>
+              </div>
+              <div className="flex max-h-[50vh] flex-wrap gap-2 overflow-y-auto">
+                {chipsRestantes.map((chip) => {
+                  const activo = obsActual.includes(chip);
+                  const colorBase = getColorChip(chip, activo);
+
+                  return (
+                    <button
+                      key={chip}
+                      type="button"
+                      onClick={() => {
+                        const nuevoTexto =
+                          obsActual === ""
+                            ? chip
+                            : obsActual.includes(chip)
+                              ? obsActual
+                              : `${obsActual}. ${chip}`;
+                        onUpdate(nuevoTexto);
+                        setMenuChipsAbierto((prev) => ({
+                          ...prev,
+                          [idClave]: false,
+                        }));
+                      }}
+                      className={`rounded-md px-3 py-2 text-[11px] font-medium transition-colors border ${colorBase}`}
+                    >
+                      {chip}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Versión Desktop: Modal centrado (oculto en móvil) */}
+        {modalAbierto && (
+          <div className="fixed inset-0 z-100 hidden items-center justify-center bg-[#111827]/40 p-4 backdrop-blur-[2px] sm:flex">
+            <div className="w-full max-w-sm rounded-lg bg-white p-4 shadow-xl animate-in zoom-in-95 duration-200">
+              <div className="mb-3 flex items-center justify-between border-b border-[#E4E8EE] pb-2">
+                <h4 className="text-xs font-semibold text-[#273444]">
+                  Más observaciones
+                </h4>
+                <button
+                  onClick={() =>
+                    setMenuChipsAbierto((prev) => ({
+                      ...prev,
+                      [idClave]: false,
+                    }))
+                  }
+                  className="rounded p-1 text-[#6B7280] hover:bg-[#ECEFF3]"
+                >
+                  <FaTimes className="text-sm" />
+                </button>
+              </div>
+              <div className="flex max-h-[50vh] flex-wrap gap-2 overflow-y-auto">
+                {chipsRestantes.map((chip) => {
+                  const activo = obsActual.includes(chip);
+                  const colorBase = getColorChip(chip, activo);
+
+                  return (
+                    <button
+                      key={chip}
+                      type="button"
+                      onClick={() => {
+                        const nuevoTexto =
+                          obsActual === ""
+                            ? chip
+                            : obsActual.includes(chip)
+                              ? obsActual
+                              : `${obsActual}. ${chip}`;
+                        onUpdate(nuevoTexto);
+                        setMenuChipsAbierto((prev) => ({
+                          ...prev,
+                          [idClave]: false,
+                        }));
+                      }}
+                      className={`rounded-md px-3 py-2 text-[11px] font-medium transition-colors border ${colorBase}`}
+                    >
+                      {chip}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        )}
+      </>
+    );
   };
   const enfocarNota = (i: number) =>
     setTimeout(() => {
@@ -3406,6 +3676,8 @@ function ContenidoCalificaciones() {
               )}
             </section>
           )}
+
+          {/* ============ PANEL 2: CALIFICACIONES ============ */}
           {/* ============ PANEL 2: CALIFICACIONES ============ */}
           {panel === 2 && (
             <section
@@ -3462,6 +3734,20 @@ function ContenidoCalificaciones() {
                   >
                     <FaPlus className="text-[10px]" /> Nueva
                   </button>
+                  {/* ✅ Botón Consolidar en la barra superior */}
+                  {consolidables.length >= 2 && (
+                    <button
+                      onClick={() => {
+                        setConsolidarSeleccionadas([]);
+                        setConsolidarNombre("");
+                        setShowConsolidarModal(true);
+                      }}
+                      className="inline-flex h-8 items-center gap-1 rounded-md border border-[#FED7AA] bg-[#FFFFFF] px-2.5 text-[11px] font-semibold text-[#9A3412] transition-colors hover:bg-[#FFF7ED]"
+                      title="Promediar varias actividades en un solo insumo"
+                    >
+                      <FaSyncAlt className="text-[10px]" /> Consolidar
+                    </button>
+                  )}
                   <button
                     onClick={() => setPanel(1)}
                     className="inline-flex h-8 items-center gap-1 rounded-md border border-[#D8DEE6] bg-[#FFFFFF] px-2.5 text-[11px] font-semibold text-[#4B5563] transition-colors hover:border-[#C96522]/40 hover:bg-[#F3F4F6] hover:text-[#273444]"
@@ -3580,7 +3866,7 @@ function ContenidoCalificaciones() {
                             Enter o Tab para avanzar
                           </span>
                         </div>
-                        <div className="divide-y divide-[#E4E8EE]">
+                        <div className="space-y-2.5 p-2 bg-[#FFFFFF]">
                           {estudiantesAplicables.map((est, index) => {
                             const calificacion = calificaciones[est.id];
                             const notaStr = calificacion?.nota || "";
@@ -3634,15 +3920,36 @@ function ContenidoCalificaciones() {
                             return (
                               <div
                                 key={est.id}
-                                className={`border-l-2 px-2.5 py-1.5 transition-colors hover:bg-[#F3F4F6] ${
-                                  bloqueadoPorAusenciaHoy
-                                    ? "border-l-[#C93F45]"
-                                    : ausenteAntiguo
-                                      ? "border-l-amber-400"
-                                      : esConsolidadoSel
-                                        ? "border-l-[#FDBA74]"
-                                        : "border-l-[#D8DEE6]"
-                                }`}
+                                className={`group rounded-lg border p-3 transition-all duration-200 
+    hover:bg-[#F8FAFC] focus-within:bg-[#F8FAFC] 
+    
+    hover:border-[#244563] focus-within:border-[#244563] 
+    
+    hover:shadow-[0_4px_12px_rgba(36,69,99,0.08)] 
+    focus-within:shadow-[0_4px_12px_rgba(36,69,99,0.08)] 
+    focus-within:ring-2 focus-within:ring-[#244563]/20
+    
+    ${
+      bloqueadoPorAusenciaHoy
+        ? "border-red-200 bg-red-50/10 hover:bg-red-50/30 hover:border-[#C93F45] focus-within:border-[#C93F45] focus-within:ring-[#C93F45]/20"
+        : ausenteAntiguo
+          ? "border-amber-200 bg-amber-50/10 hover:bg-amber-50/30 hover:border-amber-400 focus-within:border-amber-400 focus-within:ring-amber-400/20"
+          : esConsolidadoSel
+            ? "border-[#FDBA74] bg-[#FFF7ED]/10 hover:bg-[#FFF7ED]/30 hover:border-[#C96522] focus-within:border-[#244563] focus-within:ring-[#244563]/20"
+            : // 👇 AQUÍ CAMBIAMOS EL BORDE BASE Y LA SOMBRA
+              "border-[#BFC9D4] bg-white shadow-sm hover:shadow-md"
+    } 
+    
+    ${
+      bloqueadoPorAusenciaHoy
+        ? "border-l-4 border-l-[#C93F45]"
+        : ausenteAntiguo
+          ? "border-l-4 border-l-amber-400"
+          : esConsolidadoSel
+            ? "border-l-4 border-l-[#FDBA74]"
+            : // 👇 AQUÍ CAMBIAMOS EL ACENTO IZQUIERDO A UN AZUL MÁS NOTORIO
+              "border-l-4 border-l-[#6687A5] group-hover:border-l-[#244563] group-focus-within:border-l-[#244563]"
+    }`}
                               >
                                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
                                   <div className="min-w-0 flex-1">
@@ -3655,11 +3962,32 @@ function ContenidoCalificaciones() {
                                           Adaptación
                                         </span>
                                       )}
+
+                                      {/* 👇 ETIQUETA CON VER DETALLE ARRIBA 👇 */}
                                       {tieneRefuerzo && (
-                                        <span className="rounded bg-orange-50 px-1.5 py-px text-[10px] font-semibold text-[#A9501A] ring-1 ring-inset ring-orange-200">
-                                          Refuerzo
-                                        </span>
+                                        <div className="flex items-center gap-1">
+                                          <span className="rounded bg-orange-50 px-1.5 py-px text-[10px] font-semibold text-[#A9501A] ring-1 ring-inset ring-orange-200">
+                                            Refuerzo
+                                          </span>
+                                          <button
+                                            type="button"
+                                            title={`Fecha: ${calificacion?.refuerzo?.fecha}\nEstrategia: ${
+                                              ESTRATEGIAS_NOTA.find(
+                                                (estr) =>
+                                                  estr.value ===
+                                                  (calificacion?.refuerzo
+                                                    ?.estrategiaElegida ||
+                                                    "promediar"),
+                                              )?.label
+                                            }\nDetalle: ${calificacion?.refuerzo?.detalle}`}
+                                            className="text-[9px] text-[#A9501A] underline decoration-dotted underline-offset-2 hover:text-[#C96522] cursor-help transition-colors"
+                                          >
+                                            Ver detalle
+                                          </button>
+                                        </div>
                                       )}
+                                      {/* 👆 FIN DE LA ETIQUETA CON DETALLE 👆 */}
+
                                       {esConsolidadoSel && (
                                         <span className="rounded bg-[#FFF7ED] px-1.5 py-px text-[10px] font-semibold text-[#9A3412] ring-1 ring-inset ring-[#FED7AA]">
                                           Insumo
@@ -3720,7 +4048,7 @@ function ContenidoCalificaciones() {
                                       onClick={() =>
                                         abrirFichaEstudiante(est.id)
                                       }
-                                      className="inline-flex h-8 items-center gap-1 rounded-md border border-[#D8DEE6] bg-[#FFFFFF] px-2 text-[10px] font-semibold text-[#4B5563] transition-colors hover:border-[#C96522]/40 hover:bg-[#F3F4F6] hover:text-[#273444]"
+                                      className="inline-flex h-9 items-center gap-1 rounded-md border border-[#D8DEE6] bg-[#FFFFFF] px-2.5 text-[10px] font-semibold text-[#4B5563] transition-colors hover:border-[#244563]/30 hover:bg-[#EAF0F6]/50 hover:text-[#244563]"
                                       title="Ver y calificar todas las actividades"
                                     >
                                       <FaListUl className="text-[10px]" />{" "}
@@ -3780,7 +4108,10 @@ function ContenidoCalificaciones() {
                                                 : esConsolidadoSel
                                                   ? "border-[#D8DEE6] bg-[#FFF7ED] text-[#9A3412]"
                                                   : "border-[#BFC9D4] bg-[#FFFFFF] text-[#374151]"
-                                          } ${tieneRefuerzo || esConsolidadoSel ? "cursor-not-allowed" : ""}`}
+                                          } ${tieneRefuerzo || esConsolidadoSel ? "cursor-not-allowed" : ""} ${
+                                            // 👇 AQUÍ EL CAMBIO DE FOCO A GRIS CON SOMBRA
+                                            "focus:border-[#9CA3AF] focus:ring-[#9CA3AF]/20 focus:shadow-sm"
+                                          }`}
                                         />
                                         {letra && (
                                           <span
@@ -3826,42 +4157,11 @@ function ContenidoCalificaciones() {
                                     )}
                                   </div>
                                 </div>
-                                {calificacion?.refuerzo &&
-                                  !bloqueadoPorAusenciaHoy && (
-                                    <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 rounded border border-orange-100 bg-orange-50/50 px-2 py-1 text-[10px] text-[#A9501A]">
-                                      <span className="font-semibold">
-                                        Refuerzo {calificacion.refuerzo.fecha}
-                                      </span>
-                                      <span className="rounded bg-[#FFFFFF] px-1 py-px font-semibold text-[#A9501A] ring-1 ring-inset ring-orange-200">
-                                        {ESTRATEGIAS_NOTA.find(
-                                          (e) =>
-                                            e.value ===
-                                            (calificacion.refuerzo
-                                              ?.estrategiaElegida ||
-                                              actividadSeleccionada?.estrategiaNota ||
-                                              "promediar"),
-                                        )?.label.split(" ")[0] || "Estrategia"}
-                                      </span>
-                                      <span>
-                                        Original{" "}
-                                        <strong>
-                                          {round2(notaOriginal ?? 0)}
-                                        </strong>{" "}
-                                        → Refuerzo{" "}
-                                        <strong>
-                                          {round2(calificacion.refuerzo.nota)}
-                                        </strong>{" "}
-                                        → Final{" "}
-                                        <strong>{round2(notaFinal)}</strong>
-                                      </span>
-                                      <span className="truncate text-[#C96522]">
-                                        · {calificacion.refuerzo.detalle}
-                                      </span>
-                                    </div>
-                                  )}
+
+                                {/* 👇 INPUT DE OBSERVACIÓN AL 80% CON FOCO GRIS 👇 */}
                                 {!bloqueadoPorAusenciaHoy &&
                                   !esConsolidadoSel && (
-                                    <div className="mt-1">
+                                    <div className="mt-1.5 flex flex-col gap-2 lg:flex-row lg:items-center lg:w-[80%]">
                                       <input
                                         type="text"
                                         value={calificacion?.observacion || ""}
@@ -3877,14 +4177,32 @@ function ContenidoCalificaciones() {
                                             ? "Observación (sugerido: justificar la nota)"
                                             : "Observación (opcional)..."
                                         }
-                                        className={`h-8 w-full rounded-md border px-2 text-[11px] focus:border-[#244563] focus:outline-none focus:ring-2 focus:ring-[#244563]/20 ${
+                                        // 👇 Cambiamos h-9 por h-8 y text-xs por text-[11px] para igualar a los chips
+                                        className={`h-8 w-full lg:flex-1 rounded-md border px-2 text-[11px] transition-colors focus:outline-none focus:ring-2 ${
                                           ausenteAntiguo
                                             ? "border-amber-300 bg-amber-50 text-[#4B5563]"
                                             : "border-[#D8DEE6] bg-[#FFFFFF] text-[#4B5563]"
-                                        }`}
+                                        } ${"focus:border-[#9CA3AF] focus:ring-[#9CA3AF]/20 focus:shadow-sm"}`}
                                       />
+                                      <div className="flex shrink-0 items-center overflow-x-auto">
+                                        {renderizarChipsObservacion(
+                                          `lista-${est.id}`,
+                                          actividadSeleccionada?.tipo || "",
+                                          nombreDestrezaCal,
+                                          (
+                                            calificacion?.observacion || ""
+                                          ).trim(),
+                                          (nuevoTexto) =>
+                                            actualizarObservacionCalificacion(
+                                              est.id,
+                                              nuevoTexto,
+                                            ),
+                                        )}
+                                      </div>
                                     </div>
                                   )}
+                                {/* 👆 FIN DEL INPUT DE OBSERVACIÓN 👆 */}
+
                                 {esConsolidadoSel &&
                                   calificacion?.observacion && (
                                     <div className="mt-1 text-[10px] text-[#9A3412]">
@@ -4195,7 +4513,11 @@ function ContenidoCalificaciones() {
                                 <td className="border-b border-[#E4E8EE] px-1.5 py-1 text-center text-[10px] tabular-nums text-[#6B7280]">
                                   {idx + 1}
                                 </td>
-                                <td className="sticky left-0 z-10 max-w-55 truncate border-b border-r border-[#E4E8EE] bg-[#FFFFFF] px-2 py-1 text-[11px] font-medium text-[#374151] group-hover:bg-[#F3F4F6]">
+                                <td
+                                  onClick={() => abrirFichaEstudiante(est.id)}
+                                  className="sticky left-0 z-10 max-w-55 truncate border-b border-r border-[#E4E8EE] bg-[#FFFFFF] px-2 py-1 text-[11px] font-medium text-[#374151] group-hover:bg-[#F3F4F6] cursor-pointer hover:text-[#244563] transition-colors"
+                                  title="Ver ficha completa y calificar todas las actividades"
+                                >
                                   {est.apellidos} {est.nombres}
                                 </td>
                                 {celdas}
@@ -4228,6 +4550,7 @@ function ContenidoCalificaciones() {
         </>
       )}
 
+      {/* ============ BARRA STICKY ASISTENCIA ============ */}
       {mostrarBarraSticky && (
         <div className="fixed bottom-0 left-0 right-0 z-40 border-t border-[#D8DEE6] bg-[#FFFFFF]/95 backdrop-blur">
           <div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-4 py-2">
@@ -4286,6 +4609,7 @@ function ContenidoCalificaciones() {
         </div>
       )}
 
+      {/* ============ BARRA STICKY CALIFICACIONES ============ */}
       {mostrarBarraStickyCalificaciones && (
         <div className="fixed bottom-0 left-0 right-0 z-40 border-t border-[#D8DEE6] bg-[#FFFFFF]/95 backdrop-blur">
           <div className="border-b border-[#E4E8EE] px-4 py-1.5">
@@ -4378,7 +4702,8 @@ function ContenidoCalificaciones() {
           </div>
         </div>
       )}
-      {/* MODAL: ¿ASISTENCIA PARA LAS DOS HORAS? */}
+
+      {/* ============ MODAL: ¿ASISTENCIA PARA LAS DOS HORAS? ============ */}
       {horasPending && (
         <div className="fixed inset-0 z-100 flex items-center justify-center bg-[#111827]/40 p-3 backdrop-blur-[2px] sm:p-4">
           <div className="w-full max-w-sm overflow-hidden rounded-lg border border-[#D8DEE6] bg-[#FFFFFF] shadow-[0_20px_50px_-28px_rgba(15,23,42,0.40)]">
@@ -4447,7 +4772,7 @@ function ContenidoCalificaciones() {
         </div>
       )}
 
-      {/* MODAL LISTADO ACTIVIDADES (compacto, con insumos y actividades agrupadas) */}
+      {/* ============ MODAL LISTADO ACTIVIDADES ============ */}
       {showActividadesModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#111827]/40 p-3 backdrop-blur-[2px] sm:p-4">
           <div className="flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-lg border border-[#D8DEE6] bg-[#FFFFFF] shadow-[0_20px_50px_-28px_rgba(15,23,42,0.40)]">
@@ -4472,42 +4797,6 @@ function ContenidoCalificaciones() {
                 title="Cerrar"
               >
                 <FaTimes className="text-sm" />
-              </button>
-            </div>
-            <div className="grid grid-cols-1 gap-2 border-b border-[#FED7AA] bg-[#F3F4F6] px-4 py-2 sm:grid-cols-2">
-              <button
-                onClick={() => {
-                  setShowActividadesModal(false);
-                  setEditingActividadId(null);
-                  setActividadForm({
-                    tipo: "Tarea",
-                    detalle: "",
-                    fecha: new Date().toISOString().split("T")[0],
-                    estrategiaNota: "promediar",
-                    dirigidaA: "general",
-                    estudianteIds: [],
-                  });
-                  setShowActividadModal(true);
-                }}
-                className="inline-flex h-8 items-center justify-center gap-1.5 rounded-md bg-[#244563] px-3 text-[11px] font-semibold text-white transition-colors hover:bg-[#1B354D]"
-              >
-                <FaPlus className="text-[10px]" /> Nueva actividad
-              </button>
-              <button
-                onClick={() => {
-                  setConsolidarSeleccionadas([]);
-                  setConsolidarNombre("");
-                  setShowConsolidarModal(true);
-                }}
-                disabled={consolidables.length < 2}
-                className="inline-flex h-8 items-center justify-center gap-1.5 rounded-md border border-[#FED7AA] bg-[#FFFFFF] px-3 text-[11px] font-semibold text-[#9A3412] transition-colors hover:bg-[#FFF7ED] disabled:cursor-not-allowed disabled:border-[#D8DEE6] disabled:text-[#6B7280]"
-                title={
-                  consolidables.length < 2
-                    ? "Necesitas al menos 2 actividades sin agrupar"
-                    : "Promediar varias actividades en un solo insumo"
-                }
-              >
-                <FaSyncAlt className="text-[10px]" /> Consolidar en insumo
               </button>
             </div>
             {actividadesVisibles.length === 0 ? (
@@ -4682,7 +4971,7 @@ function ContenidoCalificaciones() {
         </div>
       )}
 
-      {/* MODAL: CONSOLIDAR ACTIVIDADES (INSUMO) */}
+      {/* ============ MODAL: CONSOLIDAR ACTIVIDADES (INSUMO) ============ */}
       {showConsolidarModal && (
         <div className="fixed inset-0 z-100 flex items-center justify-center bg-[#111827]/40 p-3 backdrop-blur-[2px] sm:p-4">
           <div className="flex max-h-[88vh] w-full max-w-2xl flex-col overflow-hidden rounded-lg border border-[#D8DEE6] bg-[#FFFFFF] shadow-[0_20px_50px_-28px_rgba(15,23,42,0.40)]">
@@ -4821,6 +5110,7 @@ function ContenidoCalificaciones() {
         </div>
       )}
 
+      {/* ============ MODAL: CREAR/EDITAR ACTIVIDAD ============ */}
       {showActividadModal && (
         <div className="fixed inset-0 z-100 flex items-center justify-center bg-[#111827]/40 p-3 backdrop-blur-[2px] sm:p-4">
           <div className="flex max-h-[88vh] w-full max-w-xl flex-col overflow-hidden rounded-lg border border-[#D8DEE6] bg-[#FFFFFF] shadow-[0_20px_50px_-28px_rgba(15,23,42,0.40)]">
@@ -5034,9 +5324,11 @@ function ContenidoCalificaciones() {
         </div>
       )}
 
+      {/* ============ MODAL: FICHA DEL ESTUDIANTE ============ */}
       {showFichaModal && fichaEstudianteId && (
         <div className="fixed inset-0 z-100 flex items-center justify-center bg-[#111827]/40 p-3 backdrop-blur-[2px] sm:p-4">
           <div className="flex max-h-[86vh] w-full max-w-2xl flex-col overflow-hidden rounded-lg border border-[#D8DEE6] bg-[#FFFFFF] shadow-[0_20px_50px_-28px_rgba(15,23,42,0.40)]">
+            {/* Header del Modal */}
             <div className="flex items-start justify-between gap-3 border-b border-[#E4E8EE] px-4 py-3">
               <div className="flex min-w-0 items-center gap-2.5">
                 <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-[#EAF0F6] text-[#244563]">
@@ -5070,12 +5362,14 @@ function ContenidoCalificaciones() {
                 <FaTimes className="text-sm" />
               </button>
             </div>
+
+            {/* Contenido del Modal */}
             {fichaLoading ? (
               <div className="flex flex-1 items-center justify-center py-12">
                 <FaSpinner className="animate-spin text-2xl text-[#244563]" />
               </div>
             ) : (
-              <div className="flex-1 overflow-y-auto">
+              <div className="flex-1 overflow-y-auto bg-[#FFFFFF] p-2.5 space-y-2">
                 {[...actividadesVisibles]
                   .filter(
                     (a) =>
@@ -5109,18 +5403,25 @@ function ContenidoCalificaciones() {
                           a.estrategiaNota,
                         )
                       : null;
+
                     return (
                       <div
                         key={a.id}
-                        className={`border-b border-[#E4E8EE] px-3 py-2 last:border-0 ${
-                          modificada
-                            ? "bg-[#F3F4F6]"
-                            : bloqueada
-                              ? "bg-red-50/30"
-                              : a.esConsolidado
-                                ? "bg-[#F9FAFB]"
-                                : ""
-                        }`}
+                        className={`group rounded-lg border p-3 transition-all duration-200 
+                          hover:bg-[#F8FAFC] focus-within:bg-[#F8FAFC] 
+                          hover:border-[#244563] focus-within:border-[#244563] 
+                          hover:shadow-[0_4px_12px_rgba(36,69,99,0.08)] 
+                          focus-within:shadow-[0_4px_12px_rgba(36,69,99,0.08)] 
+                          focus-within:ring-2 focus-within:ring-[#244563]/20
+                          ${
+                            modificada
+                              ? "border-[#244563]/30 bg-[#F8FAFC]"
+                              : bloqueada
+                                ? "border-red-200 bg-red-50/20 hover:border-[#C93F45] focus-within:border-[#C93F45] focus-within:ring-[#C93F45]/20"
+                                : a.esConsolidado
+                                  ? "border-[#FDBA74] bg-[#FFF7ED]/20 hover:border-[#C96522] focus-within:border-[#244563]"
+                                  : "border-[#D8DEE6] bg-[#FFFFFF]"
+                          }`}
                       >
                         <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
                           <div className="min-w-0 flex-1">
@@ -5141,11 +5442,6 @@ function ContenidoCalificaciones() {
                                   Modificada
                                 </span>
                               )}
-                              {!modificada && base?.notaGuardada && (
-                                <span className="rounded bg-[#EAF0F6] px-1.5 py-px text-[10px] font-semibold text-[#1B354D] ring-1 ring-inset ring-[#C8D6E5]">
-                                  Guardada
-                                </span>
-                              )}
                               {!modificada && !base?.notaGuardada && (
                                 <span className="rounded bg-[#ECEFF3] px-1.5 py-px text-[10px] font-semibold text-[#64748B]">
                                   Sin nota
@@ -5162,7 +5458,7 @@ function ContenidoCalificaciones() {
                                 </span>
                               )}
                             </div>
-                            <p className="mt-0.5 truncate text-[11px] font-medium text-[#374151]">
+                            <p className="mt-1 truncate text-[11px] font-medium text-[#374151] transition-colors group-focus-within:text-[#244563]">
                               {a.detalle}
                             </p>
                           </div>
@@ -5205,15 +5501,56 @@ function ContenidoCalificaciones() {
                                   }));
                                 }}
                                 placeholder="0-10"
-                                className="h-8 w-16 rounded-md border border-[#BFC9D4] bg-[#FFFFFF] px-1.5 text-center text-xs font-bold text-[#374151] focus:border-[#244563] focus:outline-none focus:ring-2 focus:ring-[#244563]/20"
+                                className="h-9 w-20 rounded-md border border-[#BFC9D4] bg-[#FFFFFF] px-1.5 text-center text-sm font-bold text-[#374151] transition-colors focus:border-[#9CA3AF] focus:outline-none focus:ring-2 focus:ring-[#9CA3AF]/20 focus:shadow-sm"
                               />
                             )}
+
+                            {!bloqueada &&
+                              !a.esConsolidado &&
+                              ((notaNumerica !== undefined &&
+                                notaNumerica < 7 &&
+                                !tieneRefuerzo) ||
+                                (notaFinalRef !== null &&
+                                  notaFinalRef < 7)) && (
+                                <button
+                                  onClick={() => {
+                                    const baseFicha = fichaBase[a.id as string];
+                                    if (baseFicha?.calId && fichaEstudianteId) {
+                                      setRefuerzoEstudianteId(
+                                        fichaEstudianteId,
+                                      );
+                                      setRefuerzoForm({
+                                        nota: 7,
+                                        detalle: "",
+                                        fecha: new Date()
+                                          .toISOString()
+                                          .split("T")[0],
+                                        estrategia:
+                                          a.estrategiaNota || "promediar",
+                                      });
+                                      setSelectedActividadId(a.id as string);
+                                      setShowRefuerzoModal(true);
+                                    } else if (!baseFicha?.calId) {
+                                      mostrarToast(
+                                        "info",
+                                        "Sin nota guardada",
+                                        "Primero guarda una nota para esta actividad antes de aplicar un refuerzo.",
+                                      );
+                                    }
+                                  }}
+                                  className="inline-flex h-9 shrink-0 items-center gap-1 rounded-md bg-orange-50 px-2 text-[10px] font-semibold text-[#A9501A] ring-1 ring-inset ring-orange-200 transition-colors hover:bg-orange-100"
+                                  title="Aplicar refuerzo a esta actividad"
+                                >
+                                  <FaSyncAlt className="text-[10px]" />{" "}
+                                  {tieneRefuerzo ? "Otro refuerzo" : "Refuerzo"}
+                                </button>
+                              )}
                           </div>
                         </div>
                         {(valor !== "" || !!base?.notaGuardada) &&
                           !bloqueada &&
                           !a.esConsolidado && (
-                            <div className="mt-1">
+                            <div className="mt-1.5 flex flex-col gap-1.5">
                               <input
                                 type="text"
                                 value={obsActual}
@@ -5228,7 +5565,8 @@ function ContenidoCalificaciones() {
                                     ? "Nota baja: indica el motivo..."
                                     : "Observación (opcional)..."
                                 }
-                                className={`h-8 w-full rounded-md border px-2 text-[10px] focus:border-[#244563] focus:outline-none focus:ring-2 focus:ring-[#244563]/20 ${
+                                // 👇 CAMBIO: h-8, px-2 y text-[11px] para igualar a los chips
+                                className={`h-8 w-full rounded-md border px-2 text-[11px] transition-colors focus:border-[#9CA3AF] focus:outline-none focus:ring-2 focus:ring-[#9CA3AF]/20 focus:shadow-sm ${
                                   esNotaBaja
                                     ? "border-amber-300 bg-amber-50 text-[#4B5563]"
                                     : obsModificada
@@ -5236,6 +5574,20 @@ function ContenidoCalificaciones() {
                                       : "border-[#D8DEE6] bg-[#FFFFFF] text-[#4B5563]"
                                 }`}
                               />
+
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                {renderizarChipsObservacion(
+                                  `ficha-${a.id}`,
+                                  a.tipo,
+                                  nombreDestrezaCal,
+                                  obsActual,
+                                  (nuevoTexto) =>
+                                    setFichaObservaciones((prev) => ({
+                                      ...prev,
+                                      [a.id as string]: nuevoTexto,
+                                    })),
+                                )}
+                              </div>
                             </div>
                           )}
                       </div>
@@ -5243,6 +5595,8 @@ function ContenidoCalificaciones() {
                   })}
               </div>
             )}
+
+            {/* Footer del Modal */}
             <div className="flex flex-col gap-2 border-t border-[#E4E8EE] bg-[#F3F4F6] px-4 py-3 sm:flex-row sm:justify-end">
               <button
                 onClick={() => {
@@ -5268,6 +5622,7 @@ function ContenidoCalificaciones() {
         </div>
       )}
 
+      {/* ============ MODAL: APLICAR REFUERZO ============ */}
       {showRefuerzoModal && refuerzoEstudianteId && (
         <div className="fixed inset-0 z-100 flex items-center justify-center bg-[#111827]/40 p-3 backdrop-blur-[2px] sm:p-4">
           <div className="flex max-h-[88vh] w-full max-w-md flex-col overflow-hidden rounded-lg border border-[#D8DEE6] bg-[#FFFFFF] shadow-[0_20px_50px_-28px_rgba(15,23,42,0.40)]">
@@ -5474,6 +5829,7 @@ function ContenidoCalificaciones() {
         </div>
       )}
 
+      {/* ============ MODAL DE CONFIRMACIÓN GENÉRICO ============ */}
       {confirmModal.isOpen && (
         <div className="fixed inset-0 z-100 flex items-center justify-center bg-[#111827]/40 p-3 backdrop-blur-[2px] sm:p-4">
           <div className="w-full max-w-sm overflow-hidden rounded-lg border border-[#D8DEE6] bg-[#FFFFFF] shadow-[0_20px_50px_-28px_rgba(15,23,42,0.40)]">
@@ -5509,6 +5865,7 @@ function ContenidoCalificaciones() {
         </div>
       )}
 
+      {/* ============ TOASTS FLOTANTES ============ */}
       <div className="pointer-events-none fixed right-3 top-3 z-100 w-full max-w-xs space-y-2">
         {toasts.map((toast) => {
           const config = toastConfig[toast.type];
