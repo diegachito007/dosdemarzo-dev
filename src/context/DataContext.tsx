@@ -8,7 +8,7 @@ import {
   useCallback,
 } from "react";
 import type { ReactNode } from "react";
-import { collection, onSnapshot, query, where } from "firebase/firestore";
+import { collection, getDocs, query, where } from "firebase/firestore";
 import { db } from "../lib/firebase";
 import { actualizarAnioReporteNotas } from "../utils/reporteNotasCache";
 import { actualizarAnioCalificaciones } from "../utils/calificacionesCache";
@@ -49,118 +49,94 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const [destrezas, setDestrezas] = useState<Destreza[]>([]);
   const [aniosLectivos, setAniosLectivos] = useState<AnioLectivo[]>([]);
   const [periodos, setPeriodos] = useState<PeriodoEvaluacion[]>([]);
-  const [nombresDocentes, setNombresDocentes] = useState<
-    Record<string, string>
-  >({});
+  const [nombresDocentes, setNombresDocentes] = useState<Record<string, string>>({});
   const [ready, setReady] = useState(false);
 
-  // ✅ Carga inicial única con onSnapshot para que la caché persistente
-  // comparta las lecturas entre pestañas y evite getDocs repetidos.
   useEffect(() => {
-    let mounted = true;
+    let active = true;
 
-    // 1. Grados activos
-    const unsubGrados = onSnapshot(
-      query(collection(db, "grados"), where("activo", "==", true)),
-      (snap) => {
-        if (!mounted) return;
+    const cargarTodo = async () => {
+      try {
+        const [
+          gradosSnap,
+          ambitosSnap,
+          destrezasSnap,
+          aniosSnap,
+          periodosSnap,
+          usuariosSnap,
+        ] = await Promise.all([
+          getDocs(query(collection(db, "grados"), where("activo", "==", true))),
+          getDocs(query(collection(db, "ambitos"), where("activo", "==", true))),
+          getDocs(query(collection(db, "destrezas"), where("activo", "==", true))),
+          getDocs(query(collection(db, "aniosLectivos"), where("activo", "==", true))),
+          getDocs(query(collection(db, "periodosEvaluacion"), where("activo", "==", true))),
+          getDocs(
+            query(
+              collection(db, "usuarios"),
+              where("role", "in", ["docente", "super_admin"]),
+              where("status", "==", "active")
+            )
+          ),
+        ]);
+
+        if (!active) return;
+
         setGrados(
-          sortByOrden(
-            snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Grado),
-          ),
+          sortByOrden(gradosSnap.docs.map((d) => ({ id: d.id, ...d.data() }) as Grado))
         );
-      },
-    );
-
-    // 2. Ámbitos activos
-    const unsubAmbitos = onSnapshot(
-      query(collection(db, "ambitos"), where("activo", "==", true)),
-      (snap) => {
-        if (!mounted) return;
         setAmbitos(
-          sortByOrden(
-            snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Ambito),
-          ),
+          sortByOrden(ambitosSnap.docs.map((d) => ({ id: d.id, ...d.data() }) as Ambito))
         );
-      },
-    );
-
-    // 3. Destrezas activas
-    const unsubDestrezas = onSnapshot(
-      query(collection(db, "destrezas"), where("activo", "==", true)),
-      (snap) => {
-        if (!mounted) return;
         setDestrezas(
-          sortByOrden(
-            snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Destreza),
-          ),
+          sortByOrden(destrezasSnap.docs.map((d) => ({ id: d.id, ...d.data() }) as Destreza))
         );
-      },
-    );
-
-    // 4. Años lectivos activos
-    const unsubAnios = onSnapshot(
-      query(collection(db, "aniosLectivos"), where("activo", "==", true)),
-      (snap) => {
-        if (!mounted) return;
         setAniosLectivos(
-          snap.docs.map((d) => ({ id: d.id, ...d.data() }) as AnioLectivo),
+          aniosSnap.docs.map((d) => ({ id: d.id, ...d.data() }) as AnioLectivo)
         );
-      },
-    );
-
-    // 5. Períodos de evaluación activos
-    const unsubPeriodos = onSnapshot(
-      query(collection(db, "periodosEvaluacion"), where("activo", "==", true)),
-      (snap) => {
-        if (!mounted) return;
         setPeriodos(
           sortByOrden(
-            snap.docs.map(
-              (d) => ({ id: d.id, ...d.data() }) as PeriodoEvaluacion,
-            ),
-          ),
+            periodosSnap.docs.map((d) => ({ id: d.id, ...d.data() }) as PeriodoEvaluacion)
+          )
         );
-      },
-    );
 
-    // 6. Usuarios (para nombres de docentes)
-    const unsubUsuarios = onSnapshot(collection(db, "usuarios"), (snap) => {
-      if (!mounted) return;
-      const nombres: Record<string, string> = {};
-      snap.docs.forEach((d) => {
-        const data = d.data() as {
-          nombreDocumento?: string;
-          displayName?: string;
-          email?: string;
-        };
-        nombres[d.id] =
-          data.nombreDocumento || data.displayName || data.email || "Docente";
-      });
-      setNombresDocentes(nombres);
-      setReady(true); // Marcar como listo cuando al menos usuarios cargue
-    });
+        const nombres: Record<string, string> = {};
+        usuariosSnap.docs.forEach((d) => {
+          const data = d.data() as {
+            nombreDocumento?: string;
+            displayName?: string;
+            email?: string;
+          };
+          nombres[d.id] =
+            data.nombreDocumento || data.displayName || data.email || "Docente";
+        });
+        setNombresDocentes(nombres);
+        setReady(true);
+      } catch (error) {
+        console.error("Error cargando datos maestros:", error);
+        if (active) setReady(true);
+      }
+    };
+
+    // ✅ El setTimeout(..., 0) soluciona el error de ESLint (react-hooks/set-state-in-effect)
+    const timer = setTimeout(() => {
+      void cargarTodo();
+    }, 0);
 
     return () => {
-      mounted = false;
-      unsubGrados();
-      unsubAmbitos();
-      unsubDestrezas();
-      unsubAnios();
-      unsubPeriodos();
-      unsubUsuarios();
+      active = false;
+      clearTimeout(timer);
     };
   }, []);
 
-  // ✅ Recarga manual (botón "Actualizar" si existiera).
-  // Al usar onSnapshot, los datos se actualizan solos, así que esta función
-  // solo es un puente de compatibilidad.
+  // Al usar getDocs, la recarga manual implica volver a pedir los datos.
+  // Como este contexto se monta una vez por sesión, recargar la página 
+  // es la forma más segura y limpia de reiniciar todo el estado si fuera necesario.
   const reload = useCallback(async () => {
-    // Ya no hacemos getDocs aquí. onSnapshot se encarga en tiempo real.
-    console.log("DataContext: recarga automática por onSnapshot.");
+    window.location.reload();
   }, []);
 
   const anioActivo = aniosLectivos.find((a) => a.activo) || null;
+
   useEffect(() => {
     actualizarAnioCalificaciones(anioActivo?.id || "");
     actualizarAnioReporteNotas(anioActivo?.id || "");
