@@ -1,0 +1,148 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function autenticado() {
+      return request.auth != null;
+    }
+    function activo() {
+      return autenticado()
+        && get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.get('status', '') == 'active';
+    }
+    function esSuperAdmin() {
+      return activo()
+        && get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.get('role', '') == 'super_admin';
+    }
+
+    match /usuarios/{userId} {
+      allow get: if autenticado() && (request.auth.uid == userId || activo());
+      allow list: if activo();
+      allow create: if autenticado()
+        && request.auth.uid == userId
+        && request.resource.data.keys().hasAll([
+          'uid', 'email', 'displayName', 'photoURL', 'role', 'status',
+          'gradosAsignados', 'tutorDe', 'nombreDocumento', 'createdAt'
+        ])
+        && request.resource.data.keys().hasOnly([
+          'uid', 'email', 'displayName', 'photoURL', 'role', 'status',
+          'gradosAsignados', 'tutorDe', 'nombreDocumento', 'createdAt'
+        ])
+        && request.resource.data.uid == userId
+        && request.resource.data.email == request.auth.token.get('email', '')
+        && request.resource.data.displayName is string
+        && (request.resource.data.photoURL == null || request.resource.data.photoURL is string)
+        && request.resource.data.role == 'docente'
+        && request.resource.data.status == 'pending'
+        && request.resource.data.gradosAsignados == []
+        && request.resource.data.tutorDe == []
+        && request.resource.data.nombreDocumento == ''
+        && request.resource.data.createdAt == request.time;
+      allow update: if (
+        activo() && request.auth.uid == userId
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'nombreDocumento', 'displayName', 'photoURL', 'directorArea', 'updatedAt'
+        ])
+        && request.resource.data.get('nombreDocumento', '') is string
+        && request.resource.data.get('nombreDocumento', '').size() <= 80
+        && request.resource.data.get('directorArea', '') in [
+          '', 'nombreDirectorMatematica', 'nombreDirectorCienciasNaturales',
+          'nombreDirectorEstudiosSociales', 'nombreDirectorLenguaLiteratura'
+        ]
+      ) || (
+        esSuperAdmin()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'role', 'status', 'gradosAsignados', 'tutorDe',
+          'nombreDocumento', 'displayName', 'photoURL', 'directorArea', 'updatedAt'
+        ])
+        && request.resource.data.role in ['docente', 'super_admin']
+        && request.resource.data.status in ['pending', 'active', 'rejected', 'blocked', 'deleted']
+        && request.resource.data.get('directorArea', '') in [
+          '', 'nombreDirectorMatematica', 'nombreDirectorCienciasNaturales',
+          'nombreDirectorEstudiosSociales', 'nombreDirectorLenguaLiteratura'
+        ]
+        && (request.auth.uid != userId || !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'status']))
+      );
+      allow delete: if false;
+    }
+
+    match /configuracionInstitucional/{document} {
+      allow read: if true;
+      allow write: if esSuperAdmin();
+    }
+    
+    match /configuracion/{document} {
+      allow read: if activo();
+      allow write: if esSuperAdmin();
+    }
+
+    // ==========================================
+    // REGLAS EXPLÍCITAS POR MÓDULO
+    // ==========================================
+
+    // Módulos de matrícula (deshabilitados)
+    match /solicitudesMatriculas/{document=**} { allow read, write: if false; }
+    match /representantes/{document=**} { allow read, write: if false; }
+    match /matriculas/{document=**} { allow read, write: if false; }
+
+    // Módulos de catálogos y horarios
+    match /grados/{document=**} { allow read: if activo(); allow write: if esSuperAdmin(); }
+    match /ambitos/{document=**} { allow read: if activo(); allow write: if esSuperAdmin(); }
+    match /destrezas/{document=**} { allow read: if activo(); allow write: if esSuperAdmin(); }
+    match /aniosLectivos/{document=**} { allow read: if activo(); allow write: if esSuperAdmin(); }
+    match /periodosEvaluacion/{document=**} { allow read: if activo(); allow write: if esSuperAdmin(); }
+    match /asignaturasDocente/{document=**} { allow read: if activo(); allow write: if activo(); }
+
+    // Módulos académicos (docentes y admins)
+    match /estudiantes/{document=**} { allow read: if activo(); allow write: if activo(); }
+    match /actividades/{document=**} { allow read: if activo(); allow write: if activo(); }
+    match /calificaciones/{document=**} { allow read: if activo(); allow write: if activo(); }
+    match /asistencias/{document=**} { allow read: if activo(); allow write: if activo(); }
+
+    // Módulo PPE
+    match /ppeConfiguraciones/{document=**} { allow read: if activo(); allow write: if activo(); }
+    match /ppeActividades/{document=**} { allow read: if activo(); allow write: if activo(); }
+    match /ppeAsistencias/{document=**} { allow read: if activo(); allow write: if activo(); }
+    match /ppeCalificaciones/{document=**} { allow read: if activo(); allow write: if activo(); }
+
+    // Módulo de Refuerzo
+    match /refuerzos/{document=**} { allow read: if activo(); allow write: if activo(); }
+    match /refuerzoSesiones/{document=**} { allow read: if activo(); allow write: if activo(); }
+    match /refuerzoEstudiantes/{document=**} { allow read: if activo(); allow write: if activo(); }
+
+    // ✅ MÓDULO DE NOTIFICACIONES (AQUÍ ESTABA EL ERROR)
+    match /notificacionesNotas/{document=**} { allow read: if activo(); allow write: if activo(); }
+    match /notificacionesNotasHistorial/{document=**} { allow read: if activo(); allow write: if activo(); }
+    match /notificacionesNotasAtenciones/{document=**} { allow read: if activo(); allow write: if activo(); }
+    match /notificacionesNotasAuditoria/{document=**} { allow read: if activo(); allow create: if activo(); }
+
+  }
+}
+
+
+Aquí tienes exactamente los 4 índices que necesitas:
+
+Para DataContext.tsx (Usuarios activos):
+
+Colección: usuarios
+
+Campos: role (Ascendente) y status (Ascendente)
+
+
+Para Notificaciones.tsx (Historial):
+
+Colección: notificacionesNotasHistorial
+
+Campos: docenteId (Ascendente) y fecha (Ascendente)
+
+
+Para Notificaciones.tsx (Atenciones):
+
+Colección: notificacionesNotasAtenciones
+
+Campos: docenteId (Ascendente) y fecha (Ascendente)
+
+
+Para Notificaciones.tsx (Auditoría):
+
+Colección: notificacionesNotasAuditoria
+
+Campos: docenteId (Ascendente) y registradoEn (Descendente)
